@@ -1,0 +1,10 @@
+.tools/
+.gradle/
+build/
+local.properties
+*.iml
+*.apk
+/assets/
+/image.png
+/plantilla*.jpg
+/easter-egg.mp3
