@@ -118,7 +118,7 @@ private fun PackTile(pack: StickerBitmaps.Pack, onClick: () -> Unit) {
         Box(
             Modifier.align(Alignment.BottomEnd).padding(3.dp).size(20.dp).clip(CircleShape).background(Accent),
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Default.Add, contentDescription = "Abrir ${pack.title}", tint = Color(0xFF3A1024), modifier = Modifier.size(14.dp)) }
+        ) { Icon(Icons.Default.Add, contentDescription = "Abrir ${pack.title}", tint = OnAccent, modifier = Modifier.size(14.dp)) }
     }
 }
 

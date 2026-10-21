@@ -89,6 +89,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -472,7 +473,7 @@ private fun TopRow(version: String, onCheckUpdate: () -> Unit, onSettings: () ->
                     bounce = true
                     player?.let { it.seekTo(0); it.start() }
                 }
-                .background(Brush.radialGradient(listOf(Color(0xFF2A2D36), Surface1)), CircleShape)
+                .background(Brush.radialGradient(listOf(Surface2, Surface1)), CircleShape)
                 .border(1.dp, Outline, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
@@ -526,7 +527,7 @@ private fun ContinueCard(doc: DocInfo, store: Store, onClick: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 LinearProgressIndicator(
                     progress = { page / total.toFloat() }, modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),
-                    color = Accent, trackColor = Surface2,
+                    color = Accent, trackColor = Surface2, gapSize = 0.dp, drawStopIndicator = {},
                 )
             }
             Spacer(Modifier.width(16.dp))
@@ -613,7 +614,7 @@ private fun DocCard(
                             .border(1.5.dp, if (selected) Accent else Color.White, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (selected) Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF2A1420), modifier = Modifier.size(18.dp))
+                        if (selected) Icon(Icons.Default.Check, contentDescription = null, tint = OnAccent, modifier = Modifier.size(18.dp))
                     }
                 } else {
                     Row(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -656,7 +657,7 @@ private fun DocCard(
                 Spacer(Modifier.height(9.dp))
                 LinearProgressIndicator(
                     progress = { page / total.toFloat() }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
-                    color = Accent, trackColor = Surface2,
+                    color = Accent, trackColor = Surface2, gapSize = 0.dp, drawStopIndicator = {},
                 )
                 Spacer(Modifier.height(5.dp))
                 Text("Página $page de $total", color = OnSurfaceDim, fontSize = 12.sp)
@@ -716,11 +717,11 @@ private fun SettingsDialog(version: String, onDismiss: () -> Unit) {
         title = { Text("Ajustes") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Color de la app", color = OnSurfaceDim)
+                Text("Color de los botones", color = OnSurfaceDim)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Prefs.ACCENTS.forEach { (name, argb) ->
                         val c = Color(argb)
-                        val sel = Accent == c
+                        val sel = AccentBase == c
                         Box(
                             Modifier.size(40.dp).clip(CircleShape).background(c)
                                 .border(if (sel) 3.dp else 1.dp, if (sel) Color.White else Outline, CircleShape)
@@ -729,6 +730,9 @@ private fun SettingsDialog(version: String, onDismiss: () -> Unit) {
                         ) { if (sel) Icon(Icons.Default.Check, contentDescription = name, tint = Color(0xFF2A1420), modifier = Modifier.size(20.dp)) }
                     }
                 }
+                Text("Color de fondo", color = OnSurfaceDim)
+                BackgroundRow("Oscuros", Prefs.BACKGROUNDS)
+                BackgroundRow("Claros", Prefs.LIGHT_BACKGROUNDS)
                 Text("Evability v$version", fontSize = 12.sp, color = OnSurfaceDim)
             }
         },
@@ -786,6 +790,26 @@ private fun TemplateCard(kind: TemplateKind, modifier: Modifier, onClick: () -> 
             Text(kind.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = OnSurface)
             Spacer(Modifier.height(2.dp))
             Text(kind.subtitle, fontSize = 13.sp, color = OnSurfaceDim, lineHeight = 18.sp)
+        }
+    }
+}
+
+@Composable
+private fun BackgroundRow(title: String, list: List<Pair<String, Long>>) {
+    Text(title, fontSize = 12.sp, color = OnSurfaceDim)
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        list.forEach { (name, argb) ->
+            val c = Color(argb)
+            val sel = Bg == c
+            Column(Modifier.clickable { Prefs.setBackground(argb) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier.size(46.dp).clip(CircleShape).background(c)
+                        .border(if (sel) 3.dp else 1.dp, if (sel) Accent else lerp(c, OnSurface, 0.35f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { if (sel) Icon(Icons.Default.Check, contentDescription = name, tint = Accent, modifier = Modifier.size(22.dp)) }
+                Spacer(Modifier.height(4.dp))
+                Text(name, fontSize = 11.sp, color = if (sel) OnSurface else OnSurfaceDim)
+            }
         }
     }
 }

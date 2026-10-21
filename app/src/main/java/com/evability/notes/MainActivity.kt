@@ -77,6 +77,13 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
     var exporting by remember { mutableStateOf(false) }
     var exportInfo by remember { mutableStateOf<DocInfo?>(null) }
 
+    // Iconos de la barra de estado y de navegación: claros sobre fondo oscuro, oscuros sobre fondo claro.
+    val light = IsLight
+    LaunchedEffect(light) {
+        val style = if (light) SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT) else SystemBarStyle.dark(Color.TRANSPARENT)
+        (ctx as? ComponentActivity)?.enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+    }
+
     fun reload() {
         docs = store.loadIndex()
     }

@@ -83,6 +83,9 @@ class EditorState(
         store.setExtra(info.id, extraPages)
     }
 
+    /** Con "línea recta" activada, cada trazo de lápiz o resaltador se queda recto (de donde empieza a donde acaba). */
+    var straight by mutableStateOf(false)
+
     /** Si es false, solo el lápiz dibuja y el dedo desplaza/hace zoom. */
     var fingerDraw by mutableStateOf(false)
     var zoom by mutableFloatStateOf(1f)

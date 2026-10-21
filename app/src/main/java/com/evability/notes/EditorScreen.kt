@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.StickyNote2
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Highlight
@@ -100,6 +101,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -125,7 +127,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
-private val EditorBg = Color(0xFF0A0B0E)
+private val EditorBg: Color get() = lerp(Bg, Color.Black, if (IsLight) 0.10f else 0.35f)
 
 private val Palette = listOf(
     0xFF111111, 0xFFFFFFFF, 0xFFE53935, 0xFFFB8C00, 0xFFFDD835,
@@ -214,6 +216,7 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             ToolBtn(state.tool == Tool.COVER, Icons.Default.FindReplace, "Cambiar texto del PDF") { state.tool = Tool.COVER }
             ToolBtn(state.tool == Tool.POSTIT, Icons.Default.StickyNote2, "Post-it") { state.tool = Tool.POSTIT }
             ToolBtn(state.tool == Tool.ERASER, EraserIcon, "Borrador") { state.tool = Tool.ERASER }
+            ToolBtn(state.straight, Icons.Default.Straighten, "Línea recta") { state.straight = !state.straight }
             VDivider()
             ToolBtn(false, Icons.AutoMirrored.Filled.Undo, "Deshacer", enabled = state.canUndo) { state.undo() }
             ToolBtn(false, Icons.AutoMirrored.Filled.Redo, "Rehacer", enabled = state.canRedo) { state.redo() }
@@ -502,6 +505,19 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
 
 private const val FLING_BOOST = 1.3f
 
+/** Trazo -> línea recta de su primer a su último punto. Si queda casi horizontal o vertical (menos de ~4°), se endereza del todo. */
+private fun straightLine(pts: List<Offset>): List<Offset> {
+    if (pts.size < 2) return pts
+    val a = pts.first()
+    var b = pts.last()
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    if (abs(dx) < 0.004f && abs(dy) < 0.004f) return pts // un toque o garabato diminuto: se deja como punto
+    val snap = 0.07f
+    if (abs(dy) < abs(dx) * snap) b = Offset(b.x, a.y) else if (abs(dx) < abs(dy) * snap) b = Offset(a.x, b.y)
+    return listOf(a, b)
+}
+
 /** Zoom mínimo: 0.5 = la página ocupa la mitad del ancho; a los lados queda el fondo oscuro (no se puede escribir fuera de la página). */
 private const val MIN_ZOOM = 0.5f
 
@@ -567,8 +583,9 @@ private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (
                                 if (!ch.pressed) break
                             }
                             if (live.isNotEmpty()) {
-                                if (onPost != null) state.addPostitStroke(onPost.id, hl, color, width, live.toList())
-                                else state.add(Stroke(state.nextId(), index, hl, color, width, live.toList()))
+                                val pts = if (state.straight) straightLine(live.toList()) else live.toList()
+                                if (onPost != null) state.addPostitStroke(onPost.id, hl, color, width, pts)
+                                else state.add(Stroke(state.nextId(), index, hl, color, width, pts))
                             }
                             live.clear()
                         }
@@ -736,7 +753,7 @@ private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (
                 }
                 if (live.isNotEmpty()) {
                     val (hl, color, width) = liveStyle.value
-                    AnnPainter.drawStroke(nc, live.toList(), color, width, hl, size.width)
+                    AnnPainter.drawStroke(nc, if (state.straight) straightLine(live.toList()) else live.toList(), color, width, hl, size.width)
                 }
             }
         }
