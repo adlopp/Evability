@@ -33,6 +33,8 @@ class Store(context: Context) {
                     added = o.getLong("added"),
                     lastPage = o.optInt("lastPage", 0),
                     extra = o.optInt("extra", 0),
+                    favorite = o.optBoolean("favorite", false),
+                    folder = o.optString("folder", ""),
                 )
             }.sortedByDescending { it.lastOpened }
         } catch (e: Exception) {
@@ -46,7 +48,7 @@ class Store(context: Context) {
         list.forEach {
             arr.put(
                 JSONObject().put("id", it.id).put("name", it.name).put("pages", it.pages)
-                    .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra)
+                    .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra).put("favorite", it.favorite).put("folder", it.folder)
             )
         }
         writeAtomic(indexFile, arr.toString())
@@ -61,6 +63,94 @@ class Store(context: Context) {
     fun setLastPage(id: String, page: Int) = update(id) { it.copy(lastPage = page) }
 
     fun setExtra(id: String, extra: Int) = update(id) { it.copy(extra = extra) }
+
+    fun rename(id: String, name: String) = update(id) { it.copy(name = name) }
+
+    @Synchronized
+    fun setFavorite(ids: Collection<String>, favorite: Boolean) {
+        saveIndex(loadIndex().map { if (it.id in ids) it.copy(favorite = favorite) else it })
+    }
+
+    @Synchronized
+    fun setFolder(ids: Collection<String>, folder: String) {
+        saveIndex(loadIndex().map { if (it.id in ids) it.copy(folder = folder) else it })
+        if (folder.isNotBlank()) addFolder(folder)
+    }
+
+    @Synchronized
+    fun duplicate(id: String): DocInfo? {
+        val src = loadIndex().firstOrNull { it.id == id } ?: return null
+        val nid = UUID.randomUUID().toString()
+        pdfFile(id).copyTo(pdfFile(nid))
+        if (annFile(id).exists()) annFile(id).copyTo(annFile(nid))
+        if (thumbFile(id).exists()) thumbFile(id).copyTo(thumbFile(nid))
+        val now = System.currentTimeMillis()
+        val copy = src.copy(id = nid, name = src.name + " (copia)", lastOpened = now, added = now, favorite = false)
+        saveIndex(listOf(copy) + loadIndex())
+        return copy
+    }
+
+    /** Quita los documentos del índice pero deja los archivos, para poder deshacer. [purge] los borra de verdad. */
+    @Synchronized
+    fun softDelete(ids: Collection<String>) {
+        saveIndex(loadIndex().filter { it.id !in ids })
+    }
+
+    @Synchronized
+    fun restore(infos: List<DocInfo>) {
+        saveIndex(loadIndex() + infos)
+    }
+
+    fun purge(infos: List<DocInfo>) {
+        infos.forEach { i -> listOf(pdfFile(i.id), thumbFile(i.id), annFile(i.id)).forEach { it.delete() } }
+    }
+
+    /** Borra archivos de documentos que ya no están en el índice (p. ej. eliminados sin que diera tiempo a purgarlos). */
+    @Synchronized
+    fun cleanOrphans() {
+        val ids = loadIndex().map { it.id }.toSet()
+        dir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("index") || f.name.startsWith("folders")) return@forEach
+            if (f.name.substringBefore('.') !in ids) f.delete()
+        }
+    }
+
+    /** Vuelve a generar la miniatura con las anotaciones de la primera página. */
+    fun refreshThumbnail(id: String, doc: PdfDoc, anns: List<Ann>) {
+        val bmp = doc.render(0, 420)
+        AnnPainter.drawAll(android.graphics.Canvas(bmp), anns.filter { it.page == 0 }, bmp.width.toFloat())
+        thumbFile(id).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+        bmp.recycle()
+    }
+
+    private val foldersFile get() = File(dir, "folders.json")
+
+    @Synchronized
+    private fun savedFolders(): List<String> = try {
+        val a = JSONArray(foldersFile.readText())
+        (0 until a.length()).map { a.getString(it) }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    @Synchronized
+    fun folders(): List<String> =
+        (savedFolders() + loadIndex().map { it.folder }).filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
+
+    @Synchronized
+    fun addFolder(name: String) {
+        val n = name.trim()
+        if (n.isBlank()) return
+        val list = (savedFolders() + n).distinct()
+        writeAtomic(foldersFile, JSONArray(list).toString())
+    }
+
+    /** Quita la carpeta; sus documentos se conservan, sin carpeta. */
+    @Synchronized
+    fun removeFolder(name: String) {
+        saveIndex(loadIndex().map { if (it.folder == name) it.copy(folder = "") else it })
+        writeAtomic(foldersFile, JSONArray(savedFolders().filter { it != name }).toString())
+    }
 
     /** Crea un documento nuevo a partir de una plantilla (o una hoja en blanco). */
     fun createFromTemplate(kind: TemplateKind): DocInfo {

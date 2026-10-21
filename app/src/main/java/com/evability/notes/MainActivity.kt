@@ -14,17 +14,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -36,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,8 +50,10 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         handle(intent)
+        Prefs.init(applicationContext)
         StickerBitmaps.init(applicationContext)
         val store = Store(applicationContext)
+        store.cleanOrphans()
         setContent { EvabilityTheme { App(store, incoming) } }
     }
 
@@ -69,10 +71,15 @@ class MainActivity : ComponentActivity() {
 private fun App(store: Store, incoming: MutableState<Uri?>) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var recents by remember { mutableStateOf(store.loadIndex()) }
+    var docs by remember { mutableStateOf(store.loadIndex()) }
     var editor by remember { mutableStateOf<EditorState?>(null) }
     var busy by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    var exportInfo by remember { mutableStateOf<DocInfo?>(null) }
+
+    fun reload() {
+        docs = store.loadIndex()
+    }
 
     fun toast(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
 
@@ -84,7 +91,7 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
                     store.touch(info.id)
                     val doc = PdfDoc(store.pdfFile(info.id))
                     val aspects = List(doc.pageCount) { i -> doc.pageSize(i).let { (w, h) -> h.toFloat() / w } }
-                    EditorState(store, info, doc, aspects)
+                    EditorState(store, store.loadIndex().firstOrNull { it.id == info.id } ?: info, doc, aspects)
                 }
             } catch (e: Exception) {
                 toast("No se pudo abrir el PDF")
@@ -99,7 +106,7 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
             busy = true
             try {
                 val info = withContext(Dispatchers.IO) { store.import(uri) }
-                recents = store.loadIndex()
+                reload()
                 busy = false
                 openInfo(info)
             } catch (e: Exception) {
@@ -114,7 +121,7 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
             busy = true
             try {
                 val info = withContext(Dispatchers.IO) { store.createFromTemplate(kind) }
-                recents = store.loadIndex()
+                reload()
                 busy = false
                 openInfo(info)
             } catch (e: Exception) {
@@ -131,12 +138,18 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
             withContext(Dispatchers.IO) {
                 st.save()
                 store.setLastPage(st.info.id, st.currentPage)
+                try {
+                    store.refreshThumbnail(st.info.id, st.doc, st.anns)
+                } catch (e: Exception) {
+                    // la miniatura anterior se queda
+                }
                 st.doc.close()
             }
-            recents = store.loadIndex()
+            reload()
         }
     }
 
+    // ───── actualizaciones desde GitHub ─────
     var update by remember { mutableStateOf<Updater.Release?>(null) }
     var progress by remember { mutableStateOf<Float?>(null) }
 
@@ -176,13 +189,22 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
         if (uri != null) importUri(uri)
     }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        val st = editor
-        if (uri != null && st != null) {
+        val info = exportInfo
+        if (uri != null && info != null) {
             scope.launch {
                 exporting = true
                 try {
                     withContext(Dispatchers.IO) {
-                        ctx.contentResolver.openOutputStream(uri)!!.use { Exporter.export(st.doc, st.extraPages, st.anns, it) }
+                        ctx.contentResolver.openOutputStream(uri)!!.use { out ->
+                            val st = editor
+                            if (st != null && st.info.id == info.id) {
+                                Exporter.export(st.doc, st.extraPages, st.anns, out)
+                            } else {
+                                PdfDoc(store.pdfFile(info.id)).use { d ->
+                                    Exporter.export(d, info.extra, store.loadAnns(info.id), out)
+                                }
+                            }
+                        }
                     }
                     toast("PDF guardado con tus anotaciones")
                 } catch (e: Exception) {
@@ -207,20 +229,21 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
         val st = editor
         if (st == null) {
             HomeScreen(
-                recents = recents,
+                docs = docs,
                 store = store,
                 onImport = { picker.launch(arrayOf("application/pdf")) },
                 onTemplate = { createTemplate(it) },
                 onCheckUpdate = { checkUpdate(true) },
                 onOpen = { openInfo(it) },
-                onDelete = { store.delete(it.id); recents = store.loadIndex() },
+                onExport = { exportInfo = it; saver.launch(it.name + "-anotado.pdf") },
+                onChanged = { reload() },
             )
         } else {
             EditorScreen(
                 state = st,
                 exporting = exporting,
                 onClose = { closeEditor() },
-                onExport = { saver.launch(st.info.name + "-anotado.pdf") },
+                onExport = { exportInfo = st.info; saver.launch(st.info.name + "-anotado.pdf") },
             )
         }
         update?.let { r ->

@@ -4,7 +4,7 @@ Evability es una **app sencilla para editar PDFs** en Android, pensada para tabl
 
 ## Qué puede hacer
 
-- **Importar PDFs** y tenerlos en una lista de **recientes**, con miniatura y retomando por la última página que viste.
+- **Importar PDFs** y organizarlos: recientes agrupados por fecha, tarjeta «Continuar donde lo dejaste», buscador, orden, **favoritos**, **carpetas**, selección múltiple, renombrar, duplicar y eliminar con «Deshacer». Cada tarjeta muestra tus anotaciones y por qué página vas.
 - **Anotar con el lápiz:** bolígrafo, resaltador y borrador, con colores y grosor ajustables. El lápiz dibuja y el dedo desplaza la página (con zoom por pellizco e inercia).
 - **Escribir texto** sobre el PDF y arrastrarlo; pellizcar para cambiar su tamaño.
 - **Cambiar texto del PDF:** tapa un fragmento con el color del fondo y escribe el nuevo encima.
@@ -13,7 +13,7 @@ Evability es una **app sencilla para editar PDFs** en Android, pensada para tabl
 - **Plantillas:** mensual, semanal y hoja en blanco.
 - **Añadir páginas en blanco** a cualquier documento.
 - **Exportar** el PDF con todas las anotaciones.
-- **Tema oscuro** y botón para ocultar la barra de herramientas.
+- **Tema oscuro**, color de la app a elegir (rosa, lila, menta…) y botón para ocultar la barra de herramientas.
 - **Actualizaciones** desde esta página con un botón (icono de dos flechas, arriba a la derecha).
 
 ## Instalar

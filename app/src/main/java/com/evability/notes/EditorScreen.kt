@@ -218,7 +218,7 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             ToolBtn(false, Icons.AutoMirrored.Filled.Undo, "Deshacer", enabled = state.canUndo) { state.undo() }
             ToolBtn(false, Icons.AutoMirrored.Filled.Redo, "Rehacer", enabled = state.canRedo) { state.redo() }
             VDivider()
-            ToolBtn(false, Icons.Default.ZoomOut, "Alejar") { state.zoom = (state.zoom - 0.25f).coerceAtLeast(1f) }
+            ToolBtn(false, Icons.Default.ZoomOut, "Alejar") { state.zoom = (state.zoom - 0.25f).coerceAtLeast(MIN_ZOOM) }
             Text("${(state.zoom * 100).roundToInt()}%", color = OnSurfaceDim, modifier = Modifier.widthIn(min = 46.dp))
             ToolBtn(false, Icons.Default.ZoomIn, "Acercar") { state.zoom = (state.zoom + 0.25f).coerceAtMost(3f) }
             VDivider()
@@ -358,7 +358,7 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
                     val touches = ev.changes.filter { it.pressed && it.type == PointerType.Touch }
                     if (touches.size >= 2 && !state.objectGesture) {
                         val z = ev.calculateZoom()
-                        if (z != 1f) state.zoom = (state.zoom * z).coerceIn(1f, 3f)
+                        if (z != 1f) state.zoom = (state.zoom * z).coerceIn(MIN_ZOOM, 3f)
                         ev.changes.forEach { if (it.positionChanged()) it.consume() }
                     }
                 } while (ev.changes.any { it.pressed })
@@ -501,6 +501,9 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
 }
 
 private const val FLING_BOOST = 1.3f
+
+/** Zoom mínimo: 0.5 = la página ocupa la mitad del ancho; a los lados queda el fondo oscuro (no se puede escribir fuera de la página). */
+private const val MIN_ZOOM = 0.5f
 
 private fun renderWidthFor(px: Float): Int = (ceil(px / 400f) * 400).toInt().coerceIn(800, 2800)
 

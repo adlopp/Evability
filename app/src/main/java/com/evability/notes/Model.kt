@@ -84,6 +84,8 @@ data class DocInfo(
     val added: Long,
     val lastPage: Int = 0,
     val extra: Int = 0, // páginas en blanco añadidas al final
+    val favorite: Boolean = false,
+    val folder: String = "", // "" = sin carpeta
 )
 
 /** `size`/`cover`: al "cambiar texto" se guarda el tapado junto con el texto nuevo (y se descarta si se cancela). */
