@@ -27,6 +27,7 @@ object StickerBitmaps {
         Pack("Gatitos", "cat_", "cat_tabby_sit"),
         Pack("Hamsters", "ham_", "ham_golden_seed"),
         Pack("Pollitos y pájaros", "bir_", "bir_chick_seed"),
+        Pack("Chinchillas", "chi_", "chi_gray_hay"),
     )
 
     private val packCache = HashMap<String, List<String>>()

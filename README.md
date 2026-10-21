@@ -8,7 +8,7 @@ Evability es una **app sencilla para editar PDFs** en Android, pensada para tabl
 - **Anotar con el lápiz:** bolígrafo, resaltador y borrador, con colores y grosor ajustables. El lápiz dibuja y el dedo desplaza la página (con zoom por pellizco e inercia).
 - **Escribir texto** sobre el PDF y arrastrarlo; pellizcar para cambiar su tamaño.
 - **Cambiar texto del PDF:** tapa un fragmento con el color del fondo y escribe el nuevo encima.
-- **Pegatinas** (packs de gatitos, hamsters y pollitos incluidos, emojis y tus propias imágenes), que se mueven, giran y cambian de tamaño con los dedos.
+- **Pegatinas** (packs de gatitos, hamsters, pollitos y chinchillas incluidos, emojis y tus propias imágenes), que se mueven, giran y cambian de tamaño con los dedos.
 - **Post-its** para dibujar encima.
 - **Plantillas:** mensual, semanal y hoja en blanco.
 - **Añadir páginas en blanco** a cualquier documento.
@@ -34,6 +34,6 @@ El APK queda en `app/build/outputs/apk/debug/`.
 
 ## Notas
 
-- Las pegatinas de gatitos, hamsters y pollitos son dibujos originales hechos para este proyecto.
+- Las pegatinas de gatitos, hamsters, pollitos y chinchillas son dibujos originales hechos para este proyecto.
 - Al exportar, las páginas del PDF quedan como imagen (el texto original deja de ser seleccionable).
 - Las anotaciones se guardan dentro de la app; el PDF original no se modifica.
