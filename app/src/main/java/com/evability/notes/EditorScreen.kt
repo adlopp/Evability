@@ -134,6 +134,11 @@ private val Palette = listOf(
     0xFF43A047, 0xFF1E88E5, 0xFF8E24AA, 0xFFEC407A,
 ).map { it.toInt() }
 
+/** Paleta pastel del subrayador: amarillo, naranja, verde, azul, morado y rosa. */
+private val HighlightPalette = listOf(
+    0xFFFFF59D, 0xFFFFCC80, 0xFFA5D6A7, 0xFF90CAF9, 0xFFCE93D8, 0xFFF8BBD0,
+).map { it.toInt() }
+
 private val EraserIcon: ImageVector by lazy {
     ImageVector.Builder("Eraser", 24.dp, 24.dp, 24f, 24f).addPath(
         PathParser().parsePathString(
@@ -285,7 +290,7 @@ private fun OptionsBar(state: EditorState) {
                             Tool.HIGHLIGHTER -> state.hlColor
                             else -> state.textColor
                         }
-                        ColorRow(color) {
+                        ColorRow(color, palette = if (state.tool == Tool.HIGHLIGHTER) HighlightPalette else Palette) {
                             when (state.tool) {
                                 Tool.PEN -> state.penColor = it
                                 Tool.HIGHLIGHTER -> state.hlColor = it
@@ -322,9 +327,9 @@ private fun OptionsBar(state: EditorState) {
 }
 
 @Composable
-private fun ColorRow(selected: Int, onSelect: (Int) -> Unit) {
+private fun ColorRow(selected: Int, palette: List<Int> = Palette, onSelect: (Int) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Palette.forEach { c ->
+        palette.forEach { c ->
             val sel = c == selected
             Box(
                 Modifier.size(30.dp).clip(CircleShape).background(Color(c))

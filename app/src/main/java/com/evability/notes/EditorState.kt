@@ -21,7 +21,7 @@ class EditorState(
 
     var tool by mutableStateOf(Tool.PEN)
     var penColor by mutableIntStateOf(0xFF1E88E5.toInt())
-    var hlColor by mutableIntStateOf(0xFFFDD835.toInt())
+    var hlColor by mutableIntStateOf(0xFFFFF59D.toInt())
     var textColor by mutableIntStateOf(0xFF111111.toInt())
     var penWidth by mutableFloatStateOf(0.003f)
     var hlWidth by mutableFloatStateOf(0.024f)

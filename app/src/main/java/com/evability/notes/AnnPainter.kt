@@ -3,6 +3,8 @@ package com.evability.notes
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Path
 import android.graphics.RectF
 import android.text.StaticLayout
@@ -33,7 +35,9 @@ object AnnPainter {
     fun drawStroke(c: Canvas, pts: List<Offset>, color: Int, width: Float, highlighter: Boolean, w: Float) {
         if (pts.isEmpty()) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.color = if (highlighter) (color and 0x00FFFFFF) or (0x61 shl 24) else color
+        paint.color = if (highlighter) highlightColor(color) else color
+        // El subrayador "multiplica" con la página: el color pastel se ve sobre el papel y el texto negro sigue negro.
+        if (highlighter) paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
         if (pts.size == 1) {
             paint.style = Paint.Style.FILL
             c.drawCircle(pts[0].x * w, pts[0].y * w, max(width * w / 2f, 0.5f), paint)
@@ -53,6 +57,20 @@ object AnnPainter {
         path.lineTo(pts.last().x * w, pts.last().y * w)
         c.drawPath(path, paint)
     }
+
+    /** Subrayados antiguos (colores intensos) se pintan con el pastel equivalente; los demás, tal cual y opacos. */
+    private val LEGACY_HIGHLIGHT = mapOf(
+        0xFFFDD835.toInt() to 0xFFFFF59D.toInt(), // amarillo
+        0xFFFB8C00.toInt() to 0xFFFFCC80.toInt(), // naranja
+        0xFF43A047.toInt() to 0xFFA5D6A7.toInt(), // verde
+        0xFF1E88E5.toInt() to 0xFF90CAF9.toInt(), // azul
+        0xFF8E24AA.toInt() to 0xFFCE93D8.toInt(), // morado
+        0xFFEC407A.toInt() to 0xFFF8BBD0.toInt(), // rosa
+        0xFFE53935.toInt() to 0xFFFFAB91.toInt(), // rojo
+        0xFF111111.toInt() to 0xFFB0BEC5.toInt(), // negro -> gris azulado
+    )
+
+    private fun highlightColor(c: Int): Int = (LEGACY_HIGHLIGHT[c] ?: c) or (0xFF shl 24)
 
     fun drawSticker(c: Canvas, s: Sticker, w: Float, bitmapScale: Float) {
         val side = s.size * w
