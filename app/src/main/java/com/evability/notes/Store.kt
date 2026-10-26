@@ -242,20 +242,23 @@ class Store(context: Context) {
         listOf(pdfFile(id), thumbFile(id), annFile(id)).forEach { it.delete() }
     }
 
-    /** Copia el PDF elegido a la app (así sigue disponible aunque el original se mueva) y crea la miniatura. */
+    /** Copia el PDF elegido a la app (así sigue disponible aunque el original se mueva) y crea la miniatura. Si es un Word (.docx) lo convierte a PDF. */
     fun import(uri: Uri): DocInfo {
         val id = UUID.randomUUID().toString()
         val file = pdfFile(id)
         try {
+            val name = rawName(uri)
+            val docx = name.endsWith(".docx", ignoreCase = true) || appContext.contentResolver.getType(uri) == DocxPdf.MIME
             appContext.contentResolver.openInputStream(uri)!!.use { input ->
-                file.outputStream().use { out -> input.copyTo(out) }
+                // Los Word (.docx) se convierten a PDF al importarlos.
+                if (docx) DocxPdf.convert(input, file, appContext.cacheDir) else file.outputStream().use { out -> input.copyTo(out) }
             }
             val pages = PdfDoc(file).use { doc ->
                 doc.writeThumbnail(thumbFile(id))
                 doc.pageCount
             }
             val now = System.currentTimeMillis()
-            val info = DocInfo(id, displayName(uri), pages, now, now)
+            val info = DocInfo(id, displayName(name), pages, now, now)
             saveIndex(listOf(info) + loadIndex())
             return info
         } catch (e: Exception) {
@@ -265,13 +268,15 @@ class Store(context: Context) {
         }
     }
 
-    private fun displayName(uri: Uri): String {
+    private fun rawName(uri: Uri): String {
         var name: String? = null
         appContext.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst()) name = c.getString(0)
         }
-        return (name ?: "Documento").removeSuffix(".pdf").removeSuffix(".PDF")
+        return name ?: "Documento"
     }
+
+    private fun displayName(name: String): String = name.replace(Regex("""\.(pdf|docx)$""", RegexOption.IGNORE_CASE), "")
 
     @Synchronized
     fun saveAnns(id: String, anns: List<Ann>) {

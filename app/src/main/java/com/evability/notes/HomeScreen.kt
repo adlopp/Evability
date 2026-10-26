@@ -253,7 +253,7 @@ fun HomeScreen(
                     ) {
                         Icon(Icons.Default.FileUpload, contentDescription = null)
                         Spacer(Modifier.width(10.dp))
-                        Text("Importar PDF", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Importar PDF/Word", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     }
                     OutlinedButton(
                         onClick = { showTemplates = true },

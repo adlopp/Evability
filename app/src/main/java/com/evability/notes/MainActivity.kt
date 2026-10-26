@@ -118,7 +118,7 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
                 openInfo(info)
             } catch (e: Exception) {
                 busy = false
-                toast("No se pudo importar el archivo. ¿Es un PDF válido y sin contraseña?")
+                toast("No se pudo importar el archivo. ¿Es un PDF (sin contraseña) o un Word .docx válido? Los .doc antiguos no se admiten.")
             }
         }
     }
@@ -238,7 +238,7 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
             HomeScreen(
                 docs = docs,
                 store = store,
-                onImport = { picker.launch(arrayOf("application/pdf")) },
+                onImport = { picker.launch(arrayOf("application/pdf", DocxPdf.MIME)) },
                 onTemplate = { createTemplate(it) },
                 onCheckUpdate = { checkUpdate(true) },
                 onOpen = { openInfo(it) },
