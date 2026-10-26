@@ -1,5 +1,9 @@
 package com.evability.notes
 
+import android.os.ext.SdkExtensions
+import android.os.Build
+import android.graphics.pdf.models.selection.SelectionBoundary
+import android.graphics.Point
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
@@ -12,6 +16,13 @@ import java.io.File
 import java.io.OutputStream
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+/** Texto seleccionado en una página; `rects` en coordenadas normalizadas respecto al ancho de la página. */
+class TextSelection(val page: Int, val text: String, val rects: List<RectF>)
+
+/** La selección de texto de PdfRenderer existe desde Android 15 (o con la extensión 13 del sistema en Android 12+). */
+fun textSelectionSupported(): Boolean =
+    Build.VERSION.SDK_INT >= 35 || (Build.VERSION.SDK_INT >= 31 && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 13)
 
 /** Envoltorio de PdfRenderer. El renderer solo admite una página abierta a la vez, de ahí el candado. */
 class PdfDoc(file: File) : Closeable {
@@ -38,6 +49,24 @@ class PdfDoc(file: File) : Closeable {
             bmp.eraseColor(Color.WHITE)
             p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             bmp
+        }
+    }
+
+    /**
+     * Selecciona el texto entre dos puntos (coordenadas normalizadas respecto al ancho de la página). Con el mismo punto
+     * en los dos extremos selecciona la palabra. Devuelve null si no hay texto ahí o el sistema no lo soporta.
+     */
+    fun selectText(i: Int, ax: Float, ay: Float, bx: Float, by: Float): TextSelection? = synchronized(lock) {
+        check(!closed) { "closed" }
+        if (!textSelectionSupported()) return@synchronized null
+        renderer.openPage(i).use { p ->
+            val w = p.width.toFloat()
+            fun at(x: Float, y: Float) = SelectionBoundary(Point((x * w).roundToInt(), (y * w).roundToInt()))
+            val sel = p.selectContent(at(ax, ay), at(bx, by)) ?: p.selectContent(at(bx, by), at(ax, ay)) ?: return@use null
+            val contents = sel.selectedTextContents
+            val text = contents.joinToString(" ") { it.text }.trim()
+            if (text.isEmpty()) return@use null
+            TextSelection(i, text, contents.flatMap { it.bounds }.map { RectF(it.left / w, it.top / w, it.right / w, it.bottom / w) })
         }
     }
 

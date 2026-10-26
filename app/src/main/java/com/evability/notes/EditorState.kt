@@ -37,6 +37,20 @@ class EditorState(
     @Volatile
     var objectGesture = false
 
+    /** Texto seleccionado con pulsación larga (null = nada seleccionado). */
+    var textSel by mutableStateOf<TextSelection?>(null)
+
+    /** Subraya con el resaltador (en su color actual) las líneas del texto seleccionado. */
+    fun highlightSelection() {
+        val sel = textSel ?: return
+        addAll(
+            sel.rects.map { r ->
+                Stroke(nextId(), sel.page, true, hlColor, r.height() * 1.05f, listOf(Offset(r.left, r.centerY()), Offset(r.right, r.centerY())))
+            }
+        )
+        textSel = null
+    }
+
     /** Pellizco/giro sobre una pegatina o un texto. `dx`, `dy` en coordenadas normalizadas. */
     fun transformAnn(id: Long, zoom: Float, rotDeg: Float, dx: Float, dy: Float) {
         anns = anns.map {

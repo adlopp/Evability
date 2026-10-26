@@ -1,5 +1,14 @@
 package com.evability.notes
 
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.material.icons.filled.Close
+import android.widget.Toast
+import android.content.Context
+import android.content.ClipboardManager
+import android.content.ClipData
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -381,6 +390,7 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
     }
 
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     val density = LocalDensity.current
     var panX by remember { mutableFloatStateOf(0f) }
     val maxPanHolder = remember { FloatArray(1) }
@@ -536,6 +546,39 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
                 color = OnSurface,
             )
         }
+
+        state.textSel?.let { sel ->
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                shape = RoundedCornerShape(50),
+                color = Surface1.copy(alpha = 0.97f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Outline),
+                shadowElevation = 4.dp,
+            ) {
+                Row(Modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        sel.text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = OnSurfaceDim,
+                        modifier = Modifier.widthIn(max = 200.dp).padding(horizontal = 12.dp),
+                    )
+                    TextButton(onClick = {
+                        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                            .setPrimaryClip(ClipData.newPlainText("Evability", sel.text))
+                        Toast.makeText(ctx, "Texto copiado", Toast.LENGTH_SHORT).show()
+                        state.textSel = null
+                    }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Copiar")
+                    }
+                    TextButton(onClick = { state.highlightSelection() }) {
+                        Icon(Icons.Default.Highlight, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Subrayar")
+                    }
+                    IconButton(onClick = { state.textSel = null }) { Icon(Icons.Default.Close, "Cerrar selección") }
+                }
+            }
+        }
     }
 }
 
@@ -564,6 +607,9 @@ private fun androidx.compose.ui.input.pointer.PointerInputChange.positionChanged
 @Composable
 private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (TextEdit) -> Unit, onStickerTap: (Sticker) -> Unit, onPostitTap: (Postit) -> Unit) {
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val renderW = renderWidthFor(with(density) { pageWidth.toPx() })
     // Si la página ya está en caché aparece en el mismo fotograma (sin parpadeo en blanco al volver a ella).
     var bitmap by remember(index) { mutableStateOf<ImageBitmap?>(state.cache.get("$index@$renderW")?.asImageBitmap()) }
@@ -779,6 +825,64 @@ private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (
                     }
                 }
             }
+            .pointerInput(index) {
+                // Pulsación larga con un dedo: selecciona la palabra (y, arrastrando, un tramo de texto) para copiarla o subrayarla.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    if (down.type != PointerType.Touch) return@awaitEachGesture
+                    val w = size.width.toFloat()
+                    val p0 = Offset(down.position.x / w, down.position.y / w)
+                    val fingerDrawing = state.fingerDraw && state.tool in listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.ERASER, Tool.COVER)
+                    val onObject = state.tool in listOf(Tool.SELECT, Tool.TEXT, Tool.STICKER, Tool.POSTIT) && state.hit(index, p0, only = state.tool) != null
+                    if (fingerDrawing || onObject) return@awaitEachGesture
+
+                    var cancelled = false
+                    var tapped = false
+                    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        while (!cancelled) {
+                            val ev = awaitPointerEvent(PointerEventPass.Initial)
+                            val ch = ev.changes.firstOrNull { it.id == down.id }
+                            if (ch == null || !ch.pressed || ev.changes.count { it.pressed } >= 2 ||
+                                (ch.position - down.position).getDistance() > viewConfiguration.touchSlop
+                            ) {
+                                cancelled = true
+                                tapped = ch != null && !ch.pressed
+                            }
+                        }
+                    }
+                    if (cancelled) {
+                        if (tapped) state.textSel = null // un toque corto fuera quita la selección
+                        return@awaitEachGesture
+                    }
+
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    down.consume()
+                    var job: Job? = null
+                    fun select(a: Offset, b: Offset, first: Boolean) {
+                        job?.cancel()
+                        job = scope.launch {
+                            val r = withContext(Dispatchers.IO) {
+                                try { state.doc.selectText(index, a.x, a.y, b.x, b.y) } catch (e: Exception) { null }
+                            }
+                            if (r != null) state.textSel = r
+                            else if (first) {
+                                val msg = if (textSelectionSupported()) "No hay texto seleccionable aquí (¿es un documento escaneado?)" else "Seleccionar texto necesita Android 15 o superior"
+                                Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    select(p0, p0, true)
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        ch.consume()
+                        if (!ch.pressed) break
+                        if ((ch.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                            select(p0, Offset(ch.position.x / w, ch.position.y / w), false)
+                        }
+                    }
+                }
+            }
     ) {
         bitmap?.let {
             Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
@@ -787,6 +891,10 @@ private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (
             drawIntoCanvas { c ->
                 val nc = c.nativeCanvas
                 AnnPainter.drawAll(nc, state.anns.filter { it.page == index }, size.width)
+                state.textSel?.takeIf { it.page == index }?.let { sel ->
+                    val paint = android.graphics.Paint().apply { color = Accent.copy(alpha = 0.35f).toArgb() }
+                    sel.rects.forEach { r -> nc.drawRect(r.left * size.width, r.top * size.width, r.right * size.width, r.bottom * size.width, paint) }
+                }
                 liveRect.value?.let { (a, b) ->
                     val w = size.width
                     nc.drawRect(
