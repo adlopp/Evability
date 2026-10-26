@@ -52,6 +52,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -156,20 +157,37 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
     var stickerEdit by remember { mutableStateOf<Sticker?>(null) }
     var postitEdit by remember { mutableStateOf<Postit?>(null) }
     val scope = rememberCoroutineScope()
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.info.lastPage.coerceIn(0, state.totalPages - 1))
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.info.lastPage.coerceIn(0, state.visibleCount - 1))
     val addPage: () -> Unit = {
         scope.launch {
             state.addBlankPage()
             delay(80)
-            listState.animateScrollToItem(state.totalPages - 1)
+            listState.animateScrollToItem(state.visibleCount - 1)
         }
     }
     val addTemplate: () -> Unit = {
         scope.launch {
             state.addTemplatePage()
             delay(80)
-            listState.animateScrollToItem(state.totalPages - 1)
+            listState.animateScrollToItem(state.visibleCount - 1)
         }
+    }
+
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Eliminar página") },
+            text = { Text("¿Eliminar la página ${state.currentPage + 1} de ${state.visibleCount}? Desaparecerá del documento y de la exportación a PDF.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.deletePageAt(state.currentPage)
+                    confirmDelete = false
+                }) { Text("Eliminar") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancelar") } },
+        )
     }
 
     // Autoguardado de las anotaciones poco después de cada cambio.
@@ -185,7 +203,7 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
     Box(Modifier.fillMaxSize().background(EditorBg).statusBarsPadding().navigationBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
             if (!barsHidden) {
-                TopBar(state, onClose, onExport, addPage, addTemplate, onHide = { barsHidden = true })
+                TopBar(state, onClose, onExport, addPage, addTemplate, onDeletePage = { confirmDelete = true }, onHide = { barsHidden = true })
                 OptionsBar(state)
             }
             if (exporting) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -207,7 +225,7 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
 // ───────────────────────────── Barras de herramientas ─────────────────────────────
 
 @Composable
-private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit, onAddPage: () -> Unit, onAddTemplate: () -> Unit, onHide: () -> Unit) {
+private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit, onAddPage: () -> Unit, onAddTemplate: () -> Unit, onDeletePage: () -> Unit, onHide: () -> Unit) {
     Surface(color = Surface1) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
@@ -239,6 +257,7 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             ToolBtn(false, Icons.Default.ZoomIn, "Acercar") { state.zoom = (state.zoom + 0.25f).coerceAtMost(3f) }
             VDivider()
             ToolBtn(false, Icons.Default.NoteAdd, "Añadir página en blanco") { onAddPage() }
+            ToolBtn(false, Icons.Default.Delete, "Eliminar esta página", enabled = state.visibleCount > 1) { onDeletePage() }
             if (state.info.templateKind != null) {
                 ToolBtn(false, Icons.Default.ContentCopy, "Duplicar la plantilla (vacía) al final") { onAddTemplate() }
             }
@@ -355,9 +374,10 @@ private fun ColorRow(selected: Int, palette: List<Int> = Palette, onSelect: (Int
 
 @Composable
 private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -> Unit, onTextTap: (TextEdit) -> Unit, onStickerTap: (Sticker) -> Unit, onPostitTap: (Postit) -> Unit, modifier: Modifier) {
-    val count = state.totalPages
+    val visible = remember(state.hidden, state.totalPages) { state.visiblePages() }
+    val count = visible.size
     LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }.collect { state.currentPage = minOf(it, state.totalPages - 1) }
+        snapshotFlow { listState.firstVisibleItemIndex }.collect { state.currentPage = minOf(it, state.visibleCount - 1) }
     }
 
     val scope = rememberCoroutineScope()
@@ -453,11 +473,11 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
 
         // Precarga las páginas cercanas para que, al deslizar, ya estén dibujadas.
         val rw = renderWidthFor(with(density) { pageW.toPx() })
-        LaunchedEffect(rw, count) {
+        LaunchedEffect(rw, visible) {
             snapshotFlow { listState.firstVisibleItemIndex to (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) }
                 .collectLatest { (first, last) ->
                     delay(50)
-                    val wanted = ((first - 1)..(last + 3)).filter { it in 0 until state.doc.pageCount }.sortedBy { abs(it - first) }
+                    val wanted = ((first - 1)..(last + 3)).mapNotNull { visible.getOrNull(it) }.filter { it < state.doc.pageCount }.sortedBy { abs(visible.indexOf(it) - first) }
                     for (i in wanted) {
                         val key = "$i@$rw"
                         if (state.cache.get(key) == null) {
@@ -483,9 +503,9 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
                 contentPadding = PaddingValues(vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                items(count, key = { it }) { i ->
+                items(count, key = { visible[it] }) { i ->
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        PageItem(state, i, pageW, onTextTap, onStickerTap, onPostitTap)
+                        PageItem(state, visible[i], pageW, onTextTap, onStickerTap, onPostitTap)
                     }
                 }
                 item(key = "add-page") {

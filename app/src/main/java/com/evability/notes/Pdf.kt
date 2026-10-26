@@ -59,13 +59,16 @@ class PdfDoc(file: File) : Closeable {
 
 /** Genera un PDF nuevo con las páginas originales y las anotaciones integradas (las páginas quedan rasterizadas). */
 object Exporter {
-    fun export(doc: PdfDoc, extraPages: Int, anns: List<Ann>, out: OutputStream, extraKinds: List<String> = emptyList(), onProgress: (Int) -> Unit = {}) {
+    fun export(doc: PdfDoc, extraPages: Int, anns: List<Ann>, out: OutputStream, extraKinds: List<String> = emptyList(), hidden: Collection<Int> = emptyList(), onProgress: (Int) -> Unit = {}) {
         val pdf = PdfDocument()
         try {
+            var number = 0
             for (i in 0 until doc.pageCount + extraPages) {
+                if (i in hidden) continue
+                number++
                 val isBlank = i >= doc.pageCount
                 val (pw, ph) = doc.pageSize(if (isBlank) 0 else i)
-                val page = pdf.startPage(PdfDocument.PageInfo.Builder(pw, ph, i + 1).create())
+                val page = pdf.startPage(PdfDocument.PageInfo.Builder(pw, ph, number).create())
                 if (isBlank) {
                     page.canvas.drawColor(Color.WHITE)
                     TemplateKind.entries.firstOrNull { it.name == extraKinds.getOrNull(i - doc.pageCount) }?.let { kind ->
@@ -81,7 +84,7 @@ object Exporter {
                 }
                 AnnPainter.drawAll(page.canvas, anns.filter { it.page == i }, pw.toFloat(), bitmapScale = 3f)
                 pdf.finishPage(page)
-                onProgress(i + 1)
+                onProgress(number)
             }
             pdf.writeTo(out)
         } finally {

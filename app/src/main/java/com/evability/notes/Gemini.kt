@@ -16,45 +16,182 @@ object Gemini {
     const val MODEL = "gemini-flash-latest"
     const val KEY_URL = "https://aistudio.google.com/apikey"
 
-    /** Límite de la API para peticiones con el archivo dentro (20 MB) menos el margen del base64. */
-    private const val MAX_PDF_BYTES = 14 * 1024 * 1024
+    private const val BASE = "https://generativelanguage.googleapis.com"
 
-    class GeminiException(message: String) : Exception(message)
+    /** Hasta este tamaño el PDF va dentro de la petición; por encima se sube antes con la API de archivos. */
+    private const val INLINE_MAX = 8 * 1024 * 1024
+    private const val MAX_PDF_BYTES = 50 * 1024 * 1024
+
+    /** `retryable`: fallo temporal de Google (saturación) que merece otro intento. */
+    class GeminiException(message: String, val retryable: Boolean = false) : Exception(message)
 
     enum class Mode { SUMMARY, RESEARCH }
 
     class Result(val text: String, val sources: List<Pair<String, String>>)
 
-    fun analyze(apiKey: String, pdf: File, name: String, mode: Mode): Result {
-        if (pdf.length() > MAX_PDF_BYTES) throw GeminiException("El PDF es demasiado grande para analizarlo (máximo 14 MB).")
-        val data = Base64.encodeToString(pdf.readBytes(), Base64.NO_WRAP)
+    /** `onProgress(etapa, fracción)`: la fracción es null cuando no se puede saber cuánto falta (barra sin porcentaje). */
+    fun analyze(apiKey: String, pdf: File, name: String, mode: Mode, onProgress: (String, Float?) -> Unit = { _, _ -> }): Result {
+        if (pdf.length() > MAX_PDF_BYTES) throw GeminiException("El PDF es demasiado grande para analizarlo (máximo 50 MB).")
+        val filePart = if (pdf.length() <= INLINE_MAX) {
+            val data = Base64.encodeToString(pdf.readBytes(), Base64.NO_WRAP)
+            JSONObject().put("inlineData", JSONObject().put("mimeType", "application/pdf").put("data", data))
+        } else {
+            uploadFile(apiKey, pdf, name, onProgress)
+        }
 
         val body = JSONObject().apply {
             put("contents", JSONArray().put(JSONObject().apply {
                 put("role", "user")
-                put("parts", JSONArray()
-                    .put(JSONObject().put("inlineData", JSONObject().put("mimeType", "application/pdf").put("data", data)))
-                    .put(JSONObject().put("text", prompt(name, mode))))
+                put("parts", JSONArray().put(filePart).put(JSONObject().put("text", prompt(name, mode))))
             }))
             if (mode == Mode.RESEARCH) put("tools", JSONArray().put(JSONObject().put("googleSearch", JSONObject())))
             put("generationConfig", JSONObject().put("temperature", 0.3))
+        }.toString()
+
+        // Si Google está saturado (500/503) se reintenta con espera creciente antes de rendirse.
+        val waits = longArrayOf(5_000, 15_000, 30_000)
+        var attempt = 0
+        while (true) {
+            try {
+                return generate(apiKey, body, mode, onProgress)
+            } catch (e: GeminiException) {
+                if (!e.retryable || attempt >= waits.size) throw e
+                onProgress("Gemini está saturado; reintentando…", null)
+                Thread.sleep(waits[attempt++])
+            }
+        }
+    }
+
+    /** Sube el PDF con la API de archivos (subida reanudable) y espera a que Google lo procese. */
+    private fun uploadFile(apiKey: String, pdf: File, name: String, onProgress: (String, Float?) -> Unit): JSONObject {
+        onProgress("Subiendo el PDF…", 0f)
+        val start = URL("$BASE/upload/v1beta/files").openConnection() as HttpURLConnection
+        val uploadUrl: String
+        try {
+            start.requestMethod = "POST"
+            start.connectTimeout = 20_000
+            start.readTimeout = 60_000
+            start.doOutput = true
+            start.setRequestProperty("x-goog-api-key", apiKey)
+            start.setRequestProperty("X-Goog-Upload-Protocol", "resumable")
+            start.setRequestProperty("X-Goog-Upload-Command", "start")
+            start.setRequestProperty("X-Goog-Upload-Header-Content-Length", pdf.length().toString())
+            start.setRequestProperty("X-Goog-Upload-Header-Content-Type", "application/pdf")
+            start.setRequestProperty("Content-Type", "application/json")
+            start.outputStream.use { it.write(JSONObject().put("file", JSONObject().put("display_name", name)).toString().toByteArray()) }
+            val code = start.responseCode
+            if (code !in 200..299) {
+                val raw = start.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                throw GeminiException(errorMessage(code, raw), retryable = code == 500 || code == 503)
+            }
+            uploadUrl = start.getHeaderField("x-goog-upload-url") ?: throw GeminiException("Google no aceptó la subida del PDF. Inténtalo de nuevo.")
+        } finally {
+            start.disconnect()
         }
 
-        val conn = URL("https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent").openConnection() as HttpURLConnection
+        val up = URL(uploadUrl).openConnection() as HttpURLConnection
+        val file: JSONObject
+        try {
+            up.requestMethod = "POST"
+            up.connectTimeout = 20_000
+            up.readTimeout = 300_000
+            up.doOutput = true
+            up.setFixedLengthStreamingMode(pdf.length())
+            up.setRequestProperty("X-Goog-Upload-Offset", "0")
+            up.setRequestProperty("X-Goog-Upload-Command", "upload, finalize")
+            pdf.inputStream().use { input ->
+                up.outputStream.use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var done = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        done += n
+                        onProgress("Subiendo el PDF…", done.toFloat() / pdf.length())
+                    }
+                }
+            }
+            onProgress("Google está procesando el PDF…", null)
+            val code = up.responseCode
+            val raw = (if (code in 200..299) up.inputStream else up.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+            if (code !in 200..299) throw GeminiException(errorMessage(code, raw), retryable = code == 500 || code == 503)
+            file = JSONObject(raw).getJSONObject("file")
+        } finally {
+            up.disconnect()
+        }
+
+        // Los archivos grandes pueden tardar un poco en quedar listos.
+        var state = file.optString("state")
+        var tries = 0
+        while (state == "PROCESSING" && tries++ < 60) {
+            Thread.sleep(3_000)
+            val c = URL("$BASE/v1beta/${file.getString("name")}").openConnection() as HttpURLConnection
+            try {
+                c.setRequestProperty("x-goog-api-key", apiKey)
+                c.connectTimeout = 20_000
+                c.readTimeout = 30_000
+                if (c.responseCode in 200..299) state = JSONObject(c.inputStream.bufferedReader().use { it.readText() }).optString("state")
+            } finally {
+                c.disconnect()
+            }
+        }
+        if (state == "FAILED") throw GeminiException("Google no pudo procesar el PDF. Prueba con otro archivo.")
+        return JSONObject().put("fileData", JSONObject().put("mimeType", "application/pdf").put("fileUri", file.getString("uri")))
+    }
+
+    /** Pide el análisis en streaming: la respuesta llega por trozos, así la conexión no se corta por inactividad en documentos largos. */
+    private fun generate(apiKey: String, body: String, mode: Mode, onProgress: (String, Float?) -> Unit): Result {
+        onProgress(if (mode == Mode.RESEARCH) "Analizando y buscando en internet…" else "Analizando el documento…", null)
+        val expected = if (mode == Mode.RESEARCH) 7000f else 5000f
+        val conn = URL("$BASE/v1beta/models/$MODEL:streamGenerateContent?alt=sse").openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 20_000
-            conn.readTimeout = if (mode == Mode.RESEARCH) 600_000 else 180_000
+            conn.readTimeout = if (mode == Mode.RESEARCH) 600_000 else 300_000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("x-goog-api-key", apiKey)
-            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            conn.outputStream.use { it.write(body.toByteArray()) }
 
             val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val raw = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            if (code !in 200..299) throw GeminiException(errorMessage(code, raw))
-            return parse(raw)
+            if (code !in 200..299) {
+                val raw = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                throw GeminiException(errorMessage(code, raw), retryable = code == 500 || code == 503)
+            }
+
+            val text = StringBuilder()
+            val sources = LinkedHashMap<String, String>()
+            var blocked = ""
+            conn.inputStream.bufferedReader().forEachLine { line ->
+                if (!line.startsWith("data:")) return@forEachLine
+                val chunk = JSONObject(line.removePrefix("data:").trim())
+                chunk.optJSONObject("error")?.let {
+                    val c = it.optInt("code", 500)
+                    throw GeminiException(errorMessage(c, chunk.toString()), retryable = c == 500 || c == 503)
+                }
+                chunk.optJSONObject("promptFeedback")?.optString("blockReason")?.takeIf { it.isNotBlank() }?.let { blocked = it }
+                val cand = chunk.optJSONArray("candidates")?.optJSONObject(0) ?: return@forEachLine
+                val parts = cand.optJSONObject("content")?.optJSONArray("parts")
+                if (parts != null) for (i in 0 until parts.length()) {
+                    val part = parts.getJSONObject(i)
+                    if (!part.optBoolean("thought", false)) text.append(part.optString("text"))
+                }
+                if (text.isNotEmpty()) onProgress("Escribiendo el resumen…", (text.length / expected).coerceAtMost(0.95f))
+                val chunks = cand.optJSONObject("groundingMetadata")?.optJSONArray("groundingChunks")
+                if (chunks != null) for (i in 0 until chunks.length()) {
+                    val web = chunks.getJSONObject(i).optJSONObject("web") ?: continue
+                    val uri = web.optString("uri")
+                    if (uri.isNotBlank()) sources.putIfAbsent(uri, web.optString("title").ifBlank { uri })
+                }
+            }
+
+            val result = text.toString().trim()
+            if (result.startsWith(UNREADABLE)) throw GeminiException("No se puede leer el documento: está vacío, borroso o demasiado tachado para analizarlo.")
+            if (result.isEmpty()) {
+                throw GeminiException(if (blocked.isNotEmpty()) "Gemini no devolvió respuesta ($blocked)." else "Gemini devolvió una respuesta vacía. Prueba de nuevo.", retryable = blocked.isEmpty())
+            }
+            return Result(result, sources.map { it.value to it.key })
         } finally {
             conn.disconnect()
         }
@@ -70,30 +207,9 @@ object Gemini {
             code == 400 && detail.contains("API key", ignoreCase = true) -> "La clave de Gemini no es válida. Revísala en Ajustes."
             code == 401 || code == 403 -> "Gemini rechazó la clave. Revísala en Ajustes."
             code == 429 -> "Límite de Gemini alcanzado. Espera un rato (o hasta mañana) y vuelve a intentarlo." + if (detail.isNotBlank()) " Detalle de Google: ${detail.take(500)}" else ""
-            code == 503 -> "Gemini está saturado en este momento. Inténtalo de nuevo en unos minutos."
+            code == 503 -> "Gemini sigue saturado tras varios intentos. Inténtalo de nuevo en unos minutos."
             else -> "Error de Gemini ($code)" + if (detail.isNotBlank()) ": $detail" else ""
         }
-    }
-
-    private fun parse(raw: String): Result {
-        val json = JSONObject(raw)
-        val cand = json.optJSONArray("candidates")?.optJSONObject(0)
-            ?: throw GeminiException("Gemini no devolvió respuesta" + (json.optJSONObject("promptFeedback")?.optString("blockReason")?.let { " ($it)" } ?: ""))
-        val parts = cand.optJSONObject("content")?.optJSONArray("parts")
-        val text = buildString {
-            if (parts != null) for (i in 0 until parts.length()) append(parts.getJSONObject(i).optString("text"))
-        }.trim()
-        if (text.startsWith(UNREADABLE)) throw GeminiException("No se puede leer el documento: está vacío, borroso o demasiado tachado para analizarlo.")
-        if (text.isEmpty()) throw GeminiException("Gemini devolvió una respuesta vacía. Prueba de nuevo.")
-
-        val sources = LinkedHashMap<String, String>()
-        val chunks = cand.optJSONObject("groundingMetadata")?.optJSONArray("groundingChunks")
-        if (chunks != null) for (i in 0 until chunks.length()) {
-            val web = chunks.getJSONObject(i).optJSONObject("web") ?: continue
-            val uri = web.optString("uri")
-            if (uri.isNotBlank()) sources.putIfAbsent(uri, web.optString("title").ifBlank { uri })
-        }
-        return Result(text, sources.map { it.value to it.key })
     }
 
     private const val UNREADABLE = "NO_LEGIBLE"

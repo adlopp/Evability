@@ -88,6 +88,7 @@ data class DocInfo(
     val folder: String = "", // "" = sin carpeta
     val template: String = "", // TemplateKind con el que se creó ("" = importado)
     val extraKinds: List<String> = emptyList(), // por cada página extra: "" = en blanco, o el nombre de una plantilla
+    val hidden: List<Int> = emptyList(), // páginas eliminadas (el PDF original no se toca, solo se ocultan)
 ) {
     /** Plantilla mensual/semanal de este documento (los creados antes de guardar el tipo se reconocen por el nombre). */
     val templateKind: TemplateKind?

@@ -32,12 +32,14 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -121,14 +123,22 @@ fun AnalyzeFlow(docs: List<DocInfo>, store: Store, onOpenSettings: () -> Unit, o
     var phase by remember { mutableStateOf<Phase>(Phase.Pick) }
     var picked by remember { mutableStateOf(docs.maxByOrNull { it.lastOpened }) }
     var job by remember { mutableStateOf<Job?>(null) }
+    var stage by remember { mutableStateOf("Preparando…") }
+    var fraction by remember { mutableStateOf<Float?>(null) }
+    var seconds by remember { mutableStateOf(0) }
 
     fun start(mode: Gemini.Mode) {
         val doc = picked ?: return
         phase = Phase.Running(mode)
+        stage = "Preparando…"
+        fraction = null
+        seconds = 0
         job = scope.launch {
             try {
                 val info = withContext(Dispatchers.IO) {
-                    val r = Gemini.analyze(Prefs.geminiKey, store.pdfFile(doc.id), doc.name, mode)
+                    val r = Gemini.analyze(Prefs.geminiKey, store.pdfFile(doc.id), doc.name, mode) { st, f -> stage = st; fraction = f }
+                    stage = "Creando el documento…"
+                    fraction = 1f
                     val title = (if (mode == Gemini.Mode.RESEARCH) "Resumen_investigación_" else "Resumen_") + doc.name
                     try {
                         store.createGenerated(title) { SummaryPdf.write(title, doc.name, r.text, r.sources, it) }
@@ -152,21 +162,39 @@ fun AnalyzeFlow(docs: List<DocInfo>, store: Store, onOpenSettings: () -> Unit, o
         }
     }
 
+    LaunchedEffect(phase) {
+        while (phase is Phase.Running) {
+            kotlinx.coroutines.delay(1000)
+            seconds++
+        }
+    }
+
     when (val p = phase) {
         Phase.Pick -> PickDialog(docs, picked, { picked = it }, ::start, onOpenSettings, onDismiss)
         is Phase.Running -> AlertDialog(
             onDismissRequest = {},
             title = { Text(if (p.mode == Gemini.Mode.RESEARCH) "Investigando…" else "Resumiendo…") },
             text = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                    CircularProgressIndicator(Modifier.size(36.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
                         if (p.mode == Gemini.Mode.RESEARCH) {
-                            "Estoy leyendo «${picked?.name}» y buscando en internet si algo ha cambiado. Puede tardar varios minutos; no cierres la app."
+                            "«${picked?.name}»: busco en internet si algo ha cambiado. Puede tardar varios minutos; no cierres la app."
                         } else {
-                            "Leyendo «${picked?.name}» y creando el documento con el resumen…"
+                            "«${picked?.name}»"
                         },
+                        color = OnSurfaceDim, fontSize = 13.sp,
                     )
+                    Text(stage, fontWeight = FontWeight.SemiBold)
+                    val f = fraction
+                    if (f == null) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth().clip(RoundedCornerShape(50)))
+                    } else {
+                        LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)))
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(if (f == null) "Esperando a Gemini…" else "${(f * 100).toInt()}%", fontSize = 13.sp, color = OnSurfaceDim)
+                        Text("%d:%02d".format(seconds / 60, seconds % 60), fontSize = 13.sp, color = OnSurfaceDim)
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { job?.cancel(); onDismiss() }) { Text("Cancelar") } },

@@ -529,7 +529,7 @@ private fun ContinueCard(doc: DocInfo, store: Store, onClick: () -> Unit) {
     val thumb by produceState<ImageBitmap?>(null, doc.id, doc.lastOpened) {
         value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(store.thumbFile(doc.id).path)?.asImageBitmap() }
     }
-    val total = (doc.pages + doc.extra).coerceAtLeast(1)
+    val total = (doc.pages + doc.extra - doc.hidden.size).coerceAtLeast(1)
     val page = (doc.lastPage + 1).coerceIn(1, total)
     Surface(
         onClick = onClick,
@@ -618,7 +618,7 @@ private fun DocCard(
         value = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(store.thumbFile(doc.id).path)?.asImageBitmap() }
     }
     var menu by remember { mutableStateOf(false) }
-    val total = (doc.pages + doc.extra).coerceAtLeast(1)
+    val total = (doc.pages + doc.extra - doc.hidden.size).coerceAtLeast(1)
     val page = (doc.lastPage + 1).coerceIn(1, total)
     val shape = RoundedCornerShape(18.dp)
 

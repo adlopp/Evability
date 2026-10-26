@@ -76,6 +76,27 @@ class EditorState(
         private set
     val totalPages get() = doc.pageCount + extraPages
 
+    /** Páginas eliminadas (índices reales). El PDF no se modifica: simplemente no se muestran ni se exportan. */
+    var hidden by mutableStateOf(info.hidden)
+        private set
+
+    /** Índices reales de las páginas que se ven, en orden. La posición en esta lista es la que cuenta el visor. */
+    fun visiblePages(): List<Int> = (0 until totalPages).filter { it !in hidden }
+
+    val visibleCount get() = totalPages - hidden.count { it < totalPages }
+
+    /** Elimina la página que está en la posición `position` del visor. Siempre queda al menos una. */
+    fun deletePageAt(position: Int) {
+        val pages = visiblePages()
+        if (pages.size <= 1) return
+        val real = pages.getOrNull(position) ?: return
+        hidden = hidden + real
+        store.setHidden(info.id, hidden)
+    }
+
+    /** Página original que se usa de miniatura (la primera visible); null si solo quedan páginas añadidas. */
+    fun thumbPage(): Int? = visiblePages().firstOrNull { it < doc.pageCount }
+
     fun aspect(i: Int): Float = aspects.getOrNull(i) ?: aspects.firstOrNull() ?: 1.4142f
 
     /** Por cada página extra: "" = en blanco, o el nombre de la plantilla que se duplicó. */

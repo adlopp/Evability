@@ -31,13 +31,14 @@ class Store(context: Context) {
         folder = o.optString("folder", ""),
         template = o.optString("template", ""),
         extraKinds = o.optJSONArray("extraKinds")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
+        hidden = o.optJSONArray("hidden")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList(),
     )
 
     private fun infoJson(it: DocInfo) =
         JSONObject().put("id", it.id).put("name", it.name).put("pages", it.pages)
             .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra)
             .put("favorite", it.favorite).put("folder", it.folder).put("template", it.template)
-            .put("extraKinds", JSONArray(it.extraKinds))
+            .put("extraKinds", JSONArray(it.extraKinds)).put("hidden", JSONArray(it.hidden))
 
     @Synchronized
     fun loadIndex(): List<DocInfo> {
@@ -64,6 +65,8 @@ class Store(context: Context) {
 
     fun touch(id: String) = update(id) { it.copy(lastOpened = System.currentTimeMillis()) }
     fun setLastPage(id: String, page: Int) = update(id) { it.copy(lastPage = page) }
+
+    fun setHidden(id: String, hidden: List<Int>) = update(id) { it.copy(hidden = hidden) }
 
     fun setExtra(id: String, extra: Int, kinds: List<String>) = update(id) { it.copy(extra = extra, extraKinds = kinds) }
 
@@ -154,10 +157,10 @@ class Store(context: Context) {
         }
     }
 
-    /** Vuelve a generar la miniatura con las anotaciones de la primera página. */
-    fun refreshThumbnail(id: String, doc: PdfDoc, anns: List<Ann>) {
-        val bmp = doc.render(0, 420)
-        AnnPainter.drawAll(android.graphics.Canvas(bmp), anns.filter { it.page == 0 }, bmp.width.toFloat())
+    /** Vuelve a generar la miniatura con las anotaciones de la primera página visible (`page`). */
+    fun refreshThumbnail(id: String, doc: PdfDoc, anns: List<Ann>, page: Int = 0) {
+        val bmp = doc.render(page, 420)
+        AnnPainter.drawAll(android.graphics.Canvas(bmp), anns.filter { it.page == page }, bmp.width.toFloat())
         thumbFile(id).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
         bmp.recycle()
     }

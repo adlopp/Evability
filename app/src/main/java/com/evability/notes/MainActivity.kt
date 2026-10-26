@@ -146,7 +146,7 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
                 st.save()
                 store.setLastPage(st.info.id, st.currentPage)
                 try {
-                    store.refreshThumbnail(st.info.id, st.doc, st.anns)
+                    st.thumbPage()?.let { store.refreshThumbnail(st.info.id, st.doc, st.anns, it) }
                 } catch (e: Exception) {
                     // la miniatura anterior se queda
                 }
@@ -205,10 +205,10 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
                         ctx.contentResolver.openOutputStream(uri)!!.use { out ->
                             val st = editor
                             if (st != null && st.info.id == info.id) {
-                                Exporter.export(st.doc, st.extraPages, st.anns, out, st.extraKinds)
+                                Exporter.export(st.doc, st.extraPages, st.anns, out, st.extraKinds, st.hidden)
                             } else {
                                 PdfDoc(store.pdfFile(info.id)).use { d ->
-                                    Exporter.export(d, info.extra, store.loadAnns(info.id), out, info.extraKinds)
+                                    Exporter.export(d, info.extra, store.loadAnns(info.id), out, info.extraKinds, info.hidden)
                                 }
                             }
                         }
