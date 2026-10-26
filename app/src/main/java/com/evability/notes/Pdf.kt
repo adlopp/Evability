@@ -25,7 +25,7 @@ fun textSelectionSupported(): Boolean =
     Build.VERSION.SDK_INT >= 35 || (Build.VERSION.SDK_INT >= 31 && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 13)
 
 /** Envoltorio de PdfRenderer. El renderer solo admite una página abierta a la vez, de ahí el candado. */
-class PdfDoc(file: File) : Closeable {
+class PdfDoc(private val file: File) : Closeable {
     private val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     private val renderer = PdfRenderer(pfd)
     private val lock = Any()
@@ -52,22 +52,39 @@ class PdfDoc(file: File) : Closeable {
         }
     }
 
+    // La selección de texto usa su PROPIO lector (con su propio candado): así no espera a que acabe de dibujarse una página,
+    // y mientras se arrastra el dedo se reutiliza la página abierta en vez de analizarla en cada movimiento.
+    private val selLock = Any()
+    private var selPfd: ParcelFileDescriptor? = null
+    private var selRenderer: PdfRenderer? = null
+    private var selPage: PdfRenderer.Page? = null
+    private var selIndex = -1
+
     /**
      * Selecciona el texto entre dos puntos (coordenadas normalizadas respecto al ancho de la página). Con el mismo punto
      * en los dos extremos selecciona la palabra. Devuelve null si no hay texto ahí o el sistema no lo soporta.
      */
-    fun selectText(i: Int, ax: Float, ay: Float, bx: Float, by: Float): TextSelection? = synchronized(lock) {
-        check(!closed) { "closed" }
-        if (!textSelectionSupported()) return@synchronized null
-        renderer.openPage(i).use { p ->
-            val w = p.width.toFloat()
-            fun at(x: Float, y: Float) = SelectionBoundary(Point((x * w).roundToInt(), (y * w).roundToInt()))
-            val sel = p.selectContent(at(ax, ay), at(bx, by)) ?: p.selectContent(at(bx, by), at(ax, ay)) ?: return@use null
-            val contents = sel.selectedTextContents
-            val text = contents.joinToString(" ") { it.text }.trim()
-            if (text.isEmpty()) return@use null
-            TextSelection(i, text, contents.flatMap { it.bounds }.map { RectF(it.left / w, it.top / w, it.right / w, it.bottom / w) })
+    fun selectText(i: Int, ax: Float, ay: Float, bx: Float, by: Float): TextSelection? = synchronized(selLock) {
+        if (closed || !textSelectionSupported()) return@synchronized null
+        val renderer = selRenderer ?: run {
+            val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            selPfd = fd
+            PdfRenderer(fd).also { selRenderer = it }
         }
+        if (selIndex != i) {
+            selPage?.close()
+            selPage = null
+            selPage = renderer.openPage(i)
+            selIndex = i
+        }
+        val p = selPage!!
+        val w = p.width.toFloat()
+        fun at(x: Float, y: Float) = SelectionBoundary(Point((x * w).roundToInt(), (y * w).roundToInt()))
+        val sel = p.selectContent(at(ax, ay), at(bx, by)) ?: p.selectContent(at(bx, by), at(ax, ay)) ?: return@synchronized null
+        val contents = sel.selectedTextContents
+        val text = contents.joinToString(" ") { it.text }.trim()
+        if (text.isEmpty()) return@synchronized null
+        TextSelection(i, text, contents.flatMap { it.bounds }.map { RectF(it.left / w, it.top / w, it.right / w, it.bottom / w) })
     }
 
     fun writeThumbnail(target: File) {
@@ -82,6 +99,14 @@ class PdfDoc(file: File) : Closeable {
             closed = true
             renderer.close()
             pfd.close()
+        }
+        synchronized(selLock) {
+            selPage?.close()
+            selRenderer?.close()
+            selPfd?.close()
+            selPage = null
+            selRenderer = null
+            selPfd = null
         }
     }
 }

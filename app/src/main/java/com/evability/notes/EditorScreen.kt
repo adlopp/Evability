@@ -858,16 +858,29 @@ private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     down.consume()
                     var job: Job? = null
+                    var pending: Offset? = null
+                    // Una sola consulta a la vez: si el dedo se mueve mientras hay una en marcha, solo se guarda el último punto.
                     fun select(a: Offset, b: Offset, first: Boolean) {
-                        job?.cancel()
+                        if (job?.isActive == true) {
+                            pending = b
+                            return
+                        }
                         job = scope.launch {
-                            val r = withContext(Dispatchers.IO) {
-                                try { state.doc.selectText(index, a.x, a.y, b.x, b.y) } catch (e: Exception) { null }
-                            }
-                            if (r != null) state.textSel = r
-                            else if (first) {
-                                val msg = if (textSelectionSupported()) "No hay texto seleccionable aquí (¿es un documento escaneado?)" else "Seleccionar texto necesita Android 15 o superior"
-                                Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                            var target: Offset? = b
+                            var isFirst = first
+                            while (target != null) {
+                                val end = target
+                                val r = withContext(Dispatchers.IO) {
+                                    try { state.doc.selectText(index, a.x, a.y, end.x, end.y) } catch (e: Exception) { null }
+                                }
+                                if (r != null) state.textSel = r
+                                else if (isFirst) {
+                                    val msg = if (textSelectionSupported()) "No hay texto seleccionable aquí (¿es un documento escaneado?)" else "Seleccionar texto necesita Android 15 o superior"
+                                    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                                }
+                                isFirst = false
+                                target = pending
+                                pending = null
                             }
                         }
                     }
