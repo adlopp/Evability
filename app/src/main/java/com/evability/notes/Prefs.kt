@@ -52,6 +52,14 @@ object Prefs {
         get() = sp.getString("gemini_key", "") ?: ""
         set(v) = sp.edit().putString("gemini_key", v.trim()).apply()
 
+    /** Minutos de estudio y de descanso del pomodoro. */
+    var pomoStudy: Int
+        get() = sp.getInt("pomo_study", 25)
+        set(v) = sp.edit().putInt("pomo_study", v).apply()
+    var pomoRest: Int
+        get() = sp.getInt("pomo_rest", 5)
+        set(v) = sp.edit().putInt("pomo_rest", v).apply()
+
     fun setAccent(argb: Long) {
         AccentBase = Color(argb)
         sp.edit().putLong("accent", argb).apply()

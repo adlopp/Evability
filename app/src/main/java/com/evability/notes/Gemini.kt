@@ -12,8 +12,15 @@ import java.util.Locale
 
 /** Análisis de documentos con la API de Gemini. Cada usuario usa su propia clave (se guarda en [Prefs]). */
 object Gemini {
-    /** Alias que Google mantiene apuntando al modelo "flash" vigente (rápido y con nivel gratuito). */
-    const val MODEL = "gemini-flash-latest"
+    /**
+     * Modelos con nivel gratuito, por orden de preferencia: si uno está saturado o sin cupo se prueba el siguiente.
+     * Los Gemini 2.5 son los que incluyen búsqueda de Google gratis (unas 500 al día); los 3.x no.
+     */
+    private fun models(mode: Mode) = when (mode) {
+        Mode.RESEARCH -> listOf("gemini-2.5-flash", "gemini-2.5-flash-lite")
+        Mode.SUMMARY -> listOf("gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash-lite")
+    }
+
     const val KEY_URL = "https://aistudio.google.com/apikey"
 
     private const val BASE = "https://generativelanguage.googleapis.com"
@@ -22,8 +29,8 @@ object Gemini {
     private const val INLINE_MAX = 8 * 1024 * 1024
     private const val MAX_PDF_BYTES = 50 * 1024 * 1024
 
-    /** `retryable`: fallo temporal de Google (saturación) que merece otro intento. */
-    class GeminiException(message: String, val retryable: Boolean = false) : Exception(message)
+    /** `retryable`: fallo temporal de Google (saturación) que merece otro intento; `fallback`: conviene probar con otro modelo. */
+    class GeminiException(message: String, val retryable: Boolean = false, val fallback: Boolean = false) : Exception(message)
 
     enum class Mode { SUMMARY, RESEARCH }
 
@@ -48,18 +55,29 @@ object Gemini {
             put("generationConfig", JSONObject().put("temperature", 0.3))
         }.toString()
 
-        // Si Google está saturado (500/503) se reintenta con espera creciente antes de rendirse.
-        val waits = longArrayOf(5_000, 15_000, 30_000)
-        var attempt = 0
-        while (true) {
-            try {
-                return generate(apiKey, body, mode, onProgress)
-            } catch (e: GeminiException) {
-                if (!e.retryable || attempt >= waits.size) throw e
-                onProgress("Gemini está saturado; reintentando…", null)
-                Thread.sleep(waits[attempt++])
+        // Por cada modelo: si Google está saturado (500/503) se reintenta con espera creciente; si sigue fallando
+        // (o no hay cupo) se pasa al siguiente modelo.
+        val waits = longArrayOf(5_000, 15_000)
+        var last: GeminiException? = null
+        for ((m, model) in models(mode).withIndex()) {
+            if (m > 0) onProgress("Probando con otro modelo…", null)
+            var attempt = 0
+            while (true) {
+                try {
+                    return generate(apiKey, model, body, mode, onProgress)
+                } catch (e: GeminiException) {
+                    if (e.retryable && attempt < waits.size) {
+                        onProgress("Gemini está saturado; reintentando…", null)
+                        Thread.sleep(waits[attempt++])
+                        continue
+                    }
+                    if (!e.fallback) throw e
+                    last = e
+                    break
+                }
             }
         }
+        throw last ?: GeminiException("No se pudo analizar el documento.")
     }
 
     /** Sube el PDF con la API de archivos (subida reanudable) y espera a que Google lo procese. */
@@ -141,10 +159,10 @@ object Gemini {
     }
 
     /** Pide el análisis en streaming: la respuesta llega por trozos, así la conexión no se corta por inactividad en documentos largos. */
-    private fun generate(apiKey: String, body: String, mode: Mode, onProgress: (String, Float?) -> Unit): Result {
+    private fun generate(apiKey: String, model: String, body: String, mode: Mode, onProgress: (String, Float?) -> Unit): Result {
         onProgress(if (mode == Mode.RESEARCH) "Analizando y buscando en internet…" else "Analizando el documento…", null)
         val expected = if (mode == Mode.RESEARCH) 7000f else 5000f
-        val conn = URL("$BASE/v1beta/models/$MODEL:streamGenerateContent?alt=sse").openConnection() as HttpURLConnection
+        val conn = URL("$BASE/v1beta/models/$model:streamGenerateContent?alt=sse").openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
             conn.connectTimeout = 20_000
@@ -157,7 +175,7 @@ object Gemini {
             val code = conn.responseCode
             if (code !in 200..299) {
                 val raw = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                throw GeminiException(errorMessage(code, raw), retryable = code == 500 || code == 503)
+                throw GeminiException(errorMessage(code, raw), retryable = code == 500 || code == 503, fallback = code in listOf(404, 429, 500, 503))
             }
 
             val text = StringBuilder()
@@ -168,7 +186,7 @@ object Gemini {
                 val chunk = JSONObject(line.removePrefix("data:").trim())
                 chunk.optJSONObject("error")?.let {
                     val c = it.optInt("code", 500)
-                    throw GeminiException(errorMessage(c, chunk.toString()), retryable = c == 500 || c == 503)
+                    throw GeminiException(errorMessage(c, chunk.toString()), retryable = c == 500 || c == 503, fallback = c in listOf(404, 429, 500, 503))
                 }
                 chunk.optJSONObject("promptFeedback")?.optString("blockReason")?.takeIf { it.isNotBlank() }?.let { blocked = it }
                 val cand = chunk.optJSONArray("candidates")?.optJSONObject(0) ?: return@forEachLine
@@ -208,6 +226,7 @@ object Gemini {
             code == 401 || code == 403 -> "Gemini rechazó la clave. Revísala en Ajustes."
             code == 429 -> "Límite de Gemini alcanzado. Espera un rato (o hasta mañana) y vuelve a intentarlo." + if (detail.isNotBlank()) " Detalle de Google: ${detail.take(500)}" else ""
             code == 503 -> "Gemini sigue saturado tras varios intentos. Inténtalo de nuevo en unos minutos."
+            code == 404 -> "El modelo de Gemini ya no está disponible. Hay que actualizar la app."
             else -> "Error de Gemini ($code)" + if (detail.isNotBlank()) ": $detail" else ""
         }
     }

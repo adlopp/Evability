@@ -11,13 +11,16 @@ android {
         applicationId = "com.evability.notes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.4.1"
+        versionCode = 10
+        versionName = "1.5.1"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 reduce y optimiza el código y quita recursos sin usar: la app arranca antes y va más fluida.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Firmado con la clave de depuración para poder instalar el APK directamente.
             signingConfig = signingConfigs.getByName("debug")
         }
@@ -27,6 +30,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    lint { checkReleaseBuilds = false } // la comprobación extra de lint en release solo alarga la compilación
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 }

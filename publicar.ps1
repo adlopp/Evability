@@ -15,10 +15,10 @@ $env:JAVA_HOME = (Get-ChildItem ".tools\jdk" -Directory)[0].FullName
 $env:ANDROID_HOME = (Resolve-Path ".tools\sdk").Path
 
 Write-Host "Compilando Evability $name (versionCode $code)..."
-& .\gradlew.bat assembleDebug -q
+& .\gradlew.bat assembleRelease -q
 if ($LASTEXITCODE -ne 0) { throw "La compilación ha fallado" }
 
-Copy-Item "app\build\outputs\apk\debug\app-debug.apk" "Evability.apk" -Force
+Copy-Item "app\build\outputs\apk\release\app-release.apk" "Evability.apk" -Force
 
 Write-Host "Publicando v$code en GitHub..."
 gh release create "v$code" "Evability.apk" --repo adlopp/Evability --title "Evability $name" --notes $Notas
