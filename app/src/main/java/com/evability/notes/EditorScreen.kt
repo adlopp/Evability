@@ -52,6 +52,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -163,6 +164,13 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
             listState.animateScrollToItem(state.totalPages - 1)
         }
     }
+    val addTemplate: () -> Unit = {
+        scope.launch {
+            state.addTemplatePage()
+            delay(80)
+            listState.animateScrollToItem(state.totalPages - 1)
+        }
+    }
 
     // Autoguardado de las anotaciones poco después de cada cambio.
     LaunchedEffect(state) {
@@ -177,7 +185,7 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
     Box(Modifier.fillMaxSize().background(EditorBg).statusBarsPadding().navigationBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
             if (!barsHidden) {
-                TopBar(state, onClose, onExport, addPage, onHide = { barsHidden = true })
+                TopBar(state, onClose, onExport, addPage, addTemplate, onHide = { barsHidden = true })
                 OptionsBar(state)
             }
             if (exporting) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -199,7 +207,7 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
 // ───────────────────────────── Barras de herramientas ─────────────────────────────
 
 @Composable
-private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit, onAddPage: () -> Unit, onHide: () -> Unit) {
+private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit, onAddPage: () -> Unit, onAddTemplate: () -> Unit, onHide: () -> Unit) {
     Surface(color = Surface1) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
@@ -231,6 +239,9 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             ToolBtn(false, Icons.Default.ZoomIn, "Acercar") { state.zoom = (state.zoom + 0.25f).coerceAtMost(3f) }
             VDivider()
             ToolBtn(false, Icons.Default.NoteAdd, "Añadir página en blanco") { onAddPage() }
+            if (state.info.templateKind != null) {
+                ToolBtn(false, Icons.Default.ContentCopy, "Duplicar la plantilla (vacía) al final") { onAddTemplate() }
+            }
             ToolBtn(state.fingerDraw, Icons.Default.TouchApp, "Dibujar también con el dedo") { state.fingerDraw = !state.fingerDraw }
             ToolBtn(false, Icons.Default.FileDownload, "Exportar PDF con anotaciones") { onExport() }
         }
@@ -539,7 +550,14 @@ private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (
 
     // Mantiene el bitmap anterior mientras se renderiza el nuevo (p. ej. al cambiar el zoom).
     LaunchedEffect(index, renderW) {
-        if (index >= state.doc.pageCount) return@LaunchedEffect // página en blanco añadida: no hay nada que renderizar
+        if (index >= state.doc.pageCount) {
+            // Página extra: en blanco (nada que renderizar) o copia de la plantilla del documento.
+            val kind = state.templateAt(index) ?: return@LaunchedEffect
+            val key = "$index@$renderW"
+            val bmp = state.cache.get(key) ?: withContext(Dispatchers.IO) { Templates.preview(kind, renderW) }.also { state.cache.put(key, it) }
+            bitmap = bmp.asImageBitmap()
+            return@LaunchedEffect
+        }
         val key = "$index@$renderW"
         try {
             val bmp = state.cache.get(key) ?: withContext(Dispatchers.IO) { state.doc.render(index, renderW) }

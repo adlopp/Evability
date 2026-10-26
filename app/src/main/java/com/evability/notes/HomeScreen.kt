@@ -50,7 +50,10 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -181,6 +184,8 @@ fun HomeScreen(
     var filter by remember { mutableStateOf<DocFilter>(DocFilter.All) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var showTemplates by remember { mutableStateOf(false) }
+    var showAnalyze by remember { mutableStateOf(false) }
+    var showTrash by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<DocInfo?>(null) }
     var moving by remember { mutableStateOf<List<DocInfo>?>(null) }
@@ -213,11 +218,11 @@ fun HomeScreen(
         onChanged()
         scope.launch {
             val r = snackbar.showSnackbar(
-                message = if (list.size == 1) "«${list[0].name}» eliminado" else "${list.size} documentos eliminados",
+                message = if (list.size == 1) "«${list[0].name}» movido a la papelera" else "${list.size} documentos movidos a la papelera",
                 actionLabel = "Deshacer",
                 duration = SnackbarDuration.Long,
             )
-            if (r == SnackbarResult.ActionPerformed) store.restore(list) else store.purge(list)
+            if (r == SnackbarResult.ActionPerformed) store.restore(list)
             onChanged()
         }
     }
@@ -235,7 +240,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                TopRow(version, onCheckUpdate, onSettings = { showSettings = true })
+                TopRow(version, onCheckUpdate, onTrash = { showTrash = true }, onSettings = { showSettings = true })
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -257,6 +262,16 @@ fun HomeScreen(
                         Icon(Icons.Default.GridView, contentDescription = null)
                         Spacer(Modifier.width(10.dp))
                         Text("Plantillas", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedButton(
+                        onClick = { showAnalyze = true },
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.5.dp, Accent),
+                        contentPadding = PaddingValues(horizontal = 26.dp, vertical = 14.dp),
+                    ) {
+                        Icon(Icons.Default.SmartToy, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Analizar", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -385,6 +400,15 @@ fun HomeScreen(
     if (showTemplates) {
         TemplateDialog(onPick = { showTemplates = false; onTemplate(it) }, onDismiss = { showTemplates = false })
     }
+    if (showAnalyze) {
+        AnalyzeFlow(
+            docs, store,
+            onOpenSettings = { showAnalyze = false; showSettings = true },
+            onCreated = { onChanged(); onOpen(it) },
+            onDismiss = { showAnalyze = false },
+        )
+    }
+    if (showTrash) TrashDialog(store, onChanged) { showTrash = false }
     if (showSettings) SettingsDialog(version) { showSettings = false }
 
     renaming?.let { doc ->
@@ -450,7 +474,7 @@ fun HomeScreen(
 // ───────────────────────────── Cabecera ─────────────────────────────
 
 @Composable
-private fun TopRow(version: String, onCheckUpdate: () -> Unit, onSettings: () -> Unit) {
+private fun TopRow(version: String, onCheckUpdate: () -> Unit, onTrash: () -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     val player = remember { MediaPlayer.create(context, R.raw.easter_egg) }
     DisposableEffect(Unit) { onDispose { player?.release() } }
@@ -484,6 +508,8 @@ private fun TopRow(version: String, onCheckUpdate: () -> Unit, onSettings: () ->
             Text("Evability", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.4.sp)
             Text("v$version", fontSize = 12.sp, color = OnSurfaceDim)
         }
+        RoundIconButton(Icons.Default.Delete, "Papelera", onTrash)
+        Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.Sync, "Buscar actualizaciones", onCheckUpdate)
         Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.Settings, "Ajustes", onSettings)
@@ -711,12 +737,59 @@ private fun MoveDialog(folders: List<String>, onDismiss: () -> Unit, onPick: (St
 }
 
 @Composable
+private fun TrashDialog(store: Store, onChanged: () -> Unit, onDismiss: () -> Unit) {
+    var tick by remember { mutableStateOf(0) }
+    var confirmEmpty by remember { mutableStateOf(false) }
+    val items = remember(tick) { store.loadTrash() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Papelera") },
+        text = {
+            if (items.isEmpty()) {
+                Text("La papelera está vacía.", color = OnSurfaceDim)
+            } else {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Se vacía sola a los 30 días.", fontSize = 12.sp, color = OnSurfaceDim)
+                    items.forEach { t ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(t.info.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                Text("Eliminado ${ago(t.deleted)}", fontSize = 12.sp, color = OnSurfaceDim)
+                            }
+                            IconButton(onClick = { store.restore(listOf(t.info)); tick++; onChanged() }) {
+                                Icon(Icons.Default.Restore, contentDescription = "Restaurar", tint = Accent)
+                            }
+                            IconButton(onClick = { store.purge(listOf(t.info)); tick++ }) {
+                                Icon(Icons.Default.DeleteForever, contentDescription = "Eliminar para siempre", tint = OnSurfaceDim)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
+        dismissButton = if (items.isEmpty()) null else ({ TextButton(onClick = { confirmEmpty = true }) { Text("Vaciar papelera") } }),
+    )
+    if (confirmEmpty) {
+        AlertDialog(
+            onDismissRequest = { confirmEmpty = false },
+            title = { Text("Vaciar papelera") },
+            text = { Text("Se eliminarán para siempre ${items.size} documento(s). No se puede deshacer.") },
+            confirmButton = {
+                TextButton(onClick = { store.purge(items.map { it.info }); confirmEmpty = false; tick++ }) { Text("Vaciar") }
+            },
+            dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("Cancelar") } },
+        )
+    }
+}
+
+@Composable
 private fun SettingsDialog(version: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Ajustes") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text("Color de los botones", color = OnSurfaceDim)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Prefs.ACCENTS.forEach { (name, argb) ->
@@ -733,6 +806,7 @@ private fun SettingsDialog(version: String, onDismiss: () -> Unit) {
                 Text("Color de fondo", color = OnSurfaceDim)
                 BackgroundRow("Oscuros", Prefs.BACKGROUNDS)
                 BackgroundRow("Claros", Prefs.LIGHT_BACKGROUNDS)
+                GeminiKeySection()
                 Text("Evability v$version", fontSize = 12.sp, color = OnSurfaceDim)
             }
         },

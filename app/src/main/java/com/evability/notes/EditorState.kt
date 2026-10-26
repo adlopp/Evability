@@ -78,10 +78,26 @@ class EditorState(
 
     fun aspect(i: Int): Float = aspects.getOrNull(i) ?: aspects.firstOrNull() ?: 1.4142f
 
-    fun addBlankPage() {
-        extraPages += 1
-        store.setExtra(info.id, extraPages)
+    /** Por cada página extra: "" = en blanco, o el nombre de la plantilla que se duplicó. */
+    var extraKinds by mutableStateOf(List(info.extra) { info.extraKinds.getOrNull(it).orEmpty() })
+        private set
+
+    fun addBlankPage() = addExtra("")
+
+    /** Duplica la plantilla (vacía) del documento como nueva página al final. */
+    fun addTemplatePage() {
+        info.templateKind?.let { addExtra(it.name) }
     }
+
+    private fun addExtra(kind: String) {
+        extraKinds = extraKinds + kind
+        extraPages += 1
+        store.setExtra(info.id, extraPages, extraKinds)
+    }
+
+    /** Plantilla con la que se dibuja la página `index` si es una copia de la plantilla. */
+    fun templateAt(index: Int): TemplateKind? =
+        TemplateKind.entries.firstOrNull { it.name == extraKinds.getOrNull(index - doc.pageCount) }
 
     /** Con "línea recta" activada, cada trazo de lápiz o resaltador se queda recto (de donde empieza a donde acaba). */
     var straight by mutableStateOf(false)

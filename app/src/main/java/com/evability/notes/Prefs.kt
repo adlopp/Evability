@@ -48,6 +48,10 @@ object Prefs {
         sp.edit().putLong("bg", argb).apply()
     }
 
+    var geminiKey: String
+        get() = sp.getString("gemini_key", "") ?: ""
+        set(v) = sp.edit().putString("gemini_key", v.trim()).apply()
+
     fun setAccent(argb: Long) {
         AccentBase = Color(argb)
         sp.edit().putLong("accent", argb).apply()

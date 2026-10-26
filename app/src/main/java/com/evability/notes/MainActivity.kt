@@ -205,10 +205,10 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
                         ctx.contentResolver.openOutputStream(uri)!!.use { out ->
                             val st = editor
                             if (st != null && st.info.id == info.id) {
-                                Exporter.export(st.doc, st.extraPages, st.anns, out)
+                                Exporter.export(st.doc, st.extraPages, st.anns, out, st.extraKinds)
                             } else {
                                 PdfDoc(store.pdfFile(info.id)).use { d ->
-                                    Exporter.export(d, info.extra, store.loadAnns(info.id), out)
+                                    Exporter.export(d, info.extra, store.loadAnns(info.id), out, info.extraKinds)
                                 }
                             }
                         }

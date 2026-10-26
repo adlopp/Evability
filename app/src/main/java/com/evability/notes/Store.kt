@@ -19,24 +19,32 @@ class Store(context: Context) {
     fun thumbFile(id: String) = File(dir, "$id.png")
     private fun annFile(id: String) = File(dir, "$id.ann.json")
 
+    private fun parseInfo(o: JSONObject) = DocInfo(
+        id = o.getString("id"),
+        name = o.getString("name"),
+        pages = o.getInt("pages"),
+        lastOpened = o.getLong("lastOpened"),
+        added = o.getLong("added"),
+        lastPage = o.optInt("lastPage", 0),
+        extra = o.optInt("extra", 0),
+        favorite = o.optBoolean("favorite", false),
+        folder = o.optString("folder", ""),
+        template = o.optString("template", ""),
+        extraKinds = o.optJSONArray("extraKinds")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
+    )
+
+    private fun infoJson(it: DocInfo) =
+        JSONObject().put("id", it.id).put("name", it.name).put("pages", it.pages)
+            .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra)
+            .put("favorite", it.favorite).put("folder", it.folder).put("template", it.template)
+            .put("extraKinds", JSONArray(it.extraKinds))
+
     @Synchronized
     fun loadIndex(): List<DocInfo> {
         if (!indexFile.exists()) return emptyList()
         return try {
             val arr = JSONArray(indexFile.readText())
-            (0 until arr.length()).map { arr.getJSONObject(it) }.map { o ->
-                DocInfo(
-                    id = o.getString("id"),
-                    name = o.getString("name"),
-                    pages = o.getInt("pages"),
-                    lastOpened = o.getLong("lastOpened"),
-                    added = o.getLong("added"),
-                    lastPage = o.optInt("lastPage", 0),
-                    extra = o.optInt("extra", 0),
-                    favorite = o.optBoolean("favorite", false),
-                    folder = o.optString("folder", ""),
-                )
-            }.sortedByDescending { it.lastOpened }
+            (0 until arr.length()).map { parseInfo(arr.getJSONObject(it)) }.sortedByDescending { it.lastOpened }
         } catch (e: Exception) {
             emptyList()
         }
@@ -45,12 +53,7 @@ class Store(context: Context) {
     @Synchronized
     private fun saveIndex(list: List<DocInfo>) {
         val arr = JSONArray()
-        list.forEach {
-            arr.put(
-                JSONObject().put("id", it.id).put("name", it.name).put("pages", it.pages)
-                    .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra).put("favorite", it.favorite).put("folder", it.folder)
-            )
-        }
+        list.forEach { arr.put(infoJson(it)) }
         writeAtomic(indexFile, arr.toString())
     }
 
@@ -62,7 +65,7 @@ class Store(context: Context) {
     fun touch(id: String) = update(id) { it.copy(lastOpened = System.currentTimeMillis()) }
     fun setLastPage(id: String, page: Int) = update(id) { it.copy(lastPage = page) }
 
-    fun setExtra(id: String, extra: Int) = update(id) { it.copy(extra = extra) }
+    fun setExtra(id: String, extra: Int, kinds: List<String>) = update(id) { it.copy(extra = extra, extraKinds = kinds) }
 
     fun rename(id: String, name: String) = update(id) { it.copy(name = name) }
 
@@ -90,27 +93,63 @@ class Store(context: Context) {
         return copy
     }
 
-    /** Quita los documentos del índice pero deja los archivos, para poder deshacer. [purge] los borra de verdad. */
+    /** Papelera: los documentos eliminados se guardan aquí (con la fecha) hasta que se restauran o se vacía. */
+    class Trashed(val info: DocInfo, val deleted: Long)
+
+    private val trashFile get() = File(dir, "trash.json")
+
     @Synchronized
-    fun softDelete(ids: Collection<String>) {
-        saveIndex(loadIndex().filter { it.id !in ids })
+    fun loadTrash(): List<Trashed> {
+        if (!trashFile.exists()) return emptyList()
+        return try {
+            val arr = JSONArray(trashFile.readText())
+            (0 until arr.length()).map { arr.getJSONObject(it) }.map { Trashed(parseInfo(it), it.optLong("deleted", 0L)) }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     @Synchronized
+    private fun saveTrash(list: List<Trashed>) {
+        val arr = JSONArray()
+        list.forEach { arr.put(infoJson(it.info).put("deleted", it.deleted)) }
+        writeAtomic(trashFile, arr.toString())
+    }
+
+    /** Mueve los documentos a la papelera: salen de la lista pero conservan sus archivos y anotaciones. */
+    @Synchronized
+    fun softDelete(ids: Collection<String>) {
+        val index = loadIndex()
+        val gone = index.filter { it.id in ids }
+        saveIndex(index.filter { it.id !in ids })
+        val now = System.currentTimeMillis()
+        saveTrash(gone.map { Trashed(it, now) } + loadTrash())
+    }
+
+    /** Saca de la papelera y devuelve a la lista. */
+    @Synchronized
     fun restore(infos: List<DocInfo>) {
+        val ids = infos.map { it.id }.toSet()
+        saveTrash(loadTrash().filter { it.info.id !in ids })
         saveIndex(loadIndex() + infos)
     }
 
+    /** Elimina para siempre (archivos incluidos). */
+    @Synchronized
     fun purge(infos: List<DocInfo>) {
+        val ids = infos.map { it.id }.toSet()
+        saveTrash(loadTrash().filter { it.info.id !in ids })
         infos.forEach { i -> listOf(pdfFile(i.id), thumbFile(i.id), annFile(i.id)).forEach { it.delete() } }
     }
 
-    /** Borra archivos de documentos que ya no están en el índice (p. ej. eliminados sin que diera tiempo a purgarlos). */
+    /** Borra archivos de documentos que ya no están ni en la lista ni en la papelera, y vacía lo que lleva en la papelera más de 30 días. */
     @Synchronized
     fun cleanOrphans() {
-        val ids = loadIndex().map { it.id }.toSet()
+        val limit = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000
+        purge(loadTrash().filter { it.deleted in 1 until limit }.map { it.info })
+        val ids = (loadIndex().map { it.id } + loadTrash().map { it.info.id }).toSet()
         dir.listFiles()?.forEach { f ->
-            if (f.name.startsWith("index") || f.name.startsWith("folders")) return@forEach
+            if (f.name.startsWith("index") || f.name.startsWith("folders") || f.name.startsWith("trash")) return@forEach
             if (f.name.substringBefore('.') !in ids) f.delete()
         }
     }
@@ -163,7 +202,28 @@ class Store(context: Context) {
                 doc.pageCount
             }
             val now = System.currentTimeMillis()
-            val info = DocInfo(id, kind.docName, pages, now, now)
+            val info = DocInfo(id, kind.docName, pages, now, now, template = kind.name)
+            saveIndex(listOf(info) + loadIndex())
+            return info
+        } catch (e: Exception) {
+            file.delete()
+            thumbFile(id).delete()
+            throw e
+        }
+    }
+
+    /** Crea un documento nuevo cuyo PDF genera `write` (p. ej. el resumen de la IA). */
+    fun createGenerated(name: String, write: (File) -> Unit): DocInfo {
+        val id = UUID.randomUUID().toString()
+        val file = pdfFile(id)
+        try {
+            write(file)
+            val pages = PdfDoc(file).use { doc ->
+                doc.writeThumbnail(thumbFile(id))
+                doc.pageCount
+            }
+            val now = System.currentTimeMillis()
+            val info = DocInfo(id, name, pages, now, now)
             saveIndex(listOf(info) + loadIndex())
             return info
         } catch (e: Exception) {

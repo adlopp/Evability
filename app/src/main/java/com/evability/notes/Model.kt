@@ -86,7 +86,14 @@ data class DocInfo(
     val extra: Int = 0, // páginas en blanco añadidas al final
     val favorite: Boolean = false,
     val folder: String = "", // "" = sin carpeta
-)
+    val template: String = "", // TemplateKind con el que se creó ("" = importado)
+    val extraKinds: List<String> = emptyList(), // por cada página extra: "" = en blanco, o el nombre de una plantilla
+) {
+    /** Plantilla mensual/semanal de este documento (los creados antes de guardar el tipo se reconocen por el nombre). */
+    val templateKind: TemplateKind?
+        get() = (TemplateKind.entries.firstOrNull { it.name == template } ?: TemplateKind.entries.firstOrNull { it.docName == name })
+            ?.takeIf { it != TemplateKind.BLANK }
+}
 
 /** `size`/`cover`: al "cambiar texto" se guarda el tapado junto con el texto nuevo (y se descarta si se cancela). */
 data class TextEdit(val existing: TextNote?, val page: Int, val pos: Offset, val size: Float? = null, val cover: Cover? = null)
