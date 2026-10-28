@@ -1,7 +1,7 @@
 // Service worker: guarda la app en el dispositivo para que funcione sin conexión.
 // Estrategia: se responde enseguida con lo guardado y, si hay conexión, se actualiza en segundo plano (la versión nueva se ve al abrir otra vez).
 
-const CACHE = 'evability-web-1';
+const CACHE = 'evability-web-3';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/main.js', 'js/theme.js', 'js/ui.js', 'js/db.js', 'js/store.js', 'js/pdfdoc.js', 'js/templates.js', 'js/ann.js', 'js/editor.js',

@@ -61,6 +61,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
@@ -214,6 +215,7 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
             if (!barsHidden) {
                 TopBar(state, onClose, onExport, addPage, addTemplate, onDeletePage = { confirmDelete = true }, onHide = { barsHidden = true })
                 OptionsBar(state)
+                if (state.searchOpen) SearchBar(state)
             }
             if (exporting) LinearProgressIndicator(Modifier.fillMaxWidth())
             Viewer(state, listState, addPage, onTextTap = { edit = it }, onStickerTap = { stickerEdit = it }, onPostitTap = { postitEdit = it }, modifier = Modifier.weight(1f))
@@ -261,6 +263,8 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             ToolBtn(false, Icons.AutoMirrored.Filled.Undo, "Deshacer", enabled = state.canUndo) { state.undo() }
             ToolBtn(false, Icons.AutoMirrored.Filled.Redo, "Rehacer", enabled = state.canRedo) { state.redo() }
             VDivider()
+            ToolBtn(state.searchOpen, Icons.Default.Search, "Buscar en el PDF") { if (state.searchOpen) state.closeSearch() else state.searchOpen = true }
+            VDivider()
             ToolBtn(false, Icons.Default.ZoomOut, "Alejar") { state.zoom = (state.zoom - 0.25f).coerceAtLeast(MIN_ZOOM) }
             Text("${(state.zoom * 100).roundToInt()}%", color = OnSurfaceDim, modifier = Modifier.widthIn(min = 46.dp))
             ToolBtn(false, Icons.Default.ZoomIn, "Acercar") { state.zoom = (state.zoom + 0.25f).coerceAtMost(3f) }
@@ -272,6 +276,44 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             }
             ToolBtn(state.fingerDraw, Icons.Default.TouchApp, "Dibujar también con el dedo") { state.fingerDraw = !state.fingerDraw }
             ToolBtn(false, Icons.Default.FileDownload, "Exportar PDF con anotaciones") { onExport() }
+        }
+    }
+}
+
+/** Barra de búsqueda: escribe y salta entre las coincidencias del PDF (resaltadas en la página). */
+@Composable
+private fun SearchBar(state: EditorState) {
+    val focus = remember { FocusRequester() }
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    LaunchedEffect(state.searchQuery) {
+        delay(350) // espera a que termine de escribir
+        state.runSearch(state.searchQuery)
+    }
+    val supported = remember { textSelectionSupported() }
+    Surface(color = Surface2) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = { state.searchQuery = it },
+                modifier = Modifier.weight(1f).focusRequester(focus),
+                singleLine = true,
+                placeholder = { Text(if (supported) "Buscar en el PDF" else "Buscar necesita Android 15 o superior") },
+                enabled = supported,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                when {
+                    state.searching -> "…"
+                    state.searchQuery.trim().length < 2 -> ""
+                    state.hits.isEmpty() -> "0 resultados"
+                    else -> "${state.hitIndex + 1} de ${state.hits.size}"
+                },
+                color = OnSurfaceDim, modifier = Modifier.widthIn(min = 84.dp),
+            )
+            ToolBtn(false, Icons.Default.KeyboardArrowUp, "Coincidencia anterior", enabled = state.hits.isNotEmpty()) { state.stepHit(-1) }
+            ToolBtn(false, Icons.Default.KeyboardArrowDown, "Coincidencia siguiente", enabled = state.hits.isNotEmpty()) { state.stepHit(1) }
+            ToolBtn(false, Icons.Default.Close, "Cerrar búsqueda") { state.closeSearch() }
         }
     }
 }
@@ -480,6 +522,18 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
         val contentW = maxOf(viewportW, pageW + 32.dp)
         val maxPan = with(density) { (contentW - viewportW).toPx() }.coerceAtLeast(0f)
         maxPanHolder[0] = maxPan
+
+        // Lleva la vista hasta la coincidencia actual de la búsqueda.
+        val pageWpx = with(density) { pageW.toPx() }
+        val viewportHpx = with(density) { maxHeight.toPx() }
+        LaunchedEffect(state.hitJump) {
+            val hit = state.hits.getOrNull(state.hitIndex) ?: return@LaunchedEffect
+            val idx = visible.indexOf(hit.page)
+            if (idx < 0) return@LaunchedEffect
+            val y = hit.rects.minOfOrNull { it.top } ?: 0f
+            listState.animateScrollToItem(idx, scrollOffset = (y * pageWpx - viewportHpx / 3f).roundToInt().coerceAtLeast(0))
+            panX = panX.coerceIn(-maxPan, 0f)
+        }
 
         // Precarga las páginas cercanas para que, al deslizar, ya estén dibujadas.
         val rw = renderWidthFor(with(density) { pageW.toPx() })
@@ -904,6 +958,16 @@ private fun PageItem(state: EditorState, index: Int, pageWidth: Dp, onTextTap: (
             drawIntoCanvas { c ->
                 val nc = c.nativeCanvas
                 AnnPainter.drawAll(nc, state.anns.filter { it.page == index }, size.width)
+                if (state.hits.isNotEmpty()) {
+                    val soft = android.graphics.Paint().apply { color = 0x66FFD54F }
+                    val strong = android.graphics.Paint().apply { color = Accent.copy(alpha = 0.55f).toArgb() }
+                    val current = state.hits.getOrNull(state.hitIndex)
+                    state.hits.forEach { hit ->
+                        if (hit.page != index) return@forEach
+                        val paint = if (hit === current) strong else soft
+                        hit.rects.forEach { r -> nc.drawRect(r.left * size.width, r.top * size.width, r.right * size.width, r.bottom * size.width, paint) }
+                    }
+                }
                 state.textSel?.takeIf { it.page == index }?.let { sel ->
                     val paint = android.graphics.Paint().apply { color = Accent.copy(alpha = 0.35f).toArgb() }
                     sel.rects.forEach { r -> nc.drawRect(r.left * size.width, r.top * size.width, r.right * size.width, r.bottom * size.width, paint) }

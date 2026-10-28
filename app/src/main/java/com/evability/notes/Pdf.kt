@@ -87,6 +87,25 @@ class PdfDoc(private val file: File) : Closeable {
         TextSelection(i, text, contents.flatMap { it.bounds }.map { RectF(it.left / w, it.top / w, it.right / w, it.bottom / w) })
     }
 
+    /** Coincidencias de `query` en una página; cada una con sus rectángulos (normalizados respecto al ancho de la página). */
+    fun search(i: Int, query: String): List<List<RectF>> = synchronized(selLock) {
+        if (closed || !textSelectionSupported()) return@synchronized emptyList()
+        val renderer = selRenderer ?: run {
+            val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            selPfd = fd
+            PdfRenderer(fd).also { selRenderer = it }
+        }
+        if (selIndex != i) {
+            selPage?.close()
+            selPage = null
+            selPage = renderer.openPage(i)
+            selIndex = i
+        }
+        val p = selPage!!
+        val w = p.width.toFloat()
+        p.searchText(query).map { m -> m.bounds.map { RectF(it.left / w, it.top / w, it.right / w, it.bottom / w) } }
+    }
+
     fun writeThumbnail(target: File) {
         val bmp = render(0, 420)
         target.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 90, it) }

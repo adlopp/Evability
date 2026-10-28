@@ -41,6 +41,9 @@ object Pomodoro {
     var phaseMs by mutableLongStateOf(0L)
     var completed by mutableIntStateOf(0)
 
+    /** Instante ([SystemClock.elapsedRealtime]) hasta el que el tiempo de estudio ya está guardado en [StudyLog]. */
+    @Volatile var studyMark = 0L
+
     fun start(ctx: Context, studyMin: Int, restMin: Int) {
         Prefs.pomoStudy = studyMin
         Prefs.pomoRest = restMin
@@ -67,6 +70,23 @@ class PomodoroService : Service() {
     private var ringtone: Ringtone? = null
     private val advance = Runnable { nextPhase() }
     private val stopRing = Runnable { ringtone?.stop() }
+    private val saveStudy = object : Runnable {
+        override fun run() {
+            flushStudy()
+            handler.postDelayed(this, 10_000)
+        }
+    }
+
+    /** Guarda en [StudyLog] el tiempo de estudio transcurrido desde la última vez (los descansos no cuentan). */
+    private fun flushStudy() {
+        if (Pomodoro.phase != PomoPhase.STUDY) return
+        val now = SystemClock.elapsedRealtime()
+        val delta = now - Pomodoro.studyMark
+        if (delta <= 0) return
+        val wall = System.currentTimeMillis()
+        StudyLog.add(this, wall - delta, wall)
+        Pomodoro.studyMark = now
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -78,6 +98,7 @@ class PomodoroService : Service() {
         studyMs = intent.getIntExtra("study", 25).coerceAtLeast(1) * 60_000L
         restMs = intent.getIntExtra("rest", 5).coerceAtLeast(1) * 60_000L
         createChannels()
+        flushStudy()
         Pomodoro.completed = 0
         begin(PomoPhase.STUDY)
         ServiceCompat.startForeground(
@@ -100,11 +121,17 @@ class PomodoroService : Service() {
         Pomodoro.endAt = SystemClock.elapsedRealtime() + ms
         handler.removeCallbacks(advance)
         handler.postDelayed(advance, ms)
+        handler.removeCallbacks(saveStudy)
+        if (phase == PomoPhase.STUDY) {
+            Pomodoro.studyMark = SystemClock.elapsedRealtime()
+            handler.postDelayed(saveStudy, 10_000)
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun nextPhase() {
         val wasStudy = Pomodoro.phase == PomoPhase.STUDY
+        flushStudy()
         if (wasStudy) Pomodoro.completed++
         begin(if (wasStudy) PomoPhase.REST else PomoPhase.STUDY)
         ring()
@@ -184,6 +211,7 @@ class PomodoroService : Service() {
     }
 
     override fun onDestroy() {
+        flushStudy()
         handler.removeCallbacksAndMessages(null)
         ringtone?.stop()
         wakeLock?.let { if (it.isHeld) it.release() }

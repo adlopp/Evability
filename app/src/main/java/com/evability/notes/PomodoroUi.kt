@@ -9,6 +9,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,6 +70,7 @@ fun PomodoroScreen(onClose: () -> Unit) {
     var study by remember { mutableIntStateOf(Prefs.pomoStudy) }
     var rest by remember { mutableIntStateOf(Prefs.pomoRest) }
     val running = Pomodoro.phase != PomoPhase.IDLE
+    var showStats by remember { mutableStateOf(false) }
 
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(running) {
@@ -91,10 +97,19 @@ fun PomodoroScreen(onClose: () -> Unit) {
         if (needs) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) else Pomodoro.start(ctx, study, rest)
     }
 
+    if (showStats) {
+        StudyStatsScreen { showStats = false }
+        return
+    }
+
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
-            Text("Ternurín", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            Text("Ternurín", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = { showStats = true },
+                modifier = Modifier.padding(end = 4.dp).size(46.dp).clip(CircleShape).background(Surface1).border(1.dp, Outline, CircleShape),
+            ) { Icon(Icons.Default.BarChart, contentDescription = "Tu estudio", tint = Accent) }
         }
 
         Column(

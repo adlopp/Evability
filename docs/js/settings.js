@@ -6,7 +6,7 @@ import * as store from './store.js';
 import { getKey, setKey, KEY_URL } from './gemini.js';
 import { shareOrDownload } from './editor.js';
 
-export const VERSION = '1.0 web';
+export const VERSION = '1.6.1 web';
 
 const standalone = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 

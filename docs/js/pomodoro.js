@@ -9,6 +9,45 @@ const listeners = new Set();
 let audio = null, timer = null, wake = null;
 
 const save = () => localStorage.setItem(KEY, JSON.stringify(S));
+
+// ───────── registro del tiempo de estudio (sin descansos), por día ─────────
+
+const LOG = 'ev.study';
+export const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export const studyLog = () => { try { return JSON.parse(localStorage.getItem(LOG) || '{}'); } catch { return {}; } };
+
+/** Suma un tramo de estudio; si cruza la medianoche se reparte entre los dos días. */
+function addStudy(from, to) {
+  if (to <= from) return;
+  const log = studyLog();
+  let a = from;
+  while (a < to) {
+    const d = new Date(a);
+    const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const b = Math.min(to, next);
+    log[dayKey(d)] = (log[dayKey(d)] || 0) + (b - a);
+    a = b;
+  }
+  localStorage.setItem(LOG, JSON.stringify(log));
+}
+
+/** Guarda el estudio transcurrido hasta ahora (nunca más allá del fin de la fase). Sin `force` espera a juntar 5 s. */
+function accrue(force) {
+  if (S.phase !== 'STUDY') return;
+  const to = Math.min(Date.now(), S.endAt);
+  if (!S.mark) S.mark = to;
+  if (to - S.mark < (force ? 1 : 5000)) return;
+  addStudy(S.mark, to);
+  S.mark = to;
+  save();
+}
+
+/** Milisegundos estudiados en un día, incluido el tramo en curso que aún no se ha guardado. */
+export function studyMs(key) {
+  let ms = studyLog()[key] || 0;
+  if (key === dayKey(new Date()) && S.phase === 'STUDY' && S.mark) ms += Math.max(0, Math.min(Date.now(), S.endAt) - S.mark);
+  return ms;
+}
 const emit = () => listeners.forEach((f) => f());
 
 function ensureAudio() {
@@ -42,11 +81,14 @@ function begin(phase) {
   S.phase = phase;
   S.phaseMs = (phase === 'STUDY' ? S.study : S.rest) * 60000;
   S.endAt = Date.now() + S.phaseMs;
+  S.mark = phase === 'STUDY' ? Date.now() : 0;
   save();
 }
 
 function tick() {
+  accrue(false);
   if (S.phase !== 'IDLE' && Date.now() >= S.endAt) {
+    accrue(true);
     const wasStudy = S.phase === 'STUDY';
     if (wasStudy) S.completed++;
     begin(wasStudy ? 'REST' : 'STUDY');
@@ -66,9 +108,13 @@ async function keepAwake(on) {
   } catch { /* no disponible */ }
 }
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden && S.phase !== 'IDLE') { keepAwake(true); tick(); } });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) accrue(true); // por si el sistema suspende la web
+  else if (S.phase !== 'IDLE') { keepAwake(true); tick(); }
+});
 
 export function start(study, rest) {
+  accrue(true);
   S.study = study; S.rest = rest; S.completed = 0;
   ensureAudio(); // el navegador solo permite sonido tras un toque del usuario
   begin('STUDY');
@@ -80,7 +126,8 @@ export function start(study, rest) {
 }
 
 export function stop() {
-  S.phase = 'IDLE'; S.endAt = 0;
+  accrue(true);
+  S.phase = 'IDLE'; S.endAt = 0; S.mark = 0;
   save();
   clearInterval(timer); timer = null;
   keepAwake(false);
@@ -116,7 +163,8 @@ export function openPomodoro(onClose) {
 
   let study = S.study, rest = S.rest;
   const root = h('div', { class: 'pomo' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => { close(); } }, icon('back')), h('h1', {}, 'Ternurín')),
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => { close(); } }, icon('back')), h('h1', { class: 'grow' }, 'Ternurín'),
+      h('button', { class: 'round', 'aria-label': 'Tu estudio', title: 'Tu estudio', onclick: () => root.append(openStudyStats()) }, icon('chart'))),
     h('div', { class: 'pomo-main' }, ring_, body));
 
   function update() {
@@ -145,5 +193,65 @@ export function openPomodoro(onClose) {
   const raf = setInterval(update, 250);
   update();
   function close() { listeners.delete(update); clearInterval(raf); root.remove(); onClose?.(); }
+  return root;
+}
+
+// ───────── estadísticas: tiempo de estudio por día ─────────
+
+const DAYS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+const fmt = (ms) => {
+  const min = Math.floor(ms / 60000), hh = Math.floor(min / 60);
+  return hh ? (min % 60 ? `${hh} h ${min % 60} min` : `${hh} h`) : `${min} min`;
+};
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export function openStudyStats() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const monday0 = addDays(today, -((today.getDay() + 6) % 7));
+  let weekOffset = 0, selected = today;
+
+  const big = h('div', { class: 'stat-big' }), when = h('div', { class: 'dim' });
+  const weekLabel = h('div', { class: 'grow strong', style: { textAlign: 'center' } });
+  const next = h('button', { class: 'icon-btn', 'aria-label': 'Semana siguiente', onclick: () => { weekOffset++; selected = addDays(monday0, weekOffset * 7); draw(); } }, icon('chevR'));
+  const bars = h('div', { class: 'bars' }), letters = h('div', { class: 'bar-letters' }), cards = h('div', { class: 'stat-cards' });
+
+  function draw() {
+    const monday = addDays(monday0, weekOffset * 7);
+    const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+    const vals = days.map((d) => (d > today ? 0 : studyMs(dayKey(d))));
+    const top = Math.max(...vals, 3600000);
+    const selMs = selected > today ? 0 : studyMs(dayKey(selected));
+    const diff = Math.round((today - selected) / 86400000);
+    when.textContent = diff === 0 ? 'Hoy' : diff === 1 ? 'Ayer' : cap(selected.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }));
+    big.textContent = fmt(selMs);
+    weekLabel.textContent = weekOffset === 0 ? 'Esta semana' : `${monday.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })} – ${addDays(monday, 6).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}`;
+    next.disabled = weekOffset >= 0; next.style.opacity = weekOffset >= 0 ? 0.25 : 1;
+    bars.replaceChildren(...days.map((d, i) => {
+      const future = d > today, sel = +d === +selected;
+      const fill = h('div', { class: 'bar-fill' });
+      fill.style.height = vals[i] ? Math.max(3, vals[i] / top * 100) + '%' : '0%';
+      return h('button', { class: 'bar' + (sel ? ' sel' : '') + (future ? ' future' : ''), disabled: future, 'aria-label': `${DAYS[i]}: ${fmt(vals[i])}`, onclick: () => { selected = d; draw(); } }, fill);
+    }));
+    letters.replaceChildren(...days.map((d, i) => h('span', { class: +d === +selected ? 'sel' : '', style: { fontWeight: +d === +today ? 700 : 400 } }, DAYS[i])));
+    let streak = 0, d = studyMs(dayKey(today)) > 0 ? today : addDays(today, -1);
+    while (studyMs(dayKey(d)) > 0) { streak++; d = addDays(d, -1); }
+    const elapsed = Math.max(1, days.filter((x) => x <= today).length), total = vals.reduce((a, b) => a + b, 0);
+    const card = (label, value) => h('div', { class: 'stat-card' }, h('div', { class: 'strong' }, value), h('div', { class: 'dim small' }, label));
+    cards.replaceChildren(card('Semana', fmt(total)), card('Media por día', fmt(total / elapsed)), card('Racha', streak === 1 ? '1 día' : `${streak} días`));
+  }
+
+  const root = h('div', { class: 'pomo stats' },
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', {}, 'Tu estudio')),
+    h('div', { class: 'stats-body' },
+      h('div', { class: 'stat-hero' }, when, big, h('div', { class: 'dim small' }, 'de estudio efectivo')),
+      h('div', { class: 'row', style: { alignItems: 'center' } },
+        h('button', { class: 'icon-btn', 'aria-label': 'Semana anterior', onclick: () => { weekOffset--; selected = addDays(monday0, weekOffset * 7); draw(); } }, icon('chevL')), weekLabel, next),
+      bars, letters, cards,
+      h('p', { class: 'dim small' }, 'Solo cuenta el tiempo de estudio del Ternurín; los descansos no suman. El día se reinicia a las 00:00.')));
+
+  draw();
+  const live = setInterval(draw, 1000);
+  function close() { clearInterval(live); root.remove(); }
   return root;
 }

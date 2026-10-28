@@ -49,8 +49,10 @@ export class Editor {
     this.selbar = h('div', { class: 'floatbar', style: { display: 'none' } });
     this.objbar = h('div', { class: 'floatbar', style: { display: 'none' } });
     this.viewer.append(this.pagesEl);
-    this.root.append(this.topbar, this.optbar, this.viewer, this.counter, this.selbar, this.objbar);
+    this.searchbar = h('div', { class: 'searchbar', style: { display: 'none' } });
+    this.root.append(this.topbar, this.optbar, this.searchbar, this.viewer, this.counter, this.selbar, this.objbar);
     this.showBars = true;
+    this.hits = []; this.hitIndex = 0; this.searchOpen = false; this.textCache = new Map();
 
     ann.setImageReadyHandler(() => this.redrawAll());
     this.renderToolbar();
@@ -198,8 +200,100 @@ export class Editor {
         ctx.fillRect(x, y, Math.abs(L.a[0] - L.b[0]) * w, Math.abs(L.a[1] - L.b[1]) * w);
       }
     }
+    this.hits.forEach((hit, i) => {
+      if (hit.page !== v.index) return;
+      ctx.fillStyle = i === this.hitIndex ? 'rgba(245,169,198,0.65)' : 'rgba(255,213,79,0.4)';
+      for (const [x, y, rw, rh] of hit.rects) ctx.fillRect(x * w, y * w, rw * w, rh * w);
+    });
     const sel = this.selected && this.anns.find((a) => a.id === this.selected && a.page === v.index);
     if (sel) this.drawOutline(ctx, sel, w);
+  }
+
+  // ───────── búsqueda de texto ─────────
+
+  toggleSearch() {
+    this.searchOpen = !this.searchOpen;
+    if (!this.searchOpen) { this.hits = []; this.hitIndex = 0; this.redrawAll(); }
+    this.renderSearchBar();
+    this.renderToolbar();
+    if (this.searchOpen) this.searchInput.focus();
+  }
+
+  renderSearchBar() {
+    this.searchbar.style.display = this.searchOpen && this.showBars ? '' : 'none';
+    if (!this.searchOpen) return;
+    if (!this.searchInput) {
+      this.searchInput = h('input', { class: 'field', type: 'search', placeholder: 'Buscar en el PDF', autocomplete: 'off' });
+      this.searchCount = h('span', { class: 'dim search-count' });
+      let timer;
+      this.searchInput.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => this.runSearch(this.searchInput.value), 300); });
+      this.searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.stepHit(e.shiftKey ? -1 : 1); } });
+    }
+    fill(this.searchbar, this.searchInput, this.searchCount,
+      this.ibtn('chevUp', 'Coincidencia anterior', () => this.stepHit(-1), { disabled: !this.hits.length }),
+      this.ibtn('chevDown', 'Coincidencia siguiente', () => this.stepHit(1), { disabled: !this.hits.length }),
+      this.ibtn('close', 'Cerrar búsqueda', () => this.toggleSearch()));
+    const q = this.searchInput.value.trim();
+    this.searchCount.textContent = this.searching ? '…' : q.length < 2 ? '' : this.hits.length ? `${this.hitIndex + 1} de ${this.hits.length}` : '0 resultados';
+  }
+
+  /** Palabras de una página con su posición (normalizada respecto al ancho de la página), sin acentos ni mayúsculas. */
+  async pageText(pageIdx) {
+    if (this.textCache.has(pageIdx)) return this.textCache.get(pageIdx);
+    const page = await this.pdf.getPage(pageIdx + 1);
+    const vp = page.getViewport({ scale: 1 });
+    const tc = await page.getTextContent();
+    const norm = (t) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    let text = ''; const items = [];
+    for (const it of tc.items) {
+      if (!it.str) { continue; }
+      const n = norm(it.str);
+      const [, , , , e, f] = it.transform;
+      items.push({ start: text.length, len: n.length, x: e / vp.width, y: (vp.height - f - it.height * 0.85) / vp.width, w: it.width / vp.width, h: it.height / vp.width });
+      text += n + (it.hasEOL ? ' ' : '');
+    }
+    const out = { text, items };
+    this.textCache.set(pageIdx, out);
+    return out;
+  }
+
+  async runSearch(query) {
+    const q = query.trim().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const run = this.searchRun = (this.searchRun || 0) + 1;
+    if (q.length < 2) { this.hits = []; this.hitIndex = 0; this.searching = false; this.redrawAll(); this.renderSearchBar(); return; }
+    this.searching = true; this.renderSearchBar();
+    const hits = [];
+    for (const p of this.visiblePages()) {
+      if (p >= this.pdf.numPages) continue;
+      const { text, items } = await this.pageText(p);
+      if (run !== this.searchRun) return; // ha empezado otra búsqueda
+      for (let at = text.indexOf(q); at !== -1; at = text.indexOf(q, at + q.length)) {
+        const end = at + q.length, rects = [];
+        for (const it of items) {
+          const a = Math.max(at, it.start), b = Math.min(end, it.start + it.len);
+          if (b <= a) continue;
+          rects.push([it.x + it.w * (a - it.start) / it.len, it.y, it.w * (b - a) / it.len, it.h]);
+        }
+        if (rects.length) hits.push({ page: p, rects });
+      }
+    }
+    this.hits = hits; this.hitIndex = 0; this.searching = false;
+    this.redrawAll(); this.renderSearchBar();
+    if (hits.length) this.jumpToHit();
+  }
+
+  stepHit(d) {
+    if (!this.hits.length) return;
+    this.hitIndex = (this.hitIndex + d + this.hits.length) % this.hits.length;
+    this.redrawAll(); this.renderSearchBar(); this.jumpToHit();
+  }
+
+  jumpToHit() {
+    const hit = this.hits[this.hitIndex];
+    const v = this.views.find((x) => x.index === hit?.page);
+    if (!v) return;
+    const y = Math.min(...hit.rects.map((r) => r[1])) * this.pageW;
+    this.viewer.scrollTo({ top: v.el.offsetTop + y - this.viewer.clientHeight / 3, behavior: 'smooth' });
   }
 
   drawOutline(ctx, a, w) {
@@ -662,6 +756,7 @@ export class Editor {
       this.ibtn('undo', 'Deshacer', () => this.undo(), { disabled: !this.undoStack.length }),
       this.ibtn('redo', 'Rehacer', () => this.redo(), { disabled: !this.redoStack.length }),
       sep(),
+      this.ibtn('search', 'Buscar en el PDF', () => this.toggleSearch(), { on: this.searchOpen }),
       this.ibtn('zoomOut', 'Alejar', () => this.setZoom(this.zoom - 0.25)),
       h('span', { class: 'zoom-label' }, Math.round(this.zoom * 100) + '%'),
       this.ibtn('zoomIn', 'Acercar', () => this.setZoom(this.zoom + 0.25)),
@@ -684,6 +779,7 @@ export class Editor {
   applyBars() {
     this.topbar.style.display = this.showBars ? '' : 'none';
     this.optbar.style.display = this.showBars ? '' : 'none';
+    this.searchbar.style.display = this.searchOpen && this.showBars ? '' : 'none';
     if (!this.showBars) {
       this.revealBtn?.remove();
       this.revealBtn = h('button', { class: 'reveal-btn', onclick: () => { this.showBars = true; this.applyBars(); } }, icon('chevDown', 22));

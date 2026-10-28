@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import kotlin.math.max
+import kotlinx.coroutines.ensureActive
 
 class EditorState(
     val store: Store,
@@ -39,6 +40,53 @@ class EditorState(
 
     /** Texto seleccionado con pulsación larga (null = nada seleccionado). */
     var textSel by mutableStateOf<TextSelection?>(null)
+
+    // ───── Búsqueda de texto en el PDF ─────
+
+    class SearchHit(val page: Int, val rects: List<android.graphics.RectF>)
+
+    var searchOpen by mutableStateOf(false)
+    var searchQuery by mutableStateOf("")
+    var hits by mutableStateOf<List<SearchHit>>(emptyList())
+        private set
+    var hitIndex by mutableIntStateOf(0)
+    var searching by mutableStateOf(false)
+        private set
+    /** Cambia cada vez que hay que llevar la vista hasta la coincidencia actual. */
+    var hitJump by mutableIntStateOf(0)
+
+    /** Busca `query` en todas las páginas visibles del PDF (las en blanco no tienen texto). */
+    suspend fun runSearch(query: String) {
+        val q = query.trim()
+        if (q.length < 2) {
+            hits = emptyList(); hitIndex = 0; searching = false
+            return
+        }
+        searching = true
+        val found = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val out = ArrayList<SearchHit>()
+            for (p in visiblePages()) {
+                if (p >= doc.pageCount) continue
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                try { doc.search(p, q).forEach { out += SearchHit(p, it) } } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
+            }
+            out
+        }
+        hits = found
+        hitIndex = 0
+        searching = false
+        if (found.isNotEmpty()) hitJump++
+    }
+
+    fun stepHit(delta: Int) {
+        if (hits.isEmpty()) return
+        hitIndex = (hitIndex + delta).mod(hits.size)
+        hitJump++
+    }
+
+    fun closeSearch() {
+        searchOpen = false; searchQuery = ""; hits = emptyList(); hitIndex = 0
+    }
 
     /** Subraya con el resaltador (en su color actual) las líneas del texto seleccionado. */
     fun highlightSelection() {
