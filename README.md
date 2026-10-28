@@ -32,6 +32,18 @@ Necesitas JDK 17 y el SDK de Android (plataforma 35):
 
 El APK queda en `app/build/outputs/apk/debug/`.
 
+## Versión web para iPad / iPhone (carpeta `docs/`)
+
+Una app web instalable (PWA) con las funciones principales de Evability, pensada para iPad: biblioteca, plantillas, anotaciones con lápiz,
+selección de texto, papelera, Ternurín, «Analizar» con Gemini y copias de seguridad. Funciona sin conexión una vez instalada.
+
+- **Publicarla:** en GitHub, *Settings → Pages → Deploy from a branch → `main` / carpeta `/docs`*. Queda en `https://<usuario>.github.io/Evability/`.
+- **Instalarla en el iPad:** abrir esa dirección en Safari → Compartir → *Añadir a pantalla de inicio*.
+- No necesita compilar nada: son archivos estáticos (PDF.js, pdf-lib y JSZip van incluidos en `docs/vendor/`).
+- Para probarla en local: `python -m http.server 8000 --directory docs` y abrir `http://localhost:8000`.
+- Al cambiar archivos de la app, sube el número de `CACHE` en `docs/sw.js` para que los dispositivos descarguen la versión nueva.
+- Límites frente a la app de Android: no importa Word, el Ternurín solo suena con la app abierta y «Analizar» admite PDFs de hasta 14 MB.
+
 ## Notas
 
 - Las pegatinas de gatitos, hamsters, pollitos y chinchillas son dibujos originales hechos para este proyecto.
