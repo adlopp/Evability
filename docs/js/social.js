@@ -1,7 +1,7 @@
 // Parte social: perfil, amigos, presencia (punto verde) y «toques» (corazones). Misma lógica que la app de Android:
 // habla con Firebase por su API REST (sin SDK). Las claves no son secretas; la seguridad la ponen las reglas de `firestore.rules`.
 
-import { h, icon, toast, confirmDialog } from './ui.js';
+import { h, icon, toast, confirmDialog, modal } from './ui.js';
 
 const PROJECT = 'evability-a4c4d';
 const API_KEY = 'AIzaSyD1LmNMAePR63FPvCldLWPXQl4JvmnFars';
@@ -226,19 +226,90 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 // ───────── pantalla ─────────
 
-function avatar(name, photo, size = 46, online = null) {
+/** Foto ampliada en el centro de la pantalla mientras se mantiene pulsado el perfil. */
+let zoomEl = null;
+function showZoom(name, photo) {
+  hideZoom();
   const inner = photo ? h('img', { src: 'data:image/jpeg;base64,' + photo, alt: '' }) : h('span', {}, name.slice(0, 1).toUpperCase());
-  return h('div', { class: 'avatar', style: { width: size + 'px', height: size + 'px', fontSize: size * 0.42 + 'px' } }, inner,
+  zoomEl = h('div', { class: 'photo-zoom' }, h('div', { class: 'photo-zoom-circle' }, inner));
+  document.body.append(zoomEl);
+}
+function hideZoom() { zoomEl?.remove(); zoomEl = null; }
+
+function avatar(name, photo, size = 46, online = null) {
+  const inner = photo ? h('img', { src: 'data:image/jpeg;base64,' + photo, alt: '', draggable: 'false' }) : h('span', {}, name.slice(0, 1).toUpperCase());
+  const el = h('div', { class: 'avatar', style: { width: size + 'px', height: size + 'px', fontSize: size * 0.42 + 'px' } }, inner,
     online === null ? null : h('i', { class: 'dot' + (online ? ' on' : '') }));
+  // Mantener pulsado: se ve la foto grande; al soltar desaparece (y ese toque no cuenta como «clic»).
+  let timer, held = false;
+  el.addEventListener('pointerdown', () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; showZoom(name, photo); }, 380); });
+  const end = () => { clearTimeout(timer); if (held) hideZoom(); };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => el.addEventListener(ev, end));
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+  el.addEventListener('click', (e) => { if (held) { e.stopPropagation(); e.preventDefault(); held = false; } }, true);
+  return el;
 }
 
-/** Foto elegida → cuadrado de 96×96 en JPEG y base64 (unos 5 KB). */
-async function photoToBase64(file) {
-  const bmp = await createImageBitmap(file);
-  const side = Math.min(bmp.width, bmp.height);
-  const c = document.createElement('canvas'); c.width = c.height = 96;
-  c.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, 96, 96);
-  return c.toDataURL('image/jpeg', 0.8).split(',')[1];
+/** Recortar la foto: se arrastra, se pellizca o se usa el deslizador. Devuelve el JPEG de 192×192 en base64 o null. */
+function openCrop(file) {
+  return new Promise(async (resolve) => {
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { toast('No se pudo leer la imagen'); return resolve(null); }
+    const S = 280, base = S / Math.min(bmp.width, bmp.height);
+    let zoom = 1, ox = 0, oy = 0;
+    const cv = h('canvas', { class: 'crop-canvas', width: S * 2, height: S * 2 });
+    cv.style.width = S + 'px'; cv.style.height = S + 'px';
+    const g = cv.getContext('2d');
+    const range = h('input', { type: 'range', min: 1, max: 6, step: 0.01, value: 1, style: { width: S + 'px' } });
+    const clamp = () => {
+      const mx = Math.max(0, (bmp.width * base * zoom - S) / 2), my = Math.max(0, (bmp.height * base * zoom - S) / 2);
+      ox = Math.min(mx, Math.max(-mx, ox)); oy = Math.min(my, Math.max(-my, oy));
+    };
+    const draw = () => {
+      clamp();
+      g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, S, S);
+      const w = bmp.width * base * zoom, hh = bmp.height * base * zoom;
+      g.drawImage(bmp, (S - w) / 2 + ox, (S - hh) / 2 + oy, w, hh);
+      g.fillStyle = 'rgba(0,0,0,0.67)'; g.beginPath(); g.rect(0, 0, S, S); g.arc(S / 2, S / 2, S / 2 - 2, 0, Math.PI * 2); g.fill('evenodd');
+      g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#F5A9C6';
+      g.lineWidth = 2; g.beginPath(); g.arc(S / 2, S / 2, S / 2 - 2, 0, Math.PI * 2); g.stroke();
+    };
+    range.addEventListener('input', () => { zoom = +range.value; draw(); });
+    const ptrs = new Map(); let lastDist = 0;
+    cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]); lastDist = 0; });
+    cv.addEventListener('pointermove', (e) => {
+      const prev = ptrs.get(e.pointerId); if (!prev) return;
+      ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+      if (ptrs.size === 1) { ox += e.clientX - prev[0]; oy += e.clientY - prev[1]; }
+      else if (ptrs.size === 2) {
+        const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        if (lastDist) zoom = Math.min(6, Math.max(1, zoom * d / lastDist));
+        lastDist = d; range.value = zoom;
+      }
+      draw();
+    });
+    const up = (e) => { ptrs.delete(e.pointerId); lastDist = 0; };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', (e) => { e.preventDefault(); zoom = Math.min(6, Math.max(1, zoom * (e.deltaY < 0 ? 1.08 : 0.92))); range.value = zoom; draw(); }, { passive: false });
+
+    const apply = () => {
+      const sc = base * zoom, side = S / sc;
+      const cx = bmp.width / 2 - ox / sc, cy = bmp.height / 2 - oy / sc;
+      const c = document.createElement('canvas'); c.width = c.height = 192;
+      c.getContext('2d').drawImage(bmp, cx - side / 2, cy - side / 2, side, side, 0, 0, 192, 192);
+      let q = 0.82, out;
+      do { out = c.toDataURL('image/jpeg', q).split(',')[1]; q -= 0.08; } while (out.length > 28000 && q > 0.3); // las reglas admiten hasta 30.000
+      return out;
+    };
+    let result = null;
+    modal({
+      title: 'Recorta tu foto',
+      content: h('div', { class: 'crop-box' }, h('p', { class: 'dim small' }, 'Arrastra y pellizca para encuadrarla'), cv, range),
+      actions: [{ label: 'Cancelar' }, { label: 'Aplicar', primary: true, onClick: () => { result = apply(); } }],
+      onClose: () => resolve(result),
+    });
+    draw();
+  });
 }
 
 export function openSocial(onClose) {
@@ -293,7 +364,11 @@ export function openSocial(onClose) {
     const picker = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
     picker.onchange = async () => {
       if (!picker.files[0]) return;
-      try { const b = await photoToBase64(picker.files[0]); await setPhoto(b); myPhoto = b; paintMe(); } catch { toast('No se pudo cambiar la foto'); }
+      try {
+        const b = await openCrop(picker.files[0]); picker.value = '';
+        if (!b) return;
+        await setPhoto(b); myPhoto = b; paintMe();
+      } catch (e) { toast(e.message || 'No se pudo cambiar la foto'); }
     };
     myAvatar.onclick = () => picker.click();
     const search_ = h('input', { class: 'field', type: 'search', placeholder: 'Buscar personas por nombre de usuario', autocapitalize: 'none' });
@@ -318,14 +393,14 @@ export function openSocial(onClose) {
     function paintLists() {
       if (!ov) { friendsEl.replaceChildren(h('p', { class: 'dim' }, 'Cargando…')); return; }
       incomingEl.replaceChildren(...(ov.incoming.length ? [h('h3', {}, 'Solicitudes'), ...ov.incoming.map((p) => personRow(p,
-        h('button', { class: 'icon-btn', style: { color: '#4CD964' }, 'aria-label': 'Aceptar', onclick: act(() => accept(p.uid)) }, icon('check')),
+        h('button', { class: 'icon-btn', style: { color: 'var(--accent)' }, 'aria-label': 'Aceptar', onclick: act(() => accept(p.uid)) }, icon('check')),
         h('button', { class: 'icon-btn', 'aria-label': 'Rechazar', onclick: act(() => decline(p.uid)) }, icon('close'))))] : []));
       friendsEl.replaceChildren(h('h3', {}, 'Mis amigos'), ...(ov.friends.length ? ov.friends.map((f) => {
         const online = f.lastSeen > 0 && Date.now() - f.lastSeen < ONLINE_MS;
         const wait = f.lastPokeAt + COOLDOWN_MS + 2000 - Date.now();
         const mm = Math.max(0, Math.ceil(wait / 1000));
         return h('div', { class: 'person', 'data-uid': f.profile.uid }, avatar(f.profile.username, f.profile.photo, 46, online),
-          h('div', { class: 'grow' }, h('div', {}, f.profile.username), h('div', { class: 'small', style: { color: online ? '#4CD964' : 'var(--on-dim)' } }, online ? 'En línea' : 'Desconectado')),
+          h('div', { class: 'grow' }, h('div', {}, f.profile.username), h('div', { class: 'small', style: { color: online ? 'var(--accent)' : 'var(--on-dim)' } }, online ? 'En línea' : 'Desconectado')),
           h('span', { class: 'dim small cd', 'data-until': f.lastPokeAt + COOLDOWN_MS + 2000 }, wait > 0 ? `${Math.floor(mm / 60)}:${String(mm % 60).padStart(2, '0')}` : ''),
           h('button', { class: 'icon-btn heart', disabled: wait > 0, 'aria-label': 'Mandar un corazón', onclick: act(async () => { await poke(f.profile.uid); toast('❤ enviado a ' + f.profile.username); }) }, icon('heart')),
           h('button', { class: 'icon-btn', 'aria-label': 'Eliminar amigo', onclick: async () => { if (await confirmDialog('Eliminar amigo', `¿Dejar de ser amigo de ${f.profile.username}? Dejaréis de veros en línea y de mandaros corazones.`, 'Eliminar')) act(() => removeFriend(f.profile.uid))(); } }, icon('userMinus')));
@@ -334,7 +409,7 @@ export function openSocial(onClose) {
     async function refresh() { try { ov = await overview(); } catch (e) { if (!ov) fail(e); } paintLists(); paintResults(); }
 
     body.replaceChildren(
-      h('div', { class: 'me-card' }, myAvatar, h('div', { class: 'grow' }, h('div', { class: 'strong', style: { fontSize: '20px' } }, me.username), h('div', { class: 'dim small' }, 'Toca la foto para cambiarla')),
+      h('div', { class: 'me-card' }, myAvatar, h('div', { class: 'grow' }, h('div', { class: 'strong', style: { fontSize: '20px' } }, me.username), h('div', { class: 'dim small' }, 'Toca la foto para cambiarla · mantenla pulsada para verla grande')),
         h('button', { class: 'text-btn', onclick: () => { stopHost(); signOut(); showLogin(); } }, 'Salir'), picker),
       search_, resultsEl, incomingEl, friendsEl);
     myProfile().then((p) => { myPhoto = p.photo; paintMe(); }).catch(() => {});

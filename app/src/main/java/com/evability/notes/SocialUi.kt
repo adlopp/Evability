@@ -1,6 +1,24 @@
 package com.evability.notes
 
 import android.graphics.Bitmap
+import kotlin.math.roundToInt
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.Canvas
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
@@ -22,6 +40,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -94,6 +113,9 @@ private val Online = Color(0xFF4CD964)
 /** Ancho máximo de los campos y botones del formulario de cuenta (la mitad de lo que ocupaban en la tablet). */
 private val FormWidth = 280.dp
 
+/** Ancho máximo de la lista de amigos (la mitad de lo que ocupaba en la tablet). */
+private val PanelWidth = 340.dp
+
 /** Latido de presencia, aviso de toques y corazones flotantes. Va por encima de toda la app mientras haya sesión iniciada. */
 @Composable
 fun SocialHost() {
@@ -138,7 +160,7 @@ fun SocialHost() {
                 Text(
                     "❤",
                     fontSize = 72.sp,
-                    color = Color(0xFFFF4D79),
+                    color = Accent,
                     modifier = Modifier
                         .offset(maxWidth * heart.x - 36.dp, maxHeight * heart.y)
                         .graphicsLayer {
@@ -152,13 +174,29 @@ fun SocialHost() {
     }
 }
 
+private fun decodePhoto(photo: String): Bitmap? =
+    if (photo.isEmpty()) null
+    else runCatching { Base64.decode(photo, Base64.DEFAULT).let { BitmapFactory.decodeByteArray(it, 0, it.size) } }.getOrNull()
+
+/** Foto de perfil redonda. `onTap` = toque; `onHold(true/false)` = empieza/termina una pulsación larga (para ampliarla). */
 @Composable
-private fun Avatar(name: String, photo: String, size: Int = 46, online: Boolean? = null) {
-    val bmp = remember(photo) {
-        if (photo.isEmpty()) null
-        else runCatching { Base64.decode(photo, Base64.DEFAULT).let { BitmapFactory.decodeByteArray(it, 0, it.size) } }.getOrNull()
-    }
-    Box(Modifier.size(size.dp)) {
+private fun Avatar(
+    name: String, photo: String, size: Int = 46, online: Boolean? = null,
+    onTap: (() -> Unit)? = null, onHold: ((Boolean) -> Unit)? = null,
+) {
+    val bmp = remember(photo) { decodePhoto(photo) }
+    val tap by rememberUpdatedState(onTap)
+    val hold by rememberUpdatedState(onHold)
+    val gestures = if (onTap != null || onHold != null) {
+        Modifier.pointerInput(Unit) {
+            detectTapGestures(
+                onPress = { tryAwaitRelease(); hold?.invoke(false) },
+                onLongPress = { hold?.invoke(true) },
+                onTap = { tap?.invoke() },
+            )
+        }
+    } else Modifier
+    Box(Modifier.size(size.dp).then(gestures)) {
         Box(
             Modifier.size(size.dp).clip(CircleShape).background(Surface2).border(1.dp, Outline, CircleShape),
             contentAlignment = Alignment.Center,
@@ -176,19 +214,110 @@ private fun Avatar(name: String, photo: String, size: Int = 46, online: Boolean?
     }
 }
 
-/** Foto elegida → cuadrado de 96×96 en JPEG y base64 (unos 5 KB). */
-private fun photoToBase64(ctx: android.content.Context, uri: Uri): String {
+/** Foto ampliada en el centro de la pantalla, mientras se mantiene pulsado el perfil. */
+@Composable
+private fun PhotoZoom(name: String, photo: String) {
+    val bmp = remember(photo) { decodePhoto(photo) }
+    val s = remember { Animatable(0.55f) }
+    LaunchedEffect(Unit) { s.animateTo(1f, tween(180)) }
+    Box(Modifier.fillMaxSize().background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(280.dp).graphicsLayer { scaleX = s.value; scaleY = s.value }
+                .clip(CircleShape).background(Surface2).border(3.dp, Accent, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else Text(name.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold, fontSize = 110.sp)
+        }
+    }
+}
+
+/** Abre la foto elegida (reducida para no gastar memoria) para poder recortarla. */
+private fun loadForCrop(ctx: android.content.Context, uri: Uri): Bitmap {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, bounds) }
     var sample = 1
-    while (bounds.outWidth / (sample * 2) >= 192 && bounds.outHeight / (sample * 2) >= 192) sample *= 2
-    val src = ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }!!
-    val side = minOf(src.width, src.height)
-    val square = Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
-    val small = Bitmap.createScaledBitmap(square, 96, 96, true)
-    val out = ByteArrayOutputStream()
-    small.compress(Bitmap.CompressFormat.JPEG, 80, out)
-    return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    while (bounds.outWidth / (sample * 2) >= 1024 && bounds.outHeight / (sample * 2) >= 1024) sample *= 2
+    return ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }!!
+}
+
+/** Recorte cuadrado → 192×192 en JPEG y base64 (unos 10 KB; las reglas de Firestore admiten hasta 30.000 caracteres). */
+private fun encodePhoto(square: Bitmap): String {
+    val small = Bitmap.createScaledBitmap(square, 192, 192, true)
+    var quality = 82
+    while (true) {
+        val out = ByteArrayOutputStream()
+        small.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        val text = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        if (text.length < 28_000 || quality <= 40) return text
+        quality -= 8
+    }
+}
+
+/** Recortar la foto: se arrastra y se pellizca (o se usa el deslizador) para encuadrarla dentro del círculo. */
+@Composable
+private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> Unit) {
+    val side = 280.dp
+    val px = with(LocalDensity.current) { side.toPx() }
+    val base = px / minOf(src.width, src.height)
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var off by remember { mutableStateOf(Offset.Zero) }
+    val image = remember(src) { src.asImageBitmap() }
+    fun clamp(o: Offset, z: Float): Offset {
+        val mx = maxOf(0f, (src.width * base * z - px) / 2)
+        val my = maxOf(0f, (src.height * base * z - px) / 2)
+        return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
+    }
+    Dialog(onDismissRequest = onCancel) {
+        Column(Modifier.background(Surface1, RoundedCornerShape(24.dp)).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Recorta tu foto", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+            Spacer(Modifier.height(4.dp))
+            Text("Arrastra y pellizca para encuadrarla", fontSize = 12.sp, color = OnSurfaceDim)
+            Spacer(Modifier.height(14.dp))
+            Canvas(
+                Modifier.size(side).clip(RoundedCornerShape(12.dp)).background(Color.Black).pointerInput(Unit) {
+                    detectTransformGestures { _, pan, gz, _ ->
+                        zoom = (zoom * gz).coerceIn(1f, 6f)
+                        off = clamp(off + pan, zoom)
+                    }
+                },
+            ) {
+                val w = src.width * base * zoom
+                val h = src.height * base * zoom
+                drawImage(
+                    image,
+                    dstOffset = IntOffset(((size.width - w) / 2 + off.x).roundToInt(), ((size.height - h) / 2 + off.y).roundToInt()),
+                    dstSize = IntSize(w.roundToInt(), h.roundToInt()),
+                )
+                val r = size.minDimension / 2 - 2.dp.toPx()
+                val ring = Path().apply {
+                    addRect(Rect(0f, 0f, size.width, size.height))
+                    addOval(Rect(center, r))
+                    fillType = PathFillType.EvenOdd
+                }
+                drawPath(ring, Color(0xAA000000))
+                drawCircle(Accent, r, style = Stroke(2.dp.toPx()))
+            }
+            Slider(
+                value = zoom, onValueChange = { zoom = it; off = clamp(off, it) }, valueRange = 1f..6f,
+                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+                modifier = Modifier.width(side),
+            )
+            Row(Modifier.width(side), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onCancel) { Text("Cancelar") }
+                TextButton(onClick = {
+                    val sc = base * zoom
+                    val srcSide = px / sc
+                    val cx = src.width / 2f - off.x / sc
+                    val cy = src.height / 2f - off.y / sc
+                    val l = (cx - srcSide / 2).coerceIn(0f, src.width - srcSide).roundToInt()
+                    val t = (cy - srcSide / 2).coerceIn(0f, src.height - srcSide).roundToInt()
+                    val n = srcSide.roundToInt().coerceAtMost(minOf(src.width - l, src.height - t)).coerceAtLeast(1)
+                    onApply(Bitmap.createBitmap(src, l, t, n, n))
+                }) { Text("Aplicar", fontWeight = FontWeight.Bold) }
+            }
+        }
+    }
 }
 
 @Composable
@@ -299,6 +428,8 @@ private fun FriendsPanel() {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Social.Profile>>(emptyList()) }
     var removing by remember { mutableStateOf<Social.Profile?>(null) }
+    var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
+    var zoomed by remember { mutableStateOf<Pair<String, String>?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var refresh by remember { mutableLongStateOf(0L) }
 
@@ -336,12 +467,23 @@ private fun FriendsPanel() {
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
-            try {
-                val b64 = withContext(Dispatchers.IO) { photoToBase64(ctx, uri) }
-                Social.setPhoto(b64)
-                myPhoto = b64
-            } catch (e: Exception) { toast("No se pudo cambiar la foto") }
+            try { cropSrc = withContext(Dispatchers.IO) { loadForCrop(ctx, uri) } } catch (e: Exception) { toast("No se pudo abrir la foto") }
         }
+    }
+    cropSrc?.let { src ->
+        CropDialog(
+            src, onCancel = { cropSrc = null },
+            onApply = { square ->
+                cropSrc = null
+                scope.launch {
+                    try {
+                        val b64 = withContext(Dispatchers.IO) { encodePhoto(square) }
+                        Social.setPhoto(b64)
+                        myPhoto = b64
+                    } catch (e: Exception) { toast(e.message ?: "No se pudo cambiar la foto") }
+                }
+            },
+        )
     }
 
     removing?.let { p ->
@@ -355,19 +497,22 @@ private fun FriendsPanel() {
     }
 
     val o = overview
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 6.dp)) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    Column(Modifier.widthIn(max = PanelWidth).fillMaxWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 6.dp)) {
         // Mi perfil
         Row(
             Modifier.fillMaxWidth().background(Surface1, RoundedCornerShape(20.dp)).border(1.dp, Outline, RoundedCornerShape(20.dp)).padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.clickable { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                Avatar(me.username, myPhoto, 60)
-            }
+            Avatar(
+                me.username, myPhoto, 60,
+                onTap = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                onHold = { held -> zoomed = if (held) me.username to myPhoto else null },
+            )
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(me.username, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Text("Toca la foto para cambiarla", fontSize = 12.sp, color = OnSurfaceDim)
+                Text("Toca la foto para cambiarla · mantenla pulsada para verla grande", fontSize = 12.sp, color = OnSurfaceDim)
             }
             TextButton(onClick = { Social.signOut() }) { Text("Salir") }
         }
@@ -382,7 +527,7 @@ private fun FriendsPanel() {
             val isFriend = o?.friends?.any { it.profile.uid == p.uid } == true
             val pending = o?.outgoing?.contains(p.uid) == true
             val incoming = o?.incoming?.any { it.uid == p.uid } == true
-            PersonRow(p) {
+            PersonRow(p, onHold = { held -> zoomed = if (held) p.username to p.photo else null }) {
                 when {
                     isFriend -> Text("Amigos", color = OnSurfaceDim)
                     pending -> Text("Enviada", color = OnSurfaceDim)
@@ -399,8 +544,8 @@ private fun FriendsPanel() {
             Spacer(Modifier.height(18.dp))
             Text("Solicitudes", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             o.incoming.forEach { p ->
-                PersonRow(p) {
-                    IconButton(onClick = { act { Social.accept(p.uid) } }) { Icon(Icons.Default.Check, "Aceptar", tint = Online) }
+                PersonRow(p, onHold = { held -> zoomed = if (held) p.username to p.photo else null }) {
+                    IconButton(onClick = { act { Social.accept(p.uid) } }) { Icon(Icons.Default.Check, "Aceptar", tint = Accent) }
                     IconButton(onClick = { act { Social.decline(p.uid) } }) { Icon(Icons.Default.Close, "Rechazar", tint = OnSurfaceDim) }
                 }
             }
@@ -415,11 +560,11 @@ private fun FriendsPanel() {
                 val online = now - f.lastSeen < Social.ONLINE_MS && f.lastSeen > 0
                 val wait = f.lastPokeAt + Social.COOLDOWN_MS + 2000 - now
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(f.profile.username, f.profile.photo, 46, online)
+                    Avatar(f.profile.username, f.profile.photo, 46, online, onHold = { held -> zoomed = if (held) f.profile.username to f.profile.photo else null })
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(f.profile.username, fontSize = 17.sp, color = OnSurface, fontWeight = FontWeight.Medium)
-                        Text(if (online) "En línea" else "Desconectado", fontSize = 12.sp, color = if (online) Online else OnSurfaceDim)
+                        Text(if (online) "En línea" else "Desconectado", fontSize = 12.sp, color = if (online) Accent else OnSurfaceDim)
                     }
                     if (wait > 0) {
                         val secs = (wait / 1000).toInt()
@@ -428,19 +573,21 @@ private fun FriendsPanel() {
                     IconButton(
                         enabled = wait <= 0,
                         onClick = { act { Social.poke(f.profile.uid); toast("❤ enviado a ${f.profile.username}") } },
-                    ) { Icon(Icons.Default.Favorite, "Mandar un corazón", tint = if (wait <= 0) Color(0xFFFF4D79) else OnSurfaceDim.copy(alpha = 0.4f)) }
+                    ) { Icon(Icons.Default.Favorite, "Mandar un corazón", tint = if (wait <= 0) Accent else OnSurfaceDim.copy(alpha = 0.4f)) }
                     IconButton(onClick = { removing = f.profile }) { Icon(Icons.Default.PersonRemove, "Eliminar amigo", tint = OnSurfaceDim) }
                 }
             }
         }
         Spacer(Modifier.height(24.dp))
     }
+    zoomed?.let { PhotoZoom(it.first, it.second) }
+    }
 }
 
 @Composable
-private fun PersonRow(p: Social.Profile, actions: @Composable () -> Unit) {
+private fun PersonRow(p: Social.Profile, onHold: (Boolean) -> Unit, actions: @Composable () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Avatar(p.username, p.photo, 42)
+        Avatar(p.username, p.photo, 42, onHold = onHold)
         Spacer(Modifier.width(12.dp))
         Text(p.username, fontSize = 16.sp, color = OnSurface, modifier = Modifier.weight(1f))
         actions()
