@@ -1,6 +1,11 @@
 package com.evability.notes
 
 import android.graphics.Bitmap
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.unit.Density
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import kotlin.math.roundToInt
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.IntSize
@@ -141,6 +146,7 @@ fun SocialHost() {
         launch {
             while (true) {
                 try { Social.checkPokes() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
+                try { Social.checkShares() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
                 delay(12_000)
             }
         }
@@ -214,20 +220,23 @@ private fun Avatar(
     }
 }
 
-/** Foto ampliada en el centro de la pantalla, mientras se mantiene pulsado el perfil. */
+/** Foto ampliada en el centro de la pantalla, mientras se mantiene pulsado el perfil. Primero la miniatura y, al llegar, la grande. */
 @Composable
-private fun PhotoZoom(name: String, photo: String) {
+private fun PhotoZoom(target: ZoomTarget) {
+    var photo by remember(target) { mutableStateOf(target.photo) }
+    LaunchedEffect(target) { Social.fullPhoto(target.uid, target.photo)?.let { photo = it } }
     val bmp = remember(photo) { decodePhoto(photo) }
     val s = remember { Animatable(0.55f) }
     LaunchedEffect(Unit) { s.animateTo(1f, tween(180)) }
-    Box(Modifier.fillMaxSize().background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
+        val side = minOf(280.dp, maxHeight * 0.7f, maxWidth * 0.85f)
         Box(
-            Modifier.size(280.dp).graphicsLayer { scaleX = s.value; scaleY = s.value }
+            Modifier.size(side).graphicsLayer { scaleX = s.value; scaleY = s.value }
                 .clip(CircleShape).background(Surface2).border(3.dp, Accent, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            else Text(name.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold, fontSize = 110.sp)
+            if (bmp != null) Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High)
+            else Text(target.name.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold, fontSize = 110.sp)
         }
     }
 }
@@ -241,24 +250,28 @@ private fun loadForCrop(ctx: android.content.Context, uri: Uri): Bitmap {
     return ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }!!
 }
 
-/** Recorte cuadrado → 192×192 en JPEG y base64 (unos 10 KB; las reglas de Firestore admiten hasta 30.000 caracteres). */
-private fun encodePhoto(square: Bitmap): String {
-    val small = Bitmap.createScaledBitmap(square, 192, 192, true)
-    var quality = 82
-    while (true) {
-        val out = ByteArrayOutputStream()
-        small.compress(Bitmap.CompressFormat.JPEG, quality, out)
-        val text = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-        if (text.length < 28_000 || quality <= 40) return text
-        quality -= 8
+/** Recorte cuadrado → miniatura de 192 px (para las listas, < 28.000 caracteres) y foto grande de hasta 512 px (< 140.000). */
+private fun encodePhoto(square: Bitmap): Pair<String, String> {
+    fun jpeg(size: Int, startQuality: Int, maxChars: Int): String {
+        val small = Bitmap.createScaledBitmap(square, size, size, true)
+        var quality = startQuality
+        while (true) {
+            val out = ByteArrayOutputStream()
+            small.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            val text = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            if (text.length < maxChars || quality <= 40) return text
+            quality -= 8
+        }
     }
+    return jpeg(192, 82, 28_000) to jpeg(minOf(512, square.width), 88, 140_000)
 }
 
 /** Recortar la foto: se arrastra y se pellizca (o se usa el deslizador) para encuadrarla dentro del círculo. */
 @Composable
 private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> Unit) {
     val side = 280.dp
-    val px = with(LocalDensity.current) { side.toPx() }
+    val unscaled = LocalDensity.current.let { Density(it.density / LocalSocialScale.current, it.fontScale) }
+    val px = with(unscaled) { side.toPx() }
     val base = px / minOf(src.width, src.height)
     var zoom by remember { mutableFloatStateOf(1f) }
     var off by remember { mutableStateOf(Offset.Zero) }
@@ -269,6 +282,7 @@ private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> U
         return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
     }
     Dialog(onDismissRequest = onCancel) {
+        CompositionLocalProvider(LocalDensity provides unscaled) {
         Column(Modifier.background(Surface1, RoundedCornerShape(24.dp)).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Recorta tu foto", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             Spacer(Modifier.height(4.dp))
@@ -317,12 +331,29 @@ private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> U
                 }) { Text("Aplicar", fontWeight = FontWeight.Bold) }
             }
         }
+        }
     }
 }
+
+/** Cuánto se agranda la pantalla de Amigos respecto a su tamaño base (hasta el doble en una tablet). */
+private val LocalSocialScale = compositionLocalOf { 1f }
+
+private class ZoomTarget(val name: String, val photo: String, val uid: String)
 
 @Composable
 fun SocialScreen(onClose: () -> Unit) {
     BackHandler(onBack = onClose)
+    BoxWithConstraints(Modifier.fillMaxSize().background(Bg)) {
+        val scale = (maxWidth.value / 380f).coerceIn(1f, 2f)
+        val base = LocalDensity.current
+        CompositionLocalProvider(LocalSocialScale provides scale, LocalDensity provides Density(base.density * scale, base.fontScale)) {
+            SocialContent(onClose)
+        }
+    }
+}
+
+@Composable
+private fun SocialContent(onClose: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
@@ -429,7 +460,7 @@ private fun FriendsPanel() {
     var results by remember { mutableStateOf<List<Social.Profile>>(emptyList()) }
     var removing by remember { mutableStateOf<Social.Profile?>(null) }
     var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
-    var zoomed by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var zoomed by remember { mutableStateOf<ZoomTarget?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var refresh by remember { mutableLongStateOf(0L) }
 
@@ -477,9 +508,9 @@ private fun FriendsPanel() {
                 cropSrc = null
                 scope.launch {
                     try {
-                        val b64 = withContext(Dispatchers.IO) { encodePhoto(square) }
-                        Social.setPhoto(b64)
-                        myPhoto = b64
+                        val (thumb, full) = withContext(Dispatchers.IO) { encodePhoto(square) }
+                        Social.setPhoto(thumb, full)
+                        myPhoto = thumb
                     } catch (e: Exception) { toast(e.message ?: "No se pudo cambiar la foto") }
                 }
             },
@@ -507,7 +538,7 @@ private fun FriendsPanel() {
             Avatar(
                 me.username, myPhoto, 60,
                 onTap = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onHold = { held -> zoomed = if (held) me.username to myPhoto else null },
+                onHold = { held -> zoomed = if (held) ZoomTarget(me.username, myPhoto, me.uid) else null },
             )
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
@@ -527,7 +558,7 @@ private fun FriendsPanel() {
             val isFriend = o?.friends?.any { it.profile.uid == p.uid } == true
             val pending = o?.outgoing?.contains(p.uid) == true
             val incoming = o?.incoming?.any { it.uid == p.uid } == true
-            PersonRow(p, onHold = { held -> zoomed = if (held) p.username to p.photo else null }) {
+            PersonRow(p, onHold = { held -> zoomed = if (held) ZoomTarget(p.username, p.photo, p.uid) else null }) {
                 when {
                     isFriend -> Text("Amigos", color = OnSurfaceDim)
                     pending -> Text("Enviada", color = OnSurfaceDim)
@@ -544,7 +575,7 @@ private fun FriendsPanel() {
             Spacer(Modifier.height(18.dp))
             Text("Solicitudes", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             o.incoming.forEach { p ->
-                PersonRow(p, onHold = { held -> zoomed = if (held) p.username to p.photo else null }) {
+                PersonRow(p, onHold = { held -> zoomed = if (held) ZoomTarget(p.username, p.photo, p.uid) else null }) {
                     IconButton(onClick = { act { Social.accept(p.uid) } }) { Icon(Icons.Default.Check, "Aceptar", tint = Accent) }
                     IconButton(onClick = { act { Social.decline(p.uid) } }) { Icon(Icons.Default.Close, "Rechazar", tint = OnSurfaceDim) }
                 }
@@ -560,7 +591,7 @@ private fun FriendsPanel() {
                 val online = now - f.lastSeen < Social.ONLINE_MS && f.lastSeen > 0
                 val wait = f.lastPokeAt + Social.COOLDOWN_MS + 2000 - now
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(f.profile.username, f.profile.photo, 46, online, onHold = { held -> zoomed = if (held) f.profile.username to f.profile.photo else null })
+                    Avatar(f.profile.username, f.profile.photo, 46, online, onHold = { held -> zoomed = if (held) ZoomTarget(f.profile.username, f.profile.photo, f.profile.uid) else null })
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(f.profile.username, fontSize = 17.sp, color = OnSurface, fontWeight = FontWeight.Medium)
@@ -580,7 +611,7 @@ private fun FriendsPanel() {
         }
         Spacer(Modifier.height(24.dp))
     }
-    zoomed?.let { PhotoZoom(it.first, it.second) }
+    zoomed?.let { PhotoZoom(it) }
     }
 }
 
@@ -592,4 +623,70 @@ private fun PersonRow(p: Social.Profile, onHold: (Boolean) -> Unit, actions: @Co
         Text(p.username, fontSize = 16.sp, color = OnSurface, modifier = Modifier.weight(1f))
         actions()
     }
+}
+
+/** «Enviar a un amigo»: elige a quién mandar el PDF original del documento. */
+@Composable
+fun SendDialog(doc: DocInfo, store: Store, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    var friends by remember { mutableStateOf<List<Social.FriendRow>?>(null) }
+    var error by remember { mutableStateOf("") }
+    var progress by remember { mutableStateOf<Float?>(null) }
+    val signedIn = Social.session != null
+
+    LaunchedEffect(Unit) {
+        if (signedIn) try { friends = Social.overview().friends } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message ?: "Sin conexión" }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (progress == null) onDismiss() },
+        title = { Text("Enviar «${doc.name}»") },
+        text = {
+            Column {
+                when {
+                    !signedIn -> Text("Entra primero en Amigos (el botón de las personas de la cabecera) para poder enviar PDF.", color = OnSurfaceDim)
+                    friends == null && error.isEmpty() -> Text("Cargando amigos…", color = OnSurfaceDim)
+                    friends.orEmpty().isEmpty() && error.isEmpty() -> Text("Todavía no tienes amigos a quienes enviárselo.", color = OnSurfaceDim)
+                    else -> friends.orEmpty().forEach { f ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Avatar(f.profile.username, f.profile.photo, 40)
+                            Spacer(Modifier.width(12.dp))
+                            Text(f.profile.username, modifier = Modifier.weight(1f), color = OnSurface)
+                            TextButton(
+                                enabled = progress == null,
+                                onClick = {
+                                    scope.launch {
+                                        error = ""
+                                        progress = 0f
+                                        try {
+                                            Social.sendPdf(f.profile.uid, doc.name, store.pdfFile(doc.id)) { progress = it }
+                                            Toast.makeText(ctx, "Enviado a ${f.profile.username}", Toast.LENGTH_SHORT).show()
+                                            onDismiss()
+                                        } catch (e: Exception) {
+                                            error = e.message ?: "No se pudo enviar"
+                                            progress = null
+                                        }
+                                    }
+                                },
+                            ) { Text("Enviar") }
+                        }
+                    }
+                }
+                progress?.let {
+                    Spacer(Modifier.height(10.dp))
+                    LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
+                    Text("Enviando…", fontSize = 12.sp, color = OnSurfaceDim, modifier = Modifier.padding(top = 4.dp))
+                }
+                if (error.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(error, color = Color(0xFFFF6B6B), fontSize = 14.sp)
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Se envía el PDF original, sin tus anotaciones (máx. 10 MB).", fontSize = 12.sp, color = OnSurfaceDim)
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(enabled = progress == null, onClick = onDismiss) { Text("Cerrar") } },
+    )
 }

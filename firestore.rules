@@ -32,6 +32,45 @@ service cloud.firestore {
       allow delete: if request.auth.uid == uid;
     }
 
+    // foto en alta resolución (solo se descarga al ampliar un perfil); la miniatura de las listas va en users/{uid}
+    match /photos/{uid} {
+      allow read: if signedIn();
+      allow create, update: if request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['data'])
+        && request.resource.data.data is string
+        && request.resource.data.data.size() < 150000;
+      allow delete: if request.auth.uid == uid;
+    }
+
+    // PDF enviados a un amigo: se trocean en partes de ~600 KB (máx. 10 MB). El receptor los baja y los borra.
+    match /shares/{id} {
+      allow read: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['from', 'to', 'name', 'size', 'chunks', 'ready', 'at'])
+        && request.resource.data.from == request.auth.uid
+        && areFriends(request.auth.uid, request.resource.data.to)
+        && request.resource.data.name is string && request.resource.data.name.size() < 200
+        && request.resource.data.size is int && request.resource.data.size <= 10485760
+        && request.resource.data.chunks is int && request.resource.data.chunks >= 1 && request.resource.data.chunks <= 20
+        && request.resource.data.ready == false
+        && request.resource.data.at == request.time;
+      allow update: if signedIn() && resource.data.from == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ready'])
+        && request.resource.data.ready == true;
+      allow delete: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+
+      match /parts/{n} {
+        allow create: if signedIn()
+          && get(/databases/$(database)/documents/shares/$(id)).data.from == request.auth.uid
+          && request.resource.data.keys().hasOnly(['data'])
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 900000;
+        allow read, delete: if signedIn()
+          && (get(/databases/$(database)/documents/shares/$(id)).data.from == request.auth.uid
+            || get(/databases/$(database)/documents/shares/$(id)).data.to == request.auth.uid);
+      }
+    }
+
     // última conexión: solo la ve el propio usuario y sus amigos
     match /presence/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || areFriends(request.auth.uid, uid));

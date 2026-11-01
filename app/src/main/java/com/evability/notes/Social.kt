@@ -1,5 +1,6 @@
 package com.evability.notes
 
+import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -8,7 +9,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
+import java.util.UUID
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -238,9 +242,31 @@ object Social {
         profile(s.uid, getAll("users", listOf(s.uid))[s.uid])
     }
 
-    suspend fun setPhoto(base64: String) = withContext(Dispatchers.IO) {
+    /**
+     * Guarda la miniatura (la que ven las listas) y, aparte, la foto en alta resolución para cuando se amplía.
+     * Devuelve false si la grande no se pudo guardar (por ejemplo, si faltan las reglas nuevas): entonces se amplía la miniatura.
+     */
+    suspend fun setPhoto(thumb: String, full: String): Boolean = withContext(Dispatchers.IO) {
         val s = live()
-        commit(write("users/${s.uid}", JSONObject().put("username", str(s.username)).put("photo", str(base64))))
+        commit(write("users/${s.uid}", JSONObject().put("username", str(s.username)).put("photo", str(thumb))))
+        try {
+            commit(write("photos/${s.uid}", JSONObject().put("data", str(full))))
+            fullCache["${s.uid}:${thumb.length}:${thumb.takeLast(16)}"] = full
+            true
+        } catch (e: SocialError) {
+            false
+        }
+    }
+
+    private val fullCache = HashMap<String, String>()
+
+    /** Foto en alta resolución de una persona (null si no tiene). `thumb` identifica la versión para no volver a descargarla. */
+    suspend fun fullPhoto(uid: String, thumb: String): String? = withContext(Dispatchers.IO) {
+        val key = "$uid:${thumb.length}:${thumb.takeLast(16)}"
+        fullCache[key]?.let { return@withContext it }
+        val data = runCatching { getAll("photos", listOf(uid))[uid]?.text("data") }.getOrNull()
+        if (!data.isNullOrEmpty()) fullCache[key] = data
+        data?.takeIf { it.isNotEmpty() }
     }
 
     // ───────── amigos ─────────
@@ -329,6 +355,91 @@ object Social {
         val fresh = times.count { it > lastShownPoke }
         lastShownPoke = maxOf(lastShownPoke, newest)
         repeat(fresh.coerceAtMost(3)) { showHeart() }
+    }
+
+    // ───────── PDF entre amigos ─────────
+
+    const val MAX_SHARE = 10 * 1024 * 1024
+    private const val CHUNK = 600_000
+
+    /** Lo que hace la app con un PDF recibido: lo guarda en la biblioteca. Lo pone `MainActivity`. */
+    var receiver: (suspend (name: String, from: String, bytes: ByteArray) -> Unit)? = null
+    private val receiving = HashSet<String>()
+
+    private fun int(v: Long) = JSONObject().put("integerValue", v.toString())
+    private fun JSONObject.int(key: String) = optJSONObject("fields")?.optJSONObject(key)?.optString("integerValue")?.toIntOrNull() ?: 0
+
+    /** Envía un PDF a un amigo, troceado en partes de 600 KB (Firestore admite 1 MB por documento). */
+    suspend fun sendPdf(toUid: String, name: String, file: File, onProgress: (Float) -> Unit) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val size = file.length()
+        if (size > MAX_SHARE) throw SocialError("Este PDF pesa más de 10 MB y no se puede enviar")
+        val chunks = ((size + CHUNK - 1) / CHUNK).toInt().coerceAtLeast(1)
+        val id = UUID.randomUUID().toString()
+        commit(
+            write(
+                "shares/$id",
+                JSONObject().put("from", str(me)).put("to", str(toUid)).put("name", str(name.take(150)))
+                    .put("size", int(size)).put("chunks", int(chunks.toLong())).put("ready", JSONObject().put("booleanValue", false)),
+                serverTime = "at",
+            ),
+        )
+        try {
+            file.inputStream().use { input ->
+                val buf = ByteArray(CHUNK)
+                for (i in 0 until chunks) {
+                    var n = 0
+                    while (n < CHUNK) { val r = input.read(buf, n, CHUNK - n); if (r < 0) break; n += r }
+                    commit(write("shares/$id/parts/$i", JSONObject().put("data", str(Base64.encodeToString(buf, 0, n, Base64.NO_WRAP)))))
+                    onProgress((i + 1f) / chunks)
+                }
+            }
+            // Solo ahora se marca como listo, para que el otro no lo baje a medias.
+            val ready = JSONObject().put("update", JSONObject().put("name", "$DB/shares/$id").put("fields", JSONObject().put("ready", JSONObject().put("booleanValue", true))))
+                .put("updateMask", JSONObject().put("fieldPaths", JSONArray().put("ready")))
+            commit(ready)
+        } catch (e: Exception) {
+            runCatching { commit(*((0 until chunks).map { delete("shares/$id/parts/$it") } + delete("shares/$id")).toTypedArray()) }
+            throw e
+        }
+    }
+
+    /** Baja los PDF que te han enviado, los entrega a [receiver] y los borra de la nube. */
+    suspend fun checkShares() = withContext(Dispatchers.IO) {
+        val recv = receiver ?: return@withContext
+        val me = live().uid
+        val where = JSONObject().put(
+            "compositeFilter",
+            JSONObject().put("op", "AND").put("filters", JSONArray().put(filter("to", "EQUAL", str(me))).put(filter("ready", "EQUAL", JSONObject().put("booleanValue", true)))),
+        )
+        for (d in query("shares", where, 5)) {
+            val id = idOf(d.getString("name"))
+            if (!receiving.add(id)) continue
+            try {
+                val chunks = d.int("chunks")
+                val from = d.text("from")
+                val name = d.text("name").ifBlank { "PDF recibido" }
+                val bytes = ByteArrayOutputStream()
+                var i = 0
+                while (i < chunks) {
+                    val ids = (i until minOf(i + 3, chunks)).map { it.toString() }
+                    val got = postText("$DOCS:batchGet", JSONObject().put("documents", JSONArray(ids.map { "$DB/shares/$id/parts/$it" })).toString(), token = live().idToken)
+                    val parts = HashMap<String, JSONObject>()
+                    val arr = JSONArray(got)
+                    for (k in 0 until arr.length()) arr.getJSONObject(k).optJSONObject("found")?.let { parts[idOf(it.getString("name"))] = it }
+                    for (p in ids) bytes.write(Base64.decode(parts[p]?.text("data") ?: throw SocialError("Faltan partes del PDF"), Base64.DEFAULT))
+                    i += ids.size
+                }
+                val sender = getAll("users", listOf(from))[from]?.text("username") ?: "un amigo"
+                try {
+                    recv(name, sender, bytes.toByteArray())
+                } finally {
+                    runCatching { commit(*((0 until chunks).map { delete("shares/$id/parts/$it") } + delete("shares/$id")).toTypedArray()) }
+                }
+            } finally {
+                receiving.remove(id)
+            }
+        }
     }
 
     private fun showHeart() {

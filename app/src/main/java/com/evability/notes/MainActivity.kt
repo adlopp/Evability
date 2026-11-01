@@ -226,6 +226,17 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
 
     LaunchedEffect(Unit) { checkUpdate(false) }
 
+    // PDF que te envían los amigos: se guardan en la biblioteca (carpeta «Amigos») en cuanto llegan.
+    LaunchedEffect(Unit) {
+        Social.receiver = { name, from, bytes ->
+            withContext(Dispatchers.IO) { store.receive(name, from, bytes) }
+            withContext(Dispatchers.Main) {
+                reload()
+                toast("$from te ha enviado «$name». Está en la carpeta Amigos")
+            }
+        }
+    }
+
     LaunchedEffect(incoming.value) {
         incoming.value?.let {
             incoming.value = null

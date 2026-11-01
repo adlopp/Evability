@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.SmartToy
@@ -116,6 +117,7 @@ private enum class SortMode(val label: String) { RECENT("Recientes"), NAME("Nomb
 private sealed interface DocFilter {
     object All : DocFilter
     object Favs : DocFilter
+    object Friends : DocFilter
     data class Folder(val name: String) : DocFilter
 }
 
@@ -192,6 +194,7 @@ fun HomeScreen(
     var showSocial by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<DocInfo?>(null) }
+    var sending by remember { mutableStateOf<DocInfo?>(null) }
     var moving by remember { mutableStateOf<List<DocInfo>?>(null) }
     var newFolderFor by remember { mutableStateOf<List<DocInfo>?>(null) }
     var removingFolder by remember { mutableStateOf<String?>(null) }
@@ -208,6 +211,7 @@ fun HomeScreen(
             (query.isBlank() || d.name.contains(query.trim(), ignoreCase = true)) && when (val f = filter) {
                 DocFilter.All -> true
                 DocFilter.Favs -> d.favorite
+                DocFilter.Friends -> d.from.isNotBlank()
                 is DocFilter.Folder -> d.folder == f.name
             }
         }
@@ -244,7 +248,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                TopRow(version, onCheckUpdate, onPomodoro = { showPomodoro = true }, onSocial = { showSocial = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
+                TopRow(version, onAnalyze = { showAnalyze = true }, onSocial = { showSocial = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -268,14 +272,14 @@ fun HomeScreen(
                         Text("Plantillas", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     }
                     OutlinedButton(
-                        onClick = { showAnalyze = true },
+                        onClick = { showPomodoro = true },
                         shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(1.5.dp, Accent),
                         contentPadding = PaddingValues(horizontal = 26.dp, vertical = 14.dp),
                     ) {
-                        Icon(Icons.Default.SmartToy, contentDescription = null)
+                        Icon(Icons.Default.Timer, contentDescription = null)
                         Spacer(Modifier.width(10.dp))
-                        Text("Analizar", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Tiempo", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -327,6 +331,7 @@ fun HomeScreen(
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         FilterChip("Todos", filter == DocFilter.All, null) { filter = DocFilter.All }
                         FilterChip("Favoritos", filter == DocFilter.Favs, Icons.Default.Star) { filter = DocFilter.Favs }
+                        FilterChip("Amigos", filter == DocFilter.Friends, Icons.Default.People) { filter = DocFilter.Friends }
                         folders.forEach { name ->
                             FilterChip(name, filter == DocFilter.Folder(name), Icons.Default.DriveFileMove, onLongClick = { removingFolder = name }) {
                                 filter = DocFilter.Folder(name)
@@ -341,7 +346,11 @@ fun HomeScreen(
                 item(span = { GridItemSpan(maxLineSpan) }) { EmptyState() }
             } else if (entries.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text("Ningún documento coincide con la búsqueda o el filtro.", color = OnSurfaceDim, modifier = Modifier.padding(vertical = 12.dp))
+                    Text(
+                        if (filter == DocFilter.Friends && query.isBlank()) "Aquí aparecerán los PDF que te envíen tus amigos. Para enviar uno: menú ⋮ de un documento → «Enviar a un amigo»."
+                        else "Ningún documento coincide con la búsqueda o el filtro.",
+                        color = OnSurfaceDim, modifier = Modifier.padding(vertical = 12.dp),
+                    )
                 }
             }
 
@@ -371,6 +380,7 @@ fun HomeScreen(
                         },
                         onFavorite = { store.setFavorite(listOf(e.info.id), !e.info.favorite); onChanged() },
                         onMove = { moving = listOf(e.info) },
+                        onSend = { sending = e.info },
                         onExport = { onExport(e.info) },
                         onDelete = { deleteDocs(listOf(e.info)) },
                     )
@@ -416,7 +426,8 @@ fun HomeScreen(
         )
     }
     if (showTrash) TrashDialog(store, onChanged) { showTrash = false }
-    if (showSettings) SettingsDialog(version) { showSettings = false }
+    sending?.let { SendDialog(it, store) { sending = null } }
+    if (showSettings) SettingsDialog(version, onCheckUpdate = { showSettings = false; onCheckUpdate() }) { showSettings = false }
 
     renaming?.let { doc ->
         TextPromptDialog(
@@ -481,7 +492,7 @@ fun HomeScreen(
 // ───────────────────────────── Cabecera ─────────────────────────────
 
 @Composable
-private fun TopRow(version: String, onCheckUpdate: () -> Unit, onPomodoro: () -> Unit, onSocial: () -> Unit, onTrash: () -> Unit, onSettings: () -> Unit) {
+private fun TopRow(version: String, onAnalyze: () -> Unit, onSocial: () -> Unit, onTrash: () -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     val player = remember { MediaPlayer.create(context, R.raw.easter_egg) }
     DisposableEffect(Unit) { onDispose { player?.release() } }
@@ -517,11 +528,9 @@ private fun TopRow(version: String, onCheckUpdate: () -> Unit, onPomodoro: () ->
         }
         RoundIconButton(Icons.Default.People, "Amigos", onSocial)
         Spacer(Modifier.width(10.dp))
-        RoundIconButton(Icons.Default.Timer, "Ternurín", onPomodoro)
+        RoundIconButton(Icons.Default.SmartToy, "Analizar", onAnalyze)
         Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.Delete, "Papelera", onTrash)
-        Spacer(Modifier.width(10.dp))
-        RoundIconButton(Icons.Default.Sync, "Buscar actualizaciones", onCheckUpdate)
         Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.Settings, "Ajustes", onSettings)
     }
@@ -622,6 +631,7 @@ private fun DocCard(
     onDuplicate: () -> Unit,
     onFavorite: () -> Unit,
     onMove: () -> Unit,
+    onSend: () -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -674,6 +684,7 @@ private fun DocCard(
                                     menu = false; onFavorite()
                                 }
                                 MenuRow("Mover a carpeta", Icons.Default.DriveFileMove) { menu = false; onMove() }
+                                MenuRow("Enviar a un amigo", Icons.AutoMirrored.Filled.Send) { menu = false; onSend() }
                                 MenuRow("Exportar con anotaciones", Icons.Default.FileDownload) { menu = false; onExport() }
                                 MenuRow("Eliminar", Icons.Default.Delete) { menu = false; onDelete() }
                             }
@@ -688,7 +699,7 @@ private fun DocCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    (if (doc.folder.isNotBlank()) doc.folder + " · " else "") + ago(doc.lastOpened),
+                    (if (doc.from.isNotBlank()) "de ${doc.from} · " else "") + (if (doc.folder.isNotBlank()) doc.folder + " · " else "") + ago(doc.lastOpened),
                     color = OnSurfaceDim, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(9.dp))
@@ -795,7 +806,7 @@ private fun TrashDialog(store: Store, onChanged: () -> Unit, onDismiss: () -> Un
 }
 
 @Composable
-private fun SettingsDialog(version: String, onDismiss: () -> Unit) {
+private fun SettingsDialog(version: String, onCheckUpdate: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Ajustes") },
@@ -818,6 +829,12 @@ private fun SettingsDialog(version: String, onDismiss: () -> Unit) {
                 BackgroundRow("Oscuros", Prefs.BACKGROUNDS)
                 BackgroundRow("Claros", Prefs.LIGHT_BACKGROUNDS)
                 GeminiKeySection()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Actualizaciones", color = OnSurfaceDim)
+                    TextButton(onClick = onCheckUpdate, contentPadding = PaddingValues(0.dp)) {
+                        Text("Comprobar actualizaciones", color = Accent, fontWeight = FontWeight.SemiBold)
+                    }
+                }
                 Text("Evability v$version", fontSize = 12.sp, color = OnSurfaceDim)
             }
         },

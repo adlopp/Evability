@@ -1,7 +1,7 @@
 // Parte social: perfil, amigos, presencia (punto verde) y «toques» (corazones). Misma lógica que la app de Android:
 // habla con Firebase por su API REST (sin SDK). Las claves no son secretas; la seguridad la ponen las reglas de `firestore.rules`.
 
-import { h, icon, toast, confirmDialog, modal } from './ui.js';
+import { h, icon, toast, confirmDialog, modal, uid } from './ui.js';
 
 const PROJECT = 'evability-a4c4d';
 const API_KEY = 'AIzaSyD1LmNMAePR63FPvCldLWPXQl4JvmnFars';
@@ -138,7 +138,23 @@ export async function resetPassword(rawEmail) {
 export function signOut() { saveSession(null); lastShownPoke = -1; }
 
 export async function myProfile() { const s = await live(); return profile(s.uid, (await getAll('users', [s.uid]))[s.uid]); }
-export async function setPhoto(base64) { const s = await live(); await commit(write(`users/${s.uid}`, { username: str(s.username), photo: str(base64) })); }
+/** Guarda la miniatura (la de las listas) y, aparte, la foto en alta resolución para cuando se amplía. */
+export async function setPhoto(thumb, full) {
+  const s = await live();
+  await commit(write(`users/${s.uid}`, { username: str(s.username), photo: str(thumb) }));
+  try { await commit(write(`photos/${s.uid}`, { data: str(full) })); fullCache.set(photoKey(s.uid, thumb), full); } catch { /* sin reglas nuevas: se amplía la miniatura */ }
+}
+const fullCache = new Map();
+const photoKey = (uid, thumb) => `${uid}:${thumb.length}:${thumb.slice(-16)}`;
+export async function fullPhoto(uid, thumb) {
+  const key = photoKey(uid, thumb);
+  if (fullCache.has(key)) return fullCache.get(key);
+  try {
+    const data = text((await getAll('photos', [uid]))[uid], 'data');
+    if (data) { fullCache.set(key, data); return data; }
+  } catch { /* sin foto grande */ }
+  return null;
+}
 
 // ───────── amigos ─────────
 
@@ -190,6 +206,80 @@ export async function poke(uid) {
 
 let lastShownPoke = -1;
 
+// ───────── PDF entre amigos ─────────
+
+export const MAX_SHARE = 10 * 1024 * 1024, CHUNK = 600000;
+let receiver = null;
+const receiving = new Set();
+export const setReceiver = (fn) => { receiver = fn; };
+const intV = (n) => ({ integerValue: String(n) });
+const boolV = (b) => ({ booleanValue: b });
+const toB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = (b) => Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
+
+/** Envía un PDF a un amigo, troceado en partes de 600 KB (Firestore admite 1 MB por documento). */
+export async function sendPdf(toUid, name, buffer, onProgress = () => {}) {
+  const me = (await live()).uid, bytes = new Uint8Array(buffer);
+  if (bytes.length > MAX_SHARE) throw new Error('Este PDF pesa más de 10 MB y no se puede enviar');
+  const chunks = Math.max(1, Math.ceil(bytes.length / CHUNK)), id = uid();
+  await commit(write(`shares/${id}`, { from: str(me), to: str(toUid), name: str(name.slice(0, 150)), size: intV(bytes.length), chunks: intV(chunks), ready: boolV(false) }, { serverTime: 'at' }));
+  try {
+    for (let i = 0; i < chunks; i++) {
+      await commit(write(`shares/${id}/parts/${i}`, { data: str(toB64(bytes.subarray(i * CHUNK, (i + 1) * CHUNK))) }));
+      onProgress((i + 1) / chunks);
+    }
+    // Solo ahora se marca como listo, para que el otro no lo baje a medias.
+    await commit({ update: { name: `${DB}/shares/${id}`, fields: { ready: boolV(true) } }, updateMask: { fieldPaths: ['ready'] } });
+  } catch (e) {
+    try { await commit(...Array.from({ length: chunks }, (_, i) => del(`shares/${id}/parts/${i}`)), del(`shares/${id}`)); } catch { /* ya no importa */ }
+    throw e;
+  }
+}
+
+/** Baja los PDF que te han enviado, los entrega a `receiver` y los borra de la nube. */
+async function checkShares() {
+  if (!receiver) return;
+  const me = (await live()).uid;
+  const where = { compositeFilter: { op: 'AND', filters: [filter('to', 'EQUAL', str(me)), filter('ready', 'EQUAL', boolV(true))] } };
+  for (const d of await query('shares', where, 5)) {
+    const id = idOf(d.name);
+    if (receiving.has(id)) continue;
+    receiving.add(id);
+    try {
+      const chunks = Number(d.fields?.chunks?.integerValue || 0), from = text(d, 'from'), name = text(d, 'name') || 'PDF recibido';
+      const parts = [];
+      for (let i = 0; i < chunks; i += 3) {
+        const ids = Array.from({ length: Math.min(3, chunks - i) }, (_, k) => String(i + k));
+        const got = await getAll(`shares/${id}/parts`, ids);
+        for (const p of ids) { if (!got[p]) throw new Error('Faltan partes del PDF'); parts.push(fromB64(text(got[p], 'data'))); }
+      }
+      const bytes = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0;
+      for (const p of parts) { bytes.set(p, at); at += p.length; }
+      const sender = text((await getAll('users', [from]))[from], 'username') || 'un amigo';
+      try { await receiver(name, sender, bytes.buffer); }
+      finally { try { await commit(...Array.from({ length: chunks }, (_, i) => del(`shares/${id}/parts/${i}`)), del(`shares/${id}`)); } catch { /* se reintenta */ } }
+    } finally { receiving.delete(id); }
+  }
+}
+
+/** «Enviar a un amigo»: elige a quién mandar el PDF original del documento. */
+export function openSend(doc, buffer) {
+  const body = h('div', { class: 'stack' }, h('p', { class: 'dim' }, session ? 'Cargando amigos…' : 'Entra primero en Amigos (el botón de las personas de la cabecera) para poder enviar PDF.'));
+  const m = modal({ title: `Enviar «${doc.name}»`, content: body, actions: [{ label: 'Cerrar', primary: true }] });
+  if (!session) return;
+  const note = h('p', { class: 'dim small' }, 'Se envía el PDF original, sin tus anotaciones (máx. 10 MB).');
+  overview().then(({ friends }) => {
+    if (!friends.length) { body.replaceChildren(h('p', { class: 'dim' }, 'Todavía no tienes amigos a quienes enviárselo.'), note); return; }
+    const status = h('p', { class: 'dim small' });
+    body.replaceChildren(...friends.map((f) => h('div', { class: 'person' }, avatar(f.profile.username, f.profile.photo, 40), h('span', { class: 'grow' }, f.profile.username),
+      h('button', { class: 'text-btn strong', onclick: async (e) => {
+        const btns = body.querySelectorAll('button'); btns.forEach((b) => { b.disabled = true; });
+        try { await sendPdf(f.profile.uid, doc.name, buffer, (p) => { status.textContent = `Enviando… ${Math.round(p * 100)} %`; }); toast('Enviado a ' + f.profile.username); m.close(); }
+        catch (err) { status.textContent = err.message || 'No se pudo enviar'; status.style.color = '#ff6b6b'; btns.forEach((b) => { b.disabled = false; }); }
+      } }, 'Enviar'))), status, note);
+  }).catch((e) => { body.replaceChildren(h('p', { class: 'err' }, e.message || 'Sin conexión')); });
+}
+
 /** Revisa si alguien te ha mandado un ❤ desde la última vez. La primera vez solo toma nota de los antiguos. */
 async function checkPokes() {
   const me = (await live()).uid;
@@ -217,7 +307,7 @@ export function startHost() {
   if (!session) return;
   const visible = () => document.visibilityState === 'visible' && session;
   const beat = () => { if (visible()) heartbeat().catch(() => {}); };
-  const poll = () => { if (visible()) checkPokes().catch(() => {}); };
+  const poll = () => { if (visible()) { checkPokes().catch(() => {}); checkShares().catch(() => {}); } };
   beat(); poll();
   hostTimers = [setInterval(beat, 30000), setInterval(poll, 12000)];
 }
@@ -228,21 +318,23 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 /** Foto ampliada en el centro de la pantalla mientras se mantiene pulsado el perfil. */
 let zoomEl = null;
-function showZoom(name, photo) {
+function showZoom(name, photo, uid) {
   hideZoom();
-  const inner = photo ? h('img', { src: 'data:image/jpeg;base64,' + photo, alt: '' }) : h('span', {}, name.slice(0, 1).toUpperCase());
-  zoomEl = h('div', { class: 'photo-zoom' }, h('div', { class: 'photo-zoom-circle' }, inner));
-  document.body.append(zoomEl);
+  const img = photo ? h('img', { src: 'data:image/jpeg;base64,' + photo, alt: '' }) : null;
+  const el = zoomEl = h('div', { class: 'photo-zoom' }, h('div', { class: 'photo-zoom-circle' }, img || h('span', {}, name.slice(0, 1).toUpperCase())));
+  document.body.append(el);
+  // primero se ve la miniatura y, en cuanto llega, la foto grande (sin pixelar)
+  if (img && uid) fullPhoto(uid, photo).then((full) => { if (full && zoomEl === el) img.src = 'data:image/jpeg;base64,' + full; });
 }
 function hideZoom() { zoomEl?.remove(); zoomEl = null; }
 
-function avatar(name, photo, size = 46, online = null) {
+function avatar(name, photo, size = 46, online = null, uid = null) {
   const inner = photo ? h('img', { src: 'data:image/jpeg;base64,' + photo, alt: '', draggable: 'false' }) : h('span', {}, name.slice(0, 1).toUpperCase());
   const el = h('div', { class: 'avatar', style: { width: size + 'px', height: size + 'px', fontSize: size * 0.42 + 'px' } }, inner,
     online === null ? null : h('i', { class: 'dot' + (online ? ' on' : '') }));
   // Mantener pulsado: se ve la foto grande; al soltar desaparece (y ese toque no cuenta como «clic»).
   let timer, held = false;
-  el.addEventListener('pointerdown', () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; showZoom(name, photo); }, 380); });
+  el.addEventListener('pointerdown', () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; showZoom(name, photo, uid); }, 380); });
   const end = () => { clearTimeout(timer); if (held) hideZoom(); };
   ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => el.addEventListener(ev, end));
   el.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -295,11 +387,15 @@ function openCrop(file) {
     const apply = () => {
       const sc = base * zoom, side = S / sc;
       const cx = bmp.width / 2 - ox / sc, cy = bmp.height / 2 - oy / sc;
-      const c = document.createElement('canvas'); c.width = c.height = 192;
-      c.getContext('2d').drawImage(bmp, cx - side / 2, cy - side / 2, side, side, 0, 0, 192, 192);
-      let q = 0.82, out;
-      do { out = c.toDataURL('image/jpeg', q).split(',')[1]; q -= 0.08; } while (out.length > 28000 && q > 0.3); // las reglas admiten hasta 30.000
-      return out;
+      const jpeg = (size, q, max) => {
+        const c = document.createElement('canvas'); c.width = c.height = size;
+        c.getContext('2d').drawImage(bmp, cx - side / 2, cy - side / 2, side, side, 0, 0, size, size);
+        let out;
+        do { out = c.toDataURL('image/jpeg', q).split(',')[1]; q -= 0.08; } while (out.length > max && q > 0.3);
+        return out;
+      };
+      // miniatura de 192 px para las listas (< 28.000 caracteres) y foto grande de hasta 512 px (< 140.000) para ampliar
+      return { thumb: jpeg(192, 0.82, 28000), full: jpeg(Math.max(192, Math.min(512, Math.round(side))), 0.88, 140000) };
     };
     let result = null;
     modal({
@@ -318,6 +414,8 @@ export function openSocial(onClose) {
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', {}, 'Amigos')),
     body);
   let timers = [], myPhoto = '', ov = null, results = [], query = '';
+  // toda la pantalla de Amigos al doble de tamaño (en pantallas pequeñas, menos para que quepa)
+  root.style.setProperty('--sz', Math.min(2, Math.max(1, window.innerWidth / 380)).toFixed(2));
   const fail = (e) => toast(e.message || 'No se pudo completar');
 
   function showLogin() {
@@ -359,7 +457,7 @@ export function openSocial(onClose) {
     body.classList.remove('narrow');
     const me = session;
     const myAvatar = h('button', { class: 'plain', 'aria-label': 'Cambiar foto' });
-    const paintMe = () => myAvatar.replaceChildren(avatar(me.username, myPhoto, 60));
+    const paintMe = () => myAvatar.replaceChildren(avatar(me.username, myPhoto, 60, null, me.uid));
     paintMe();
     const picker = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
     picker.onchange = async () => {
@@ -367,7 +465,7 @@ export function openSocial(onClose) {
       try {
         const b = await openCrop(picker.files[0]); picker.value = '';
         if (!b) return;
-        await setPhoto(b); myPhoto = b; paintMe();
+        await setPhoto(b.thumb, b.full); myPhoto = b.thumb; paintMe();
       } catch (e) { toast(e.message || 'No se pudo cambiar la foto'); }
     };
     myAvatar.onclick = () => picker.click();
@@ -380,7 +478,7 @@ export function openSocial(onClose) {
     });
     const act = (fn) => async () => { try { await fn(); } catch (e) { fail(e); } refresh(); };
 
-    function personRow(p, ...actions) { return h('div', { class: 'person' }, avatar(p.username, p.photo, 42), h('span', { class: 'grow' }, p.username), ...actions); }
+    function personRow(p, ...actions) { return h('div', { class: 'person' }, avatar(p.username, p.photo, 42, null, p.uid), h('span', { class: 'grow' }, p.username), ...actions); }
     function paintResults() {
       resultsEl.replaceChildren(...results.map((p) => {
         const isFriend = ov?.friends.some((f) => f.profile.uid === p.uid), pending = ov?.outgoing.has(p.uid), incoming = ov?.incoming.some((i) => i.uid === p.uid);
@@ -399,7 +497,7 @@ export function openSocial(onClose) {
         const online = f.lastSeen > 0 && Date.now() - f.lastSeen < ONLINE_MS;
         const wait = f.lastPokeAt + COOLDOWN_MS + 2000 - Date.now();
         const mm = Math.max(0, Math.ceil(wait / 1000));
-        return h('div', { class: 'person', 'data-uid': f.profile.uid }, avatar(f.profile.username, f.profile.photo, 46, online),
+        return h('div', { class: 'person', 'data-uid': f.profile.uid }, avatar(f.profile.username, f.profile.photo, 46, online, f.profile.uid),
           h('div', { class: 'grow' }, h('div', {}, f.profile.username), h('div', { class: 'small', style: { color: online ? 'var(--accent)' : 'var(--on-dim)' } }, online ? 'En línea' : 'Desconectado')),
           h('span', { class: 'dim small cd', 'data-until': f.lastPokeAt + COOLDOWN_MS + 2000 }, wait > 0 ? `${Math.floor(mm / 60)}:${String(mm % 60).padStart(2, '0')}` : ''),
           h('button', { class: 'icon-btn heart', disabled: wait > 0, 'aria-label': 'Mandar un corazón', onclick: act(async () => { await poke(f.profile.uid); toast('❤ enviado a ' + f.profile.username); }) }, icon('heart')),

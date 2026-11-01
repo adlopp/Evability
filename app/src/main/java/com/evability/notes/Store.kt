@@ -32,13 +32,14 @@ class Store(context: Context) {
         template = o.optString("template", ""),
         extraKinds = o.optJSONArray("extraKinds")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
         hidden = o.optJSONArray("hidden")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList(),
+        from = o.optString("from", ""),
     )
 
     private fun infoJson(it: DocInfo) =
         JSONObject().put("id", it.id).put("name", it.name).put("pages", it.pages)
             .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra)
             .put("favorite", it.favorite).put("folder", it.folder).put("template", it.template)
-            .put("extraKinds", JSONArray(it.extraKinds)).put("hidden", JSONArray(it.hidden))
+            .put("extraKinds", JSONArray(it.extraKinds)).put("hidden", JSONArray(it.hidden)).put("from", it.from)
 
     @Synchronized
     fun loadIndex(): List<DocInfo> {
@@ -234,6 +235,13 @@ class Store(context: Context) {
             thumbFile(id).delete()
             throw e
         }
+    }
+
+    /** Guarda un PDF recibido de un amigo (aparece en la carpeta «Amigos»). Lanza excepción si no es un PDF válido. */
+    fun receive(name: String, from: String, bytes: ByteArray): DocInfo {
+        val info = createGenerated(name) { it.writeBytes(bytes) }
+        update(info.id) { it.copy(from = from) }
+        return info.copy(from = from)
     }
 
     @Synchronized

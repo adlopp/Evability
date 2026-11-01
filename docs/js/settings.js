@@ -6,7 +6,7 @@ import * as store from './store.js';
 import { getKey, setKey, KEY_URL } from './gemini.js';
 import { shareOrDownload } from './editor.js';
 
-export const VERSION = '1.7.3 web';
+export const VERSION = '1.8.0 web';
 
 const standalone = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
@@ -43,6 +43,19 @@ export async function importBackup(file) {
   for (const f of manifest.folders || []) await store.addFolder(f);
   for (const [name, url] of Object.entries(manifest.stickers || {})) await store.putUserSticker(name, url);
   return added;
+}
+
+/** Busca una versión nueva de la app: si la hay, se instala y se recarga. */
+async function checkUpdate() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (!reg) { toast('Esta versión no se actualiza sola: recarga la página'); return; }
+    await reg.update();
+    if (!reg.installing && !reg.waiting) { toast('Ya tienes la última versión'); return; }
+    toast('Instalando la nueva versión…');
+    navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true });
+    setTimeout(() => location.reload(), 8000);
+  } catch { toast('No se pudo comprobar. ¿Tienes conexión a internet?'); }
 }
 
 // ───────── pantalla de ajustes ─────────
@@ -104,6 +117,8 @@ export function openSettings(onChanged) {
       } }, 'Proteger mis datos')),
     standalone() ? null : section('Instalar en el iPad',
       h('p', { class: 'dim small pre' }, '1. Abre esta página en Safari.\n2. Pulsa el botón Compartir (el cuadrado con la flecha).\n3. Elige «Añadir a pantalla de inicio».\nAsí se abre como una app y funciona sin conexión.')),
+    section('Actualizaciones',
+      h('button', { class: 'text-btn link', onclick: checkUpdate }, 'Comprobar actualizaciones')),
     h('p', { class: 'dim small' }, `Evability ${VERSION}`));
 
   return modal({ title: 'Ajustes', content, wide: true, actions: [{ label: 'Listo', primary: true }] });

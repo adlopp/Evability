@@ -6,7 +6,7 @@ import { TEMPLATE_KINDS, templateCanvas } from './templates.js';
 import { openSettings, VERSION } from './settings.js';
 import { openPomodoro, running as pomoRunning } from './pomodoro.js';
 import { openAnalyze } from './analyze.js';
-import { openSocial } from './social.js';
+import { openSocial, openSend, setReceiver } from './social.js';
 import { openPdf, pageSizes } from './pdfdoc.js';
 import { exportPdf } from './export.js';
 import { shareOrDownload } from './editor.js';
@@ -36,6 +36,9 @@ function buildEntries(docs, sort) {
 export function createHome({ openDoc, onTheme }) {
   const root = h('div', { class: 'home' });
   const S = { docs: [], folders: [], query: '', sort: 'RECENT', filter: { kind: 'all' }, selected: new Set() };
+
+  // PDF que te envían los amigos: se guardan en la biblioteca (carpeta «Amigos») en cuanto llegan.
+  setReceiver(async (name, from, bytes) => { await store.addPdf(bytes, name, { from }); toast(`${from} te ha enviado «${name}». Está en la carpeta Amigos`, 5000); refresh(); });
 
   async function refresh() {
     [S.docs, S.folders] = await Promise.all([store.list(), store.folders()]);
@@ -132,7 +135,7 @@ export function createHome({ openDoc, onTheme }) {
         h('button', { class: 'star' + (d.favorite ? ' on' : ''), 'aria-label': 'Favorito', onclick: async (e) => { e.stopPropagation(); await store.setFavorite([d.id], !d.favorite); refresh(); } }, icon('star', 20))),
       h('div', { class: 'card-info' },
         h('div', { class: 'card-name' }, d.name),
-        h('div', { class: 'dim small' }, `${total} pág. · ${ago(d.lastOpened)}`)),
+        h('div', { class: 'dim small' }, `${d.from ? 'de ' + d.from + ' · ' : ''}${total} pág. · ${ago(d.lastOpened)}`)),
       h('button', { class: 'more', 'aria-label': 'Más', onclick: (e) => {
         e.stopPropagation();
         menu(e.currentTarget, [
@@ -140,6 +143,7 @@ export function createHome({ openDoc, onTheme }) {
           ['Duplicar', async () => { await store.duplicate(d.id); refresh(); }],
           [d.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos', async () => { await store.setFavorite([d.id], !d.favorite); refresh(); }],
           ['Mover a carpeta', () => moveDialog([d])],
+          ['Enviar a un amigo', async () => openSend(d, await store.pdfBytes(d.id))],
           ['Exportar PDF con anotaciones', () => exportDoc(d)],
           ['Eliminar', () => deleteDocs([d]), 'danger'],
         ]);
@@ -159,10 +163,12 @@ export function createHome({ openDoc, onTheme }) {
     return b;
   }
 
+  const analyze = () => openAnalyze({ docs: S.docs, onCreated: (info) => { refresh(); openDoc(info); }, onOpenSettings: () => openSettings(() => refresh()) });
+
   function render() {
     const scroll = root.scrollTop;
     const visible = S.docs.filter((d) => (!S.query.trim() || d.name.toLowerCase().includes(S.query.trim().toLowerCase())) &&
-      (S.filter.kind === 'all' || (S.filter.kind === 'favs' && d.favorite) || (S.filter.kind === 'folder' && d.folder === S.filter.name)));
+      (S.filter.kind === 'all' || (S.filter.kind === 'favs' && d.favorite) || (S.filter.kind === 'friends' && d.from) || (S.filter.kind === 'folder' && d.folder === S.filter.name)));
     const last = S.docs[0];
     const selecting = S.selected.size > 0;
     const sel = S.docs.filter((d) => S.selected.has(d.id));
@@ -183,25 +189,26 @@ export function createHome({ openDoc, onTheme }) {
       h('div', { class: 'top-row' }, logo,
         h('div', { class: 'grow' }, h('div', { class: 'app-title' }, 'Evability'), h('div', { class: 'dim small' }, 'v' + VERSION)),
         h('button', { class: 'round', 'aria-label': 'Amigos', title: 'Amigos', onclick: () => { document.getElementById('app').append(openSocial(() => render())); } }, icon('people')),
-        h('button', { class: 'round' + (pomoRunning() ? ' live' : ''), 'aria-label': 'Ternurín', title: 'Ternurín', onclick: () => { const p = openPomodoro(() => render()); document.getElementById('app').append(p); } }, icon('timer')),
+        h('button', { class: 'round', 'aria-label': 'Analizar', title: 'Analizar', onclick: analyze }, icon('bot')),
         h('button', { class: 'round', 'aria-label': 'Papelera', title: 'Papelera', onclick: trashDialog }, icon('trash')),
         h('button', { class: 'round', 'aria-label': 'Ajustes', title: 'Ajustes', onclick: () => openSettings(() => { onTheme?.(); refresh(); }) }, icon('settings'))),
       h('div', { class: 'actions' },
         h('button', { class: 'btn', onclick: pickFiles }, icon('upload', 20), 'Importar PDF'),
         h('button', { class: 'btn outline', onclick: templatesDialog }, icon('grid', 20), 'Plantillas'),
-        h('button', { class: 'btn outline', onclick: () => openAnalyze({ docs: S.docs, onCreated: (info) => { refresh(); openDoc(info); }, onOpenSettings: () => openSettings(() => refresh()) }) }, icon('bot', 20), 'Analizar')),
+        h('button', { class: 'btn outline' + (pomoRunning() ? ' live' : ''), onclick: () => { const p = openPomodoro(() => render()); document.getElementById('app').append(p); } }, icon('timer', 20), 'Tiempo')),
       last && !S.query.trim() && S.filter.kind === 'all' && !selecting ? continueCard(last) : null,
       S.docs.length ? h('div', { class: 'row search-row' }, h('div', { class: 'grow search-wrap' }, icon('search', 18), search),
         h('button', { class: 'text-btn', onclick: (e) => menu(e.currentTarget, Object.entries(SORTS).map(([k, label]) => [label, () => { S.sort = k; render(); }, S.sort === k ? 'bold' : ''])) }, icon('sort', 18), ' ' + SORTS[S.sort])) : null,
       S.docs.length ? h('div', { class: 'chips' },
         chip('Todos', S.filter.kind === 'all', () => { S.filter = { kind: 'all' }; render(); }),
         chip('Favoritos', S.filter.kind === 'favs', () => { S.filter = { kind: 'favs' }; render(); }, 'star'),
+        chip('Amigos', S.filter.kind === 'friends', () => { S.filter = { kind: 'friends' }; render(); }, 'people'),
         S.folders.map((f) => chip(f, S.filter.kind === 'folder' && S.filter.name === f, () => { S.filter = { kind: 'folder', name: f }; render(); }, 'folder', async () => {
           if (await confirmDialog('Quitar carpeta', `La carpeta «${f}» desaparecerá. Sus documentos se conservan, sin carpeta.`, 'Quitar')) { await store.removeFolder(f); if (S.filter.name === f) S.filter = { kind: 'all' }; refresh(); }
         })),
         chip('+ Carpeta nueva', false, async () => { const n = await promptDialog({ title: 'Carpeta nueva', label: 'Nombre de la carpeta', confirm: 'Crear' }); if (n?.trim()) { await store.addFolder(n.trim()); refresh(); } })) : null,
       !S.docs.length ? h('div', { class: 'empty' }, h('div', { class: 'big-ic' }, icon('upload', 48)), h('h2', {}, 'Todavía no hay documentos'), h('p', { class: 'dim' }, 'Importa un PDF, o crea uno desde una plantilla, y empieza a anotar.'))
-        : !entries.length ? h('p', { class: 'dim pad' }, 'Ningún documento coincide con la búsqueda o el filtro.')
+        : !entries.length ? h('p', { class: 'dim pad' }, S.filter.kind === 'friends' && !S.query.trim() ? 'Aquí aparecerán los PDF que te envíen tus amigos. Para enviar uno: menú ⋮ de un documento → «Enviar a un amigo».' : 'Ningún documento coincide con la búsqueda o el filtro.')
           : h('div', { class: 'grid' }, entries.map((e) => (e.header ? h('h3', { class: 'section' }, e.header) : card(e.doc)))),
       selecting ? h('div', { class: 'selbar' },
         h('button', { class: 'icon-btn', onclick: () => { S.selected.clear(); render(); } }, icon('close')),
