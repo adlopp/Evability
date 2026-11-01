@@ -16,7 +16,7 @@ import java.time.Instant
 
 /**
  * Parte social (perfil, amigos, presencia y «toques»). Habla con Firebase por su API REST, sin SDK, igual que Gemini:
- * Auth con correo sintético `usuario@evability.app` y Firestore con las reglas de `firestore.rules`.
+ * Auth con correo y contraseña (permite recuperarla) y Firestore con las reglas de `firestore.rules`.
  */
 object Social {
     // Estas claves no son secretas: la seguridad la ponen las reglas de Firestore.
@@ -63,14 +63,13 @@ object Social {
     /** Solo minúsculas, números y guion bajo (3 a 16). */
     fun cleanName(raw: String) = raw.trim().lowercase().replace(Regex("[^a-z0-9_]"), "")
 
-    private fun email(name: String) = "$name@evability.app"
-
     // ───────── red ─────────
 
     private fun explain(code: Int, text: String): String {
         val msg = runCatching { JSONObject(text).getJSONObject("error").optString("message") }.getOrDefault("")
         return when {
-            msg.startsWith("EMAIL_EXISTS") -> "Ese nombre de usuario ya está cogido"
+            msg.startsWith("EMAIL_EXISTS") -> "Ya hay una cuenta con ese correo"
+            msg.startsWith("INVALID_EMAIL") -> "El correo no es válido"
             msg.startsWith("INVALID_LOGIN_CREDENTIALS") || msg.startsWith("EMAIL_NOT_FOUND") || msg.startsWith("INVALID_PASSWORD") -> "Usuario o contraseña incorrectos"
             msg.startsWith("WEAK_PASSWORD") -> "La contraseña debe tener al menos 6 caracteres"
             msg.startsWith("OPERATION_NOT_ALLOWED") -> "Falta activar «Correo/contraseña» en Firebase → Authentication"
@@ -172,19 +171,27 @@ object Social {
 
     // ───────── cuenta ─────────
 
-    private fun enter(endpoint: String, name: String, pass: String): Session {
+    private fun enter(endpoint: String, email: String, pass: String, username: String): Session {
         val r = post(
             "$AUTH:$endpoint?key=$API_KEY",
-            JSONObject().put("email", email(name)).put("password", pass).put("returnSecureToken", true),
+            JSONObject().put("email", email).put("password", pass).put("returnSecureToken", true),
         )
-        return Session(r.getString("localId"), name, r.getString("idToken"), r.getString("refreshToken"), System.currentTimeMillis() + r.getString("expiresIn").toLong() * 1000)
+        return Session(r.getString("localId"), username, r.getString("idToken"), r.getString("refreshToken"), System.currentTimeMillis() + r.getString("expiresIn").toLong() * 1000)
     }
 
-    suspend fun signUp(rawName: String, pass: String) = withContext(Dispatchers.IO) {
+    private fun cleanEmail(raw: String): String {
+        val e = raw.trim().lowercase()
+        if (!Regex("""^[^@\s]+@[^@\s]+\.[^@\s]+$""").matches(e)) throw SocialError("Escribe un correo válido")
+        return e
+    }
+
+    /** El correo solo sirve para entrar y recuperar la contraseña; vive en Firebase Auth y nadie más lo ve. */
+    suspend fun signUp(rawEmail: String, rawName: String, pass: String) = withContext(Dispatchers.IO) {
+        val email = cleanEmail(rawEmail)
         val name = cleanName(rawName)
         if (name.length !in 3..16) throw SocialError("El nombre de usuario debe tener entre 3 y 16 letras, números o _")
         if (pass.length < 6) throw SocialError("La contraseña debe tener al menos 6 caracteres")
-        val s = enter("signUp", name, pass)
+        val s = enter("signUp", email, pass, name)
         save(s)
         try {
             commit(write("usernames/$name", JSONObject().put("uid", str(s.uid)), mustNotExist = true))
@@ -196,11 +203,28 @@ object Social {
         }
     }
 
-    suspend fun signIn(rawName: String, pass: String) = withContext(Dispatchers.IO) {
-        val name = cleanName(rawName)
-        if (name.isEmpty() || pass.isEmpty()) throw SocialError("Escribe tu usuario y contraseña")
-        save(enter("signInWithPassword", name, pass))
+    suspend fun signIn(rawEmail: String, pass: String) = withContext(Dispatchers.IO) {
+        if (rawEmail.isBlank() || pass.isEmpty()) throw SocialError("Escribe tu correo y contraseña")
+        val s = enter("signInWithPassword", cleanEmail(rawEmail), pass, "")
+        save(s)
+        try {
+            val name = profile(s.uid, getAll("users", listOf(s.uid))[s.uid]).username
+            save(Session(s.uid, name, s.idToken, s.refreshToken, s.expiresAt))
+        } catch (e: Exception) {
+            save(null)
+            throw e
+        }
         lastShownPoke = -1L
+    }
+
+    /** Firebase manda un correo con un enlace para elegir una contraseña nueva. */
+    suspend fun resetPassword(rawEmail: String) = withContext(Dispatchers.IO) {
+        val email = cleanEmail(rawEmail)
+        try {
+            post("$AUTH:sendOobCode?key=$API_KEY", JSONObject().put("requestType", "PASSWORD_RESET").put("email", email))
+        } catch (e: SocialError) {
+            if (e.message == "Usuario o contraseña incorrectos") throw SocialError("No hay ninguna cuenta con ese correo") else throw e
+        }
     }
 
     fun signOut() {

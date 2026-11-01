@@ -15,13 +15,13 @@ let session = (() => { try { return JSON.parse(localStorage.getItem(SKEY) || 'nu
 const saveSession = (s) => { session = s; if (s) localStorage.setItem(SKEY, JSON.stringify(s)); else localStorage.removeItem(SKEY); };
 export const currentUser = () => session;
 export const cleanName = (raw) => raw.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
-const emailOf = (name) => `${name}@evability.app`;
 
 // ───────── red ─────────
 
 function explain(code, text) {
   let msg = ''; try { msg = JSON.parse(text).error.message || ''; } catch { /* sin cuerpo */ }
-  if (msg.startsWith('EMAIL_EXISTS')) return 'Ese nombre de usuario ya está cogido';
+  if (msg.startsWith('EMAIL_EXISTS')) return 'Ya hay una cuenta con ese correo';
+  if (msg.startsWith('INVALID_EMAIL')) return 'El correo no es válido';
   if (/^(INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND|INVALID_PASSWORD)/.test(msg)) return 'Usuario o contraseña incorrectos';
   if (msg.startsWith('WEAK_PASSWORD')) return 'La contraseña debe tener al menos 6 caracteres';
   if (msg.startsWith('OPERATION_NOT_ALLOWED')) return 'Falta activar «Correo/contraseña» en Firebase → Authentication';
@@ -91,16 +91,23 @@ const profile = (uid, d) => ({ uid, username: text(d, 'username') || '?', photo:
 
 // ───────── cuenta ─────────
 
-async function enter(endpoint, name, pass) {
-  const r = await post(`${AUTH}:${endpoint}?key=${API_KEY}`, { email: emailOf(name), password: pass, returnSecureToken: true });
-  return { uid: r.localId, username: name, idToken: r.idToken, refreshToken: r.refreshToken, expiresAt: Date.now() + Number(r.expiresIn) * 1000 };
+async function enter(endpoint, email, pass, username) {
+  const r = await post(`${AUTH}:${endpoint}?key=${API_KEY}`, { email, password: pass, returnSecureToken: true });
+  return { uid: r.localId, username, idToken: r.idToken, refreshToken: r.refreshToken, expiresAt: Date.now() + Number(r.expiresIn) * 1000 };
 }
 
-export async function signUp(rawName, pass) {
-  const name = cleanName(rawName);
+function cleanEmail(raw) {
+  const e = raw.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) throw new Error('Escribe un correo válido');
+  return e;
+}
+
+/** El correo solo sirve para entrar y recuperar la contraseña; vive en Firebase Auth y nadie más lo ve. */
+export async function signUp(rawEmail, rawName, pass) {
+  const email = cleanEmail(rawEmail), name = cleanName(rawName);
   if (name.length < 3 || name.length > 16) throw new Error('El nombre de usuario debe tener entre 3 y 16 letras, números o _');
   if (pass.length < 6) throw new Error('La contraseña debe tener al menos 6 caracteres');
-  const s = await enter('signUp', name, pass);
+  const s = await enter('signUp', email, pass, name);
   saveSession(s);
   try {
     await commit(write(`usernames/${name}`, { uid: str(s.uid) }, { mustNotExist: true }));
@@ -112,11 +119,20 @@ export async function signUp(rawName, pass) {
   }
 }
 
-export async function signIn(rawName, pass) {
-  const name = cleanName(rawName);
-  if (!name || !pass) throw new Error('Escribe tu usuario y contraseña');
-  saveSession(await enter('signInWithPassword', name, pass));
+export async function signIn(rawEmail, pass) {
+  if (!rawEmail.trim() || !pass) throw new Error('Escribe tu correo y contraseña');
+  const s = await enter('signInWithPassword', cleanEmail(rawEmail), pass, '');
+  saveSession(s);
+  try { saveSession({ ...s, username: profile(s.uid, (await getAll('users', [s.uid]))[s.uid]).username }); }
+  catch (e) { saveSession(null); throw e; }
   lastShownPoke = -1;
+}
+
+/** Firebase manda un correo con un enlace para elegir una contraseña nueva. */
+export async function resetPassword(rawEmail) {
+  const email = cleanEmail(rawEmail);
+  try { await post(`${AUTH}:sendOobCode?key=${API_KEY}`, { requestType: 'PASSWORD_RESET', email }); }
+  catch (e) { throw e.message === 'Usuario o contraseña incorrectos' ? new Error('No hay ninguna cuenta con ese correo') : e; }
 }
 
 export function signOut() { saveSession(null); lastShownPoke = -1; }
@@ -235,31 +251,41 @@ export function openSocial(onClose) {
 
   function showLogin() {
     let creating = false;
+    const email = h('input', { class: 'field', type: 'email', placeholder: 'Correo electrónico', autocomplete: 'email', autocapitalize: 'none', autocorrect: 'off' });
     const user = h('input', { class: 'field', placeholder: 'Nombre de usuario', autocomplete: 'username', autocapitalize: 'none', autocorrect: 'off' });
     const pass = h('input', { class: 'field', type: 'password', placeholder: 'Contraseña', autocomplete: 'current-password' });
     const err = h('p', { class: 'err' }), hint = h('p', { class: 'dim small' });
     const go = h('button', { class: 'btn big' });
     const toggle = h('button', { class: 'text-btn' });
+    const forgot = h('button', { class: 'text-btn', onclick: async () => {
+      try { await resetPassword(email.value); err.textContent = ''; toast('Te hemos enviado un correo para elegir una contraseña nueva (mira también el spam)', 5000); }
+      catch (e) { err.textContent = !email.value.trim() ? 'Escribe arriba tu correo y vuelve a pulsar' : e.message; }
+    } }, 'Olvidé mi contraseña');
     const paint = () => {
       go.textContent = creating ? 'Crear cuenta' : 'Entrar';
       toggle.textContent = creating ? 'Ya tengo cuenta' : 'No tengo cuenta: crear una';
-      hint.textContent = creating ? '3 a 16 letras minúsculas, números o _' : '';
+      hint.textContent = creating ? 'El nombre de usuario lo ven tus amigos · 3 a 16 letras minúsculas, números o _' : '';
+      user.style.display = creating ? '' : 'none';
+      forgot.style.display = creating ? 'none' : '';
+      pass.autocomplete = creating ? 'new-password' : 'current-password';
     };
     toggle.onclick = () => { creating = !creating; err.textContent = ''; paint(); };
     go.onclick = async () => {
       go.disabled = true; err.textContent = '';
-      try { await (creating ? signUp(user.value, pass.value) : signIn(user.value, pass.value)); startHost(); showPanel(); }
+      try { await (creating ? signUp(email.value, user.value, pass.value) : signIn(email.value, pass.value)); startHost(); showPanel(); }
       catch (e) { err.textContent = e.message; go.disabled = false; }
     };
     paint();
+    body.classList.add('narrow');
     body.replaceChildren(
       h('h2', {}, 'Entra en tu perfil'),
       h('p', { class: 'dim' }, 'Añade amigos, mira quién está en la app y mándales un ❤ cada 15 minutos.'),
-      user, pass, hint, err, go, toggle,
-      h('p', { class: 'dim small' }, 'Se guardan en la nube (Firebase) tu nombre de usuario, tu foto y tu última conexión. Tus documentos NO se suben. No hay recuperación de contraseña: si la olvidas, crea otra cuenta.'));
+      email, user, pass, hint, err, go, forgot, toggle,
+      h('p', { class: 'dim small' }, 'Tu correo solo sirve para entrar y recuperar la contraseña: nadie lo ve. En la nube se guardan tu nombre de usuario, tu foto y tu última conexión. Tus documentos NO se suben.'));
   }
 
   function showPanel() {
+    body.classList.remove('narrow');
     const me = session;
     const myAvatar = h('button', { class: 'plain', 'aria-label': 'Cambiar foto' });
     const paintMe = () => myAvatar.replaceChildren(avatar(me.username, myPhoto, 60));

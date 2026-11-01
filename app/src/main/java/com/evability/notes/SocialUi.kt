@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,6 +75,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -88,6 +90,9 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 
 private val Online = Color(0xFF4CD964)
+
+/** Ancho máximo de los campos y botones del formulario de cuenta (la mitad de lo que ocupaban en la tablet). */
+private val FormWidth = 280.dp
 
 /** Latido de presencia, aviso de toques y corazones flotantes. Va por encima de toda la app mientras haya sesión iniciada. */
 @Composable
@@ -203,6 +208,7 @@ private fun LoginForm() {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     var creating by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
     var user by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
@@ -214,24 +220,32 @@ private fun LoginForm() {
         Spacer(Modifier.height(6.dp))
         Text(
             "Añade amigos, mira quién está en la app y mándales un ❤ cada 15 minutos.",
-            color = OnSurfaceDim, fontSize = 14.sp,
+            color = OnSurfaceDim, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = FormWidth),
         )
         Spacer(Modifier.height(20.dp))
         OutlinedTextField(
-            user, { user = it; error = "" }, singleLine = true, label = { Text("Nombre de usuario") },
-            supportingText = if (creating) ({ Text("3 a 16 letras minúsculas, números o _") }) else null,
-            modifier = Modifier.fillMaxWidth(),
+            email, { email = it; error = "" }, singleLine = true, label = { Text("Correo electrónico") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            modifier = Modifier.widthIn(max = FormWidth).fillMaxWidth(),
         )
+        if (creating) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                user, { user = it; error = "" }, singleLine = true, label = { Text("Nombre de usuario") },
+                supportingText = { Text("Lo ven tus amigos · 3 a 16 letras, números o _") },
+                modifier = Modifier.widthIn(max = FormWidth).fillMaxWidth(),
+            )
+        }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             pass, { pass = it; error = "" }, singleLine = true, label = { Text("Contraseña") },
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.widthIn(max = FormWidth).fillMaxWidth(),
         )
         if (error.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
-            Text(error, color = Color(0xFFFF6B6B), fontSize = 14.sp)
+            Text(error, color = Color(0xFFFF6B6B), fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = FormWidth))
         }
         Spacer(Modifier.height(18.dp))
         Button(
@@ -240,7 +254,7 @@ private fun LoginForm() {
                 scope.launch {
                     busy = true
                     try {
-                        if (creating) Social.signUp(user, pass) else Social.signIn(user, pass)
+                        if (creating) Social.signUp(email, user, pass) else Social.signIn(email, pass)
                     } catch (e: Exception) {
                         error = e.message ?: "No se pudo completar"
                     }
@@ -248,16 +262,29 @@ private fun LoginForm() {
                 }
             },
             shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            modifier = Modifier.widthIn(max = FormWidth).fillMaxWidth().height(48.dp),
         ) { Text(if (busy) "Un momento…" else if (creating) "Crear cuenta" else "Entrar", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) }
+        if (!creating) {
+            TextButton(onClick = {
+                scope.launch {
+                    try {
+                        Social.resetPassword(email)
+                        error = ""
+                        Toast.makeText(ctx, "Te hemos enviado un correo para elegir una contraseña nueva (mira también el spam)", Toast.LENGTH_LONG).show()
+                    } catch (e: Exception) {
+                        error = if (email.isBlank()) "Escribe arriba tu correo y vuelve a pulsar" else e.message ?: "No se pudo enviar el correo"
+                    }
+                }
+            }) { Text("Olvidé mi contraseña") }
+        }
         TextButton(onClick = { creating = !creating; error = "" }) {
             Text(if (creating) "Ya tengo cuenta" else "No tengo cuenta: crear una")
         }
         Spacer(Modifier.height(10.dp))
         Text(
-            "Se guardan en la nube (Firebase) tu nombre de usuario, tu foto y tu última conexión. Tus documentos NO se suben. " +
-                "No hay recuperación de contraseña: si la olvidas, crea otra cuenta.",
-            color = OnSurfaceDim, fontSize = 12.sp,
+            "Tu correo solo sirve para entrar y recuperar la contraseña: nadie lo ve. En la nube se guardan tu nombre de usuario, " +
+                "tu foto y tu última conexión. Tus documentos NO se suben.",
+            color = OnSurfaceDim, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = FormWidth),
         )
     }
 }

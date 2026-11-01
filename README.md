@@ -59,5 +59,5 @@ Para montarla en otro proyecto de Firebase:
 2. Firestore Database → crear en modo producción → pestaña **Reglas** → pegar [`firestore.rules`](firestore.rules) → Publicar.
 3. Poner el ID del proyecto y la clave de API web en `Social.kt` y `docs/js/social.js`.
 
-Las cuentas usan un nombre de usuario (el correo `usuario@evability.app` es interno). Los datos guardados en la nube son el nombre,
+Se entra con correo y contraseña (el correo permite recuperar la contraseña y solo lo ve Firebase Auth) y cada persona elige un nombre de usuario público. Los datos guardados en la nube son el nombre,
 una foto de 96×96 y la última conexión; los documentos nunca se suben. Los corazones solo llegan con la app abierta.
