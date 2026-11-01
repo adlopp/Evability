@@ -60,15 +60,19 @@ object ShareJob {
 
     /** Programa la comprobación periódica (sin reiniciar el reloj si ya estaba programada). */
     fun schedule(ctx: Context) {
-        val scheduler = ctx.getSystemService(JobScheduler::class.java) ?: return
-        if (scheduler.getPendingJob(ID) != null) return
-        scheduler.schedule(
-            JobInfo.Builder(ID, ComponentName(ctx, ShareCheckService::class.java))
-                .setPeriodic(15 * 60_000L)
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setPersisted(true)
-                .build(),
-        )
+        try {
+            val scheduler = ctx.getSystemService(JobScheduler::class.java) ?: return
+            if (scheduler.getPendingJob(ID) != null) return
+            scheduler.schedule(
+                JobInfo.Builder(ID, ComponentName(ctx, ShareCheckService::class.java))
+                    .setPeriodic(15 * 60_000L)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .build(),
+            )
+        } catch (e: Exception) {
+            // los avisos en segundo plano son un extra: si el sistema los rechaza, la app debe abrir igualmente
+        }
     }
 
     fun cancel(ctx: Context) {

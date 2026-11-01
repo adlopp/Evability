@@ -108,7 +108,7 @@ object FriendsWatch {
     fun start(ctx: Context) {
         try {
             ContextCompat.startForegroundService(ctx, Intent(ctx, FriendsWatchService::class.java))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // Android no deja arrancarlo desde segundo plano: se arrancará la próxima vez que se abra la app
         }
     }

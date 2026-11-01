@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
         handle(intent)
         Prefs.init(applicationContext)
         Social.load()
-        if (Social.session != null) {
+        if (Social.session != null) runCatching {
             ShareJob.schedule(applicationContext)
             if (Prefs.quickAlerts) FriendsWatch.start(applicationContext)
         }
