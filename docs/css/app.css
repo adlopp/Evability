@@ -178,7 +178,7 @@ textarea.field { resize: vertical; }
 
 /* amigos */
 .pomo.social { z-index: 42; }
-.social-body { flex: 1; overflow-y: auto; width: 100%; max-width: 380px; margin: 0 auto; padding: 8px 20px calc(var(--safe-bottom, 0px) + 24px); display: flex; flex-direction: column; gap: 10px; }
+.social-body { flex: 1; overflow-y: auto; width: 100%; max-width: 600px; margin: 0 auto; padding: 8px 20px calc(var(--safe-bottom, 0px) + 24px); display: flex; flex-direction: column; gap: 10px; }
 .social-body h2 { margin: 8px 0 0; font-size: 20px; } .social-body h3 { margin: 14px 0 0; font-size: 16px; } .social-body p { margin: 0; }
 .err { color: #ff6b6b; font-size: 14px; }
 .me-card { display: flex; align-items: center; gap: 14px; background: var(--surface1); border: 1px solid var(--outline); border-radius: 20px; padding: 14px; }
@@ -192,7 +192,7 @@ textarea.field { resize: vertical; }
 .float-heart { position: fixed; z-index: 200; font-size: 72px; line-height: 1; color: var(--accent); pointer-events: none; animation: heart-float 3s linear forwards; }
 @keyframes heart-float { 0% { opacity: 0; transform: translateY(0) scale(.5); } 12% { opacity: 1; transform: translateY(-15px) scale(1.15); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-140px) scale(1); } }
 
-.social-body.narrow { max-width: 320px; text-align: center; justify-content: center; } .social-body.narrow .btn.big { min-width: 0; width: 100%; padding: 13px 20px; font-size: 16px; }
+.social-body.narrow { max-width: 400px; text-align: center; justify-content: center; } .social-body.narrow .btn.big { min-width: 0; width: 100%; padding: 13px 20px; font-size: 16px; }
 
 /* foto de perfil: recorte y ampliación */
 .avatar { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
@@ -204,6 +204,13 @@ textarea.field { resize: vertical; }
 .photo-zoom-circle img { width: 100%; height: 100%; object-fit: cover; }
 @keyframes zoom-in { from { transform: scale(.55); opacity: .4; } to { transform: scale(1); opacity: 1; } }
 
-.pomo.social > * { zoom: var(--sz, 1); }
 
 .btn.live { box-shadow: 0 0 0 2px var(--accent); }
+
+/* ordenar carpetas */
+.order-list { display: flex; flex-direction: column; } .order-row { display: flex; align-items: center; gap: 6px; height: 52px; border-radius: 12px; background: transparent; }
+.order-row.drag { position: relative; z-index: 2; background: var(--surface2); box-shadow: 0 8px 22px rgba(0, 0, 0, .45); }
+.order-row .handle { touch-action: none; cursor: grab; color: var(--on-dim); } .order-row.locked .handle { cursor: not-allowed; }
+.order-row .icon-btn:disabled { opacity: .3; }
+
+.chip.add { padding: 8px; border-radius: 50%; color: var(--accent); }

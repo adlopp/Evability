@@ -103,6 +103,30 @@ export async function addFolder(name) {
 export async function removeFolder(name) {
   for (const d of await db.values('meta')) if (d.folder === name) await db.put('meta', d.id, { ...d, folder: '' });
   await db.put('kv', 'folders', ((await db.get('kv', 'folders')) || []).filter((f) => f !== name));
+  await db.put('kv', 'folderOrder', ((await db.get('kv', 'folderOrder')) || []).filter((f) => f !== name));
+}
+
+/** Marca de la carpeta «Amigos» dentro del orden de carpetas (no puede coincidir con un nombre de carpeta). */
+export const FRIENDS = '@amigos';
+export const friendsName = () => localStorage.getItem('ev.friendsName') || 'Amigos';
+export const setFriendsName = (n) => localStorage.setItem('ev.friendsName', n.trim());
+
+/** Orden de las pestañas tras «Todos» y «Favoritos»: carpetas propias y «Amigos». Las nuevas van al final; «Amigos» sale la primera si nunca se movió. */
+export async function orderedFolders() {
+  const existing = await folders();
+  const saved = ((await db.get('kv', 'folderOrder')) || []).filter((t, i, a) => (t === FRIENDS || existing.includes(t)) && a.indexOf(t) === i);
+  const base = [...saved, ...existing.filter((f) => !saved.includes(f))];
+  return base.includes(FRIENDS) ? base : [FRIENDS, ...base];
+}
+export const saveFolderOrder = (list) => db.put('kv', 'folderOrder', list);
+
+/** Cambia el nombre de una carpeta propia (sus documentos y su sitio en el orden se conservan). */
+export async function renameFolder(old, name) {
+  name = name.trim();
+  if (!name || name === old) return;
+  for (const d of await db.values('meta')) if (d.folder === old) await db.put('meta', d.id, { ...d, folder: name });
+  await db.put('kv', 'folders', [...new Set(((await db.get('kv', 'folders')) || []).map((f) => (f === old ? name : f)))]);
+  await db.put('kv', 'folderOrder', ((await db.get('kv', 'folderOrder')) || []).map((f) => (f === old ? name : f)));
 }
 
 // ───────── papelera ─────────

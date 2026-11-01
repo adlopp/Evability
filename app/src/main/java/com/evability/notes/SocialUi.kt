@@ -115,11 +115,11 @@ import java.io.ByteArrayOutputStream
 
 private val Online = Color(0xFF4CD964)
 
-/** Ancho máximo de los campos y botones del formulario de cuenta (la mitad de lo que ocupaban en la tablet). */
-private val FormWidth = 280.dp
+/** Ancho máximo de los campos y botones del formulario de cuenta. */
+private val FormWidth = 360.dp
 
-/** Ancho máximo de la lista de amigos (la mitad de lo que ocupaba en la tablet). */
-private val PanelWidth = 340.dp
+/** Ancho máximo de la lista de amigos. */
+private val PanelWidth = 560.dp
 
 /** Latido de presencia, aviso de toques y corazones flotantes. Va por encima de toda la app mientras haya sesión iniciada. */
 @Composable
@@ -270,8 +270,7 @@ private fun encodePhoto(square: Bitmap): Pair<String, String> {
 @Composable
 private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> Unit) {
     val side = 280.dp
-    val unscaled = LocalDensity.current.let { Density(it.density / LocalSocialScale.current, it.fontScale) }
-    val px = with(unscaled) { side.toPx() }
+    val px = with(LocalDensity.current) { side.toPx() }
     val base = px / minOf(src.width, src.height)
     var zoom by remember { mutableFloatStateOf(1f) }
     var off by remember { mutableStateOf(Offset.Zero) }
@@ -282,7 +281,6 @@ private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> U
         return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
     }
     Dialog(onDismissRequest = onCancel) {
-        CompositionLocalProvider(LocalDensity provides unscaled) {
         Column(Modifier.background(Surface1, RoundedCornerShape(24.dp)).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Recorta tu foto", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             Spacer(Modifier.height(4.dp))
@@ -331,25 +329,15 @@ private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> U
                 }) { Text("Aplicar", fontWeight = FontWeight.Bold) }
             }
         }
-        }
     }
 }
-
-/** Cuánto se agranda la pantalla de Amigos respecto a su tamaño base (hasta el doble en una tablet). */
-private val LocalSocialScale = compositionLocalOf { 1f }
 
 private class ZoomTarget(val name: String, val photo: String, val uid: String)
 
 @Composable
 fun SocialScreen(onClose: () -> Unit) {
     BackHandler(onBack = onClose)
-    BoxWithConstraints(Modifier.fillMaxSize().background(Bg)) {
-        val scale = (maxWidth.value / 380f).coerceIn(1f, 2f)
-        val base = LocalDensity.current
-        CompositionLocalProvider(LocalSocialScale provides scale, LocalDensity provides Density(base.density * scale, base.fontScale)) {
-            SocialContent(onClose)
-        }
-    }
+    SocialContent(onClose)
 }
 
 @Composable

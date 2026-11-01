@@ -111,6 +111,20 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+import androidx.compose.material.icons.filled.Add
+import kotlin.math.roundToInt
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.key
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.gestures.detectDragGestures
 
 private enum class SortMode(val label: String) { RECENT("Recientes"), NAME("Nombre"), CREATED("Creación") }
 
@@ -198,9 +212,19 @@ fun HomeScreen(
     var moving by remember { mutableStateOf<List<DocInfo>?>(null) }
     var newFolderFor by remember { mutableStateOf<List<DocInfo>?>(null) }
     var removingFolder by remember { mutableStateOf<String?>(null) }
+    var folderMenu by remember { mutableStateOf<String?>(null) }
+    var renamingFolder by remember { mutableStateOf<String?>(null) }
+    var ordering by remember { mutableStateOf<String?>(null) }
     var folderTick by remember { mutableStateOf(0) }
 
     val folders = remember(docs, folderTick) { store.folders() }
+    val folderTokens = remember(docs, folderTick) { store.orderedFolders() }
+    val friendsName = remember(folderTick) { Prefs.friendsName }
+    fun labelOf(token: String) = if (token == FRIENDS_TOKEN) friendsName else token
+    fun say(msg: String) {
+        snackbar.currentSnackbarData?.dismiss()
+        scope.launch { snackbar.showSnackbar(msg) }
+    }
     val selecting = selected.isNotEmpty()
 
     // Si cambia la lista (p. ej. al eliminar), descarta selecciones que ya no existan.
@@ -329,15 +353,18 @@ fun HomeScreen(
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FilterChip("Todos", filter == DocFilter.All, null) { filter = DocFilter.All }
-                        FilterChip("Favoritos", filter == DocFilter.Favs, Icons.Default.Star) { filter = DocFilter.Favs }
-                        FilterChip("Amigos", filter == DocFilter.Friends, Icons.Default.People) { filter = DocFilter.Friends }
-                        folders.forEach { name ->
-                            FilterChip(name, filter == DocFilter.Folder(name), Icons.Default.DriveFileMove, onLongClick = { removingFolder = name }) {
-                                filter = DocFilter.Folder(name)
+                        FilterChip("Todos", filter == DocFilter.All, null, onLongClick = { say("Esa carpeta no se puede modificar") }) { filter = DocFilter.All }
+                        FilterChip("Favoritos", filter == DocFilter.Favs, Icons.Default.Star, onLongClick = { say("Esa carpeta no se puede modificar") }) { filter = DocFilter.Favs }
+                        folderTokens.forEach { token ->
+                            if (token == FRIENDS_TOKEN) {
+                                FilterChip(friendsName, filter == DocFilter.Friends, Icons.Default.People, onLongClick = { folderMenu = token }) { filter = DocFilter.Friends }
+                            } else {
+                                FilterChip(token, filter == DocFilter.Folder(token), Icons.Default.DriveFileMove, onLongClick = { folderMenu = token }) {
+                                    filter = DocFilter.Folder(token)
+                                }
                             }
                         }
-                        FilterChip("Carpeta nueva", false, null) { newFolderFor = emptyList() }
+                        AddChip("Carpeta nueva") { newFolderFor = emptyList() }
                     }
                 }
             }
@@ -470,6 +497,57 @@ fun HomeScreen(
         }
     }
 
+    folderMenu?.let { token ->
+        AlertDialog(
+            onDismissRequest = { folderMenu = null },
+            title = { Text(labelOf(token)) },
+            text = {
+                Column {
+                    TextButton(onClick = { folderMenu = null; renamingFolder = token }) { Text("Renombrar", fontSize = 16.sp) }
+                    TextButton(onClick = { folderMenu = null; ordering = token }) { Text("Mover (cambiar el orden)", fontSize = 16.sp) }
+                    if (token == FRIENDS_TOKEN) {
+                        Text("Esta carpeta se puede renombrar y mover, pero no eliminar.", fontSize = 13.sp, color = OnSurfaceDim, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                    } else {
+                        TextButton(onClick = { folderMenu = null; removingFolder = token }) { Text("Eliminar", fontSize = 16.sp) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { folderMenu = null }) { Text("Cancelar") } },
+        )
+    }
+
+    renamingFolder?.let { token ->
+        TextPromptDialog(
+            title = "Renombrar carpeta", label = "Nombre de la carpeta", initial = labelOf(token), confirm = "Guardar",
+            onDismiss = { renamingFolder = null },
+        ) { name ->
+            val n = name.trim()
+            val taken = (listOf("Todos", "Favoritos", friendsName) + folders).filter { it != labelOf(token) }.any { it.equals(n, ignoreCase = true) }
+            when {
+                n.isBlank() -> {}
+                taken -> say("Ya existe una carpeta con ese nombre")
+                token == FRIENDS_TOKEN -> { Prefs.friendsName = n; folderTick++ }
+                else -> {
+                    store.renameFolder(token, n)
+                    if (filter == DocFilter.Folder(token)) filter = DocFilter.Folder(n)
+                    folderTick++
+                    onChanged()
+                }
+            }
+            renamingFolder = null
+        }
+    }
+
+    ordering?.let { selectedToken ->
+        FolderOrderDialog(
+            start = folderTokens, selected = selectedToken, labelOf = ::labelOf,
+            onLocked = { say("Esa carpeta no se puede modificar") },
+            onDone = { list -> store.saveOrder(list); ordering = null; folderTick++ },
+            onDismiss = { ordering = null },
+        )
+    }
+
     removingFolder?.let { name ->
         AlertDialog(
             onDismissRequest = { removingFolder = null },
@@ -487,6 +565,88 @@ fun HomeScreen(
             dismissButton = { TextButton(onClick = { removingFolder = null }) { Text("Cancelar") } },
         )
     }
+}
+
+/**
+ * Ordenar carpetas: «Todos» y «Favoritos» quedan fijos arriba (con candado); el resto se reordena arrastrando el asa ☰
+ * o con las flechas ▲▼.
+ */
+@Composable
+private fun FolderOrderDialog(
+    start: List<String>, selected: String, labelOf: (String) -> String,
+    onLocked: () -> Unit, onDone: (List<String>) -> Unit, onDismiss: () -> Unit,
+) {
+    val items = remember { mutableStateListOf<String>().apply { addAll(start) } }
+    val rowH = 52.dp
+    val rowPx = with(LocalDensity.current) { rowH.toPx() }
+    var dragging by remember { mutableStateOf<String?>(null) }
+    var dragY by remember { mutableStateOf(0f) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ordenar carpetas") },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Text("Arrastra ☰ para cambiar el orden, o usa las flechas.", fontSize = 13.sp, color = OnSurfaceDim)
+                Spacer(Modifier.height(8.dp))
+                listOf("Todos", "Favoritos").forEach { name ->
+                    Row(Modifier.fillMaxWidth().height(rowH), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Lock, contentDescription = "Fija",
+                            tint = OnSurfaceDim,
+                            modifier = Modifier.size(40.dp).padding(8.dp).pointerInput(Unit) {
+                                detectDragGestures(onDragStart = { onLocked() }) { _, _ -> }
+                            },
+                        )
+                        Text(name, color = OnSurfaceDim, modifier = Modifier.weight(1f))
+                    }
+                }
+                for (token in items.toList()) key(token) {
+                    val index = items.indexOf(token)
+                    val isDrag = dragging == token
+                    Row(
+                        Modifier.fillMaxWidth().height(rowH).zIndex(if (isDrag) 1f else 0f)
+                            .graphicsLayer { translationY = if (isDrag) dragY else 0f; shadowElevation = if (isDrag) 16f else 0f }
+                            .background(if (isDrag) Surface2 else Color.Transparent, RoundedCornerShape(12.dp)),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.DragHandle, contentDescription = "Arrastrar",
+                            tint = if (token == selected) Accent else OnSurfaceDim,
+                            modifier = Modifier.size(40.dp).padding(8.dp).pointerInput(token) {
+                                detectDragGestures(
+                                    onDragStart = { dragging = token; dragY = 0f },
+                                    onDragEnd = { dragging = null; dragY = 0f },
+                                    onDragCancel = { dragging = null; dragY = 0f },
+                                ) { change, amount ->
+                                    change.consume()
+                                    dragY += amount.y
+                                    val i = items.indexOf(token)
+                                    val target = (i + (dragY / rowPx).roundToInt()).coerceIn(0, items.lastIndex)
+                                    if (target != i) {
+                                        items.add(target, items.removeAt(i))
+                                        dragY -= (target - i) * rowPx
+                                    }
+                                }
+                            },
+                        )
+                        Text(
+                            labelOf(token), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = if (token == selected) Accent else OnSurface,
+                            fontWeight = if (token == selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                        IconButton(enabled = index > 0, onClick = { items.add(index - 1, items.removeAt(index)) }) {
+                            Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir")
+                        }
+                        IconButton(enabled = index < items.lastIndex, onClick = { items.add(index + 1, items.removeAt(index)) }) {
+                            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onDone(items.toList()) }) { Text("Listo") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
 }
 
 // ───────────────────────────── Cabecera ─────────────────────────────
@@ -600,6 +760,15 @@ private fun FilterChip(text: String, selected: Boolean, icon: ImageVector?, onLo
         }
         Text(text, fontSize = 14.sp, color = if (selected) Accent else OnSurface, fontWeight = FontWeight.Medium)
     }
+}
+
+/** Botón «+» al final de las pestañas de carpeta, para crear una carpeta nueva. */
+@Composable
+private fun AddChip(description: String, onClick: () -> Unit) {
+    Box(
+        Modifier.clip(CircleShape).background(Surface1).border(1.dp, Outline, CircleShape).clickable(onClick = onClick).padding(9.dp),
+        contentAlignment = Alignment.Center,
+    ) { Icon(Icons.Default.Add, contentDescription = description, modifier = Modifier.size(20.dp), tint = Accent) }
 }
 
 @Composable

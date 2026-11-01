@@ -41,7 +41,7 @@ export function createHome({ openDoc, onTheme }) {
   setReceiver(async (name, from, bytes) => { await store.addPdf(bytes, name, { from }); toast(`${from} te ha enviado «${name}». Está en la carpeta Amigos`, 5000); refresh(); });
 
   async function refresh() {
-    [S.docs, S.folders] = await Promise.all([store.list(), store.folders()]);
+    [S.docs, S.folders, S.order] = await Promise.all([store.list(), store.folders(), store.orderedFolders()]);
     S.selected = new Set([...S.selected].filter((id) => S.docs.some((d) => d.id === id)));
     render();
   }
@@ -157,10 +157,104 @@ export function createHome({ openDoc, onTheme }) {
   function toggleSelect(id) { S.selected.has(id) ? S.selected.delete(id) : S.selected.add(id); render(); }
 
   function chip(label, on, fn, ic, onLong) {
-    let t;
-    const b = h('button', { class: 'chip' + (on ? ' on' : ''), onclick: fn }, ic ? icon(ic, 16) : null, label);
-    if (onLong) { b.addEventListener('pointerdown', () => { t = setTimeout(onLong, 600); }); ['pointerup', 'pointerleave'].forEach((e) => b.addEventListener(e, () => clearTimeout(t))); }
+    let t, fired = false;
+    const b = h('button', { class: 'chip' + (on ? ' on' : ''), onclick: () => { if (fired) { fired = false; return; } fn(); } }, ic ? icon(ic, 16) : null, label);
+    if (onLong) {
+      b.addEventListener('pointerdown', () => { fired = false; clearTimeout(t); t = setTimeout(() => { fired = true; onLong(); }, 600); });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach((e) => b.addEventListener(e, () => clearTimeout(t)));
+      b.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
     return b;
+  }
+
+  // ───────── carpetas: menú al mantener pulsado, renombrar y ordenar ─────────
+
+  const FRIENDS = store.FRIENDS;
+  const labelOf = (t) => (t === FRIENDS ? store.friendsName() : t);
+  const locked = () => toast('Esa carpeta no se puede modificar');
+
+  function folderMenu(token) {
+    const act = (fn) => () => { m.close(); fn(); };
+    const m = modal({
+      title: labelOf(token),
+      content: h('div', { class: 'stack' },
+        h('button', { class: 'text-btn left', onclick: act(() => renameFolder(token)) }, 'Renombrar'),
+        h('button', { class: 'text-btn left', onclick: act(() => orderDialog(token)) }, 'Mover (cambiar el orden)'),
+        token === FRIENDS ? h('p', { class: 'dim small' }, 'Esta carpeta se puede renombrar y mover, pero no eliminar.')
+          : h('button', { class: 'text-btn left', onclick: act(() => removeFolder(token)) }, 'Eliminar')),
+      actions: [{ label: 'Cancelar' }],
+    });
+  }
+
+  async function renameFolder(token) {
+    const n = (await promptDialog({ title: 'Renombrar carpeta', label: 'Nombre de la carpeta', initial: labelOf(token), confirm: 'Guardar' }))?.trim();
+    if (!n) return;
+    const taken = ['Todos', 'Favoritos', store.friendsName(), ...S.folders].filter((x) => x !== labelOf(token)).some((x) => x.toLowerCase() === n.toLowerCase());
+    if (taken) { toast('Ya existe una carpeta con ese nombre'); return; }
+    if (token === FRIENDS) store.setFriendsName(n);
+    else { await store.renameFolder(token, n); if (S.filter.kind === 'folder' && S.filter.name === token) S.filter = { kind: 'folder', name: n }; }
+    refresh();
+  }
+
+  async function removeFolder(token) {
+    if (await confirmDialog('Quitar carpeta', `La carpeta «${token}» desaparecerá. Sus documentos se conservan, sin carpeta.`, 'Quitar')) {
+      await store.removeFolder(token);
+      if (S.filter.name === token) S.filter = { kind: 'all' };
+      refresh();
+    }
+  }
+
+  /** «Todos» y «Favoritos» quedan fijos arriba (con candado); el resto se reordena arrastrando ☰ o con las flechas. */
+  function orderDialog(selected) {
+    const items = [...S.order];
+    const list = h('div', { class: 'order-list' });
+    const lockRow = (name) => {
+      const lock = h('span', { class: 'icon-btn handle' }, icon('lock', 20));
+      lock.addEventListener('pointerdown', (e) => {
+        const y = e.clientY;
+        const move = (ev) => { if (Math.abs(ev.clientY - y) > 6) { locked(); end(); } };
+        const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+      });
+      return h('div', { class: 'order-row locked' }, lock, h('span', { class: 'grow dim' }, name));
+    };
+    function draw() {
+      list.replaceChildren(...items.map((t, i) => {
+        const handle = h('span', { class: 'icon-btn handle', 'aria-label': 'Arrastrar' }, icon('grip', 20));
+        const row = h('div', { class: 'order-row' }, handle,
+          h('span', { class: 'grow ellipsis' + (t === selected ? ' accent strong' : '') }, labelOf(t)),
+          h('button', { class: 'icon-btn', 'aria-label': 'Subir', disabled: i === 0, onclick: () => { items.splice(i - 1, 0, items.splice(i, 1)[0]); draw(); } }, icon('chevUp', 20)),
+          h('button', { class: 'icon-btn', 'aria-label': 'Bajar', disabled: i === items.length - 1, onclick: () => { items.splice(i + 1, 0, items.splice(i, 1)[0]); draw(); } }, icon('chevDown', 20)));
+        handle.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          const startY = e.clientY, rowH = row.offsetHeight, startIdx = [...list.children].indexOf(row);
+          let cur = startIdx;
+          row.classList.add('drag');
+          const move = (ev) => {
+            const dy = ev.clientY - startY;
+            const want = Math.max(0, Math.min(items.length - 1, startIdx + Math.round(dy / rowH)));
+            if (want !== cur) {
+              items.splice(want, 0, items.splice(cur, 1)[0]);
+              list.insertBefore(row, want > cur ? list.children[want].nextSibling : list.children[want]);
+              cur = want;
+            }
+            row.style.transform = `translateY(${dy - (cur - startIdx) * rowH}px)`;
+          };
+          const end = () => {
+            window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
+            row.classList.remove('drag'); row.style.transform = ''; draw();
+          };
+          window.addEventListener('pointermove', move); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+        });
+        return row;
+      }));
+    }
+    draw();
+    modal({
+      title: 'Ordenar carpetas',
+      content: h('div', {}, h('p', { class: 'dim small' }, 'Arrastra ☰ para cambiar el orden, o usa las flechas.'), lockRow('Todos'), lockRow('Favoritos'), list),
+      actions: [{ label: 'Cancelar' }, { label: 'Listo', primary: true, onClick: async () => { await store.saveFolderOrder(items); refresh(); } }],
+    });
   }
 
   const analyze = () => openAnalyze({ docs: S.docs, onCreated: (info) => { refresh(); openDoc(info); }, onOpenSettings: () => openSettings(() => refresh()) });
@@ -200,13 +294,12 @@ export function createHome({ openDoc, onTheme }) {
       S.docs.length ? h('div', { class: 'row search-row' }, h('div', { class: 'grow search-wrap' }, icon('search', 18), search),
         h('button', { class: 'text-btn', onclick: (e) => menu(e.currentTarget, Object.entries(SORTS).map(([k, label]) => [label, () => { S.sort = k; render(); }, S.sort === k ? 'bold' : ''])) }, icon('sort', 18), ' ' + SORTS[S.sort])) : null,
       S.docs.length ? h('div', { class: 'chips' },
-        chip('Todos', S.filter.kind === 'all', () => { S.filter = { kind: 'all' }; render(); }),
-        chip('Favoritos', S.filter.kind === 'favs', () => { S.filter = { kind: 'favs' }; render(); }, 'star'),
-        chip('Amigos', S.filter.kind === 'friends', () => { S.filter = { kind: 'friends' }; render(); }, 'people'),
-        S.folders.map((f) => chip(f, S.filter.kind === 'folder' && S.filter.name === f, () => { S.filter = { kind: 'folder', name: f }; render(); }, 'folder', async () => {
-          if (await confirmDialog('Quitar carpeta', `La carpeta «${f}» desaparecerá. Sus documentos se conservan, sin carpeta.`, 'Quitar')) { await store.removeFolder(f); if (S.filter.name === f) S.filter = { kind: 'all' }; refresh(); }
-        })),
-        chip('+ Carpeta nueva', false, async () => { const n = await promptDialog({ title: 'Carpeta nueva', label: 'Nombre de la carpeta', confirm: 'Crear' }); if (n?.trim()) { await store.addFolder(n.trim()); refresh(); } })) : null,
+        chip('Todos', S.filter.kind === 'all', () => { S.filter = { kind: 'all' }; render(); }, null, locked),
+        chip('Favoritos', S.filter.kind === 'favs', () => { S.filter = { kind: 'favs' }; render(); }, 'star', locked),
+        S.order.map((t) => (t === FRIENDS
+          ? chip(labelOf(t), S.filter.kind === 'friends', () => { S.filter = { kind: 'friends' }; render(); }, 'people', () => folderMenu(t))
+          : chip(t, S.filter.kind === 'folder' && S.filter.name === t, () => { S.filter = { kind: 'folder', name: t }; render(); }, 'folder', () => folderMenu(t)))),
+        h('button', { class: 'chip add', 'aria-label': 'Carpeta nueva', title: 'Carpeta nueva', onclick: async () => { const n = await promptDialog({ title: 'Carpeta nueva', label: 'Nombre de la carpeta', confirm: 'Crear' }); if (n?.trim()) { await store.addFolder(n.trim()); refresh(); } } }, icon('plus', 18))) : null,
       !S.docs.length ? h('div', { class: 'empty' }, h('div', { class: 'big-ic' }, icon('upload', 48)), h('h2', {}, 'Todavía no hay documentos'), h('p', { class: 'dim' }, 'Importa un PDF, o crea uno desde una plantilla, y empieza a anotar.'))
         : !entries.length ? h('p', { class: 'dim pad' }, S.filter.kind === 'friends' && !S.query.trim() ? 'Aquí aparecerán los PDF que te envíen tus amigos. Para enviar uno: menú ⋮ de un documento → «Enviar a un amigo».' : 'Ningún documento coincide con la búsqueda o el filtro.')
           : h('div', { class: 'grid' }, entries.map((e) => (e.header ? h('h3', { class: 'section' }, e.header) : card(e.doc)))),

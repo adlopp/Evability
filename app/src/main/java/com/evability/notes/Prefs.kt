@@ -70,6 +70,11 @@ object Prefs {
         get() = sp.getString("social_session", "") ?: ""
         set(v) = sp.edit().putString("social_session", v).apply()
 
+    /** Nombre que se muestra para la carpeta «Amigos» (se puede cambiar, pero no borrar). */
+    var friendsName: String
+        get() = sp.getString("friends_name", "Amigos")?.ifBlank { "Amigos" } ?: "Amigos"
+        set(v) = sp.edit().putString("friends_name", v.trim()).apply()
+
     fun setAccent(argb: Long) {
         AccentBase = Color(argb)
         sp.edit().putLong("accent", argb).apply()

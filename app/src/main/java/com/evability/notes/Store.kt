@@ -180,6 +180,41 @@ class Store(context: Context) {
     fun folders(): List<String> =
         (savedFolders() + loadIndex().map { it.folder }).filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
 
+    private val orderFile get() = File(dir, "folderorder.json")
+
+    @Synchronized
+    private fun savedOrder(): List<String> = try {
+        val a = JSONArray(orderFile.readText())
+        (0 until a.length()).map { a.getString(it) }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    /**
+     * Orden de las pestañas de carpeta tras «Todos» y «Favoritos»: las carpetas propias y [FRIENDS_TOKEN] (la de «Amigos»).
+     * Las nuevas se añaden al final y «Amigos» sale la primera si nunca se movió.
+     */
+    @Synchronized
+    fun orderedFolders(): List<String> {
+        val existing = folders()
+        val saved = savedOrder().filter { it == FRIENDS_TOKEN || it in existing }.distinct()
+        val base = saved + existing.filter { it !in saved }
+        return if (FRIENDS_TOKEN in base) base else listOf(FRIENDS_TOKEN) + base
+    }
+
+    @Synchronized
+    fun saveOrder(list: List<String>) = writeAtomic(orderFile, JSONArray(list).toString())
+
+    /** Cambia el nombre de una carpeta propia (sus documentos y su sitio en el orden se conservan). */
+    @Synchronized
+    fun renameFolder(old: String, new: String) {
+        val n = new.trim()
+        if (n.isBlank() || n == old) return
+        saveIndex(loadIndex().map { if (it.folder == old) it.copy(folder = n) else it })
+        writeAtomic(foldersFile, JSONArray(savedFolders().map { if (it == old) n else it }.distinct()).toString())
+        writeAtomic(orderFile, JSONArray(savedOrder().map { if (it == old) n else it }).toString())
+    }
+
     @Synchronized
     fun addFolder(name: String) {
         val n = name.trim()
@@ -193,6 +228,7 @@ class Store(context: Context) {
     fun removeFolder(name: String) {
         saveIndex(loadIndex().map { if (it.folder == name) it.copy(folder = "") else it })
         writeAtomic(foldersFile, JSONArray(savedFolders().filter { it != name }).toString())
+        writeAtomic(orderFile, JSONArray(savedOrder().filter { it != name }).toString())
     }
 
     /** Crea un documento nuevo a partir de una plantilla (o una hoja en blanco). */
@@ -385,3 +421,6 @@ class Store(context: Context) {
         }
     }
 }
+
+/** Marca de la carpeta «Amigos» dentro del orden de carpetas (no puede coincidir con un nombre de carpeta). */
+const val FRIENDS_TOKEN = "@amigos"

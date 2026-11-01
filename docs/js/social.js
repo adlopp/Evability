@@ -414,8 +414,6 @@ export function openSocial(onClose) {
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', {}, 'Amigos')),
     body);
   let timers = [], myPhoto = '', ov = null, results = [], query = '';
-  // toda la pantalla de Amigos al doble de tamaño (en pantallas pequeñas, menos para que quepa)
-  root.style.setProperty('--sz', Math.min(2, Math.max(1, window.innerWidth / 380)).toFixed(2));
   const fail = (e) => toast(e.message || 'No se pudo completar');
 
   function showLogin() {
