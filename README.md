@@ -49,3 +49,15 @@ selección de texto, papelera, Ternurín, «Analizar» con Gemini y copias de se
 - Las pegatinas de gatitos, hamsters, pollitos y chinchillas son dibujos originales hechos para este proyecto.
 - Al exportar, las páginas del PDF quedan como imagen (el texto original deja de ser seleccionable).
 - Las anotaciones se guardan dentro de la app; el PDF original no se modifica.
+
+## Amigos (perfil, punto verde y corazones)
+
+La parte social usa Firebase (plan gratuito Spark) por su API REST, sin SDK, en Android y en la web.
+Para montarla en otro proyecto de Firebase:
+
+1. Authentication → Método de acceso → activar **Correo electrónico/contraseña**.
+2. Firestore Database → crear en modo producción → pestaña **Reglas** → pegar [`firestore.rules`](firestore.rules) → Publicar.
+3. Poner el ID del proyecto y la clave de API web en `Social.kt` y `docs/js/social.js`.
+
+Las cuentas usan un nombre de usuario (el correo `usuario@evability.app` es interno). Los datos guardados en la nube son el nombre,
+una foto de 96×96 y la última conexión; los documentos nunca se suben. Los corazones solo llegan con la app abierta.

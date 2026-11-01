@@ -153,6 +153,7 @@ class PomodoroService : Service() {
     }
 
     private fun ring() {
+        if (Prefs.pomoMuted) return
         handler.removeCallbacks(stopRing)
         ringtone?.stop()
         val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)

@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
         )
         handle(intent)
         Prefs.init(applicationContext)
+        Social.load()
         StickerBitmaps.init(applicationContext)
         val store = Store(applicationContext)
         store.cleanOrphans()
@@ -274,6 +275,7 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
                 dismissButton = { TextButton(enabled = progress == null, onClick = { update = null }) { Text("Ahora no") } },
             )
         }
+        SocialHost()
         if (busy) {
             Box(
                 Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0x99000000)).clickable(enabled = false) {},

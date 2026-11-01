@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore para la parte social de Evability (amigos, presencia y toques).
+// Se pegan en Firebase → Firestore Database → Reglas → Publicar.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function pair(a, b) { return a < b ? a + '_' + b : b + '_' + a; }
+    function areFriends(a, b) { return exists(/databases/$(database)/documents/friends/$(pair(a, b))); }
+    function otherOf(m) { return m[0] == request.auth.uid ? m[1] : m[0]; }
+
+    // nombre de usuario -> uid (el nombre solo se puede reservar una vez)
+    match /usernames/{name} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && name.matches('[a-z0-9_]{3,16}')
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // perfil público: nombre y foto pequeña (JPEG en base64)
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['username', 'photo'])
+        && request.resource.data.username is string
+        && request.resource.data.photo is string
+        && request.resource.data.photo.size() < 30000
+        && get(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid;
+      allow delete: if request.auth.uid == uid;
+    }
+
+    // última conexión: solo la ve el propio usuario y sus amigos
+    match /presence/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || areFriends(request.auth.uid, uid));
+      allow create, update: if request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['lastSeen'])
+        && request.resource.data.lastSeen == request.time;
+    }
+
+    // solicitudes de amistad: id = origen_destino
+    match /requests/{id} {
+      allow read: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['from', 'to'])
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.to != request.auth.uid
+        && id == request.auth.uid + '_' + request.resource.data.to;
+      allow delete: if signedIn() && (resource.data.from == request.auth.uid || resource.data.to == request.auth.uid);
+    }
+
+    // amistades: id = los dos uid ordenados; solo se crea si la otra persona había enviado una solicitud
+    match /friends/{id} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['members'])
+        && request.resource.data.members.size() == 2
+        && request.auth.uid in request.resource.data.members
+        && id == pair(request.resource.data.members[0], request.resource.data.members[1])
+        && exists(/databases/$(database)/documents/requests/$(otherOf(request.resource.data.members) + '_' + request.auth.uid));
+      allow delete: if signedIn() && request.auth.uid in resource.data.members;
+    }
+
+    // toques (corazones): id = destino_origen; como mucho uno cada 15 minutos por amigo (lo comprueba el servidor)
+    match /pokes/{id} {
+      allow read: if signedIn() && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasOnly(['from', 'to', 'at'])
+        && request.resource.data.from == request.auth.uid
+        && id == request.resource.data.to + '_' + request.auth.uid
+        && areFriends(request.auth.uid, request.resource.data.to)
+        && request.resource.data.at == request.time
+        && (resource == null || request.time > resource.data.at + duration.value(15, 'm'));
+    }
+  }
+}

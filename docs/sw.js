@@ -1,11 +1,11 @@
 // Service worker: guarda la app en el dispositivo para que funcione sin conexión.
 // Estrategia: se responde enseguida con lo guardado y, si hay conexión, se actualiza en segundo plano (la versión nueva se ve al abrir otra vez).
 
-const CACHE = 'evability-web-3';
+const CACHE = 'evability-web-4';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/main.js', 'js/theme.js', 'js/ui.js', 'js/db.js', 'js/store.js', 'js/pdfdoc.js', 'js/templates.js', 'js/ann.js', 'js/editor.js',
-  'js/export.js', 'js/home.js', 'js/settings.js', 'js/pomodoro.js', 'js/gemini.js', 'js/summarypdf.js', 'js/analyze.js', 'js/stickers.js',
+  'js/export.js', 'js/home.js', 'js/settings.js', 'js/pomodoro.js', 'js/gemini.js', 'js/summarypdf.js', 'js/analyze.js', 'js/stickers.js', 'js/social.js',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js', 'vendor/jszip.min.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/logo.png', 'easter-egg.mp3',
 ];

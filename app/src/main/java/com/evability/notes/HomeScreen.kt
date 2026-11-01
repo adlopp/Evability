@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.SmartToy
@@ -188,6 +189,7 @@ fun HomeScreen(
     var showAnalyze by remember { mutableStateOf(false) }
     var showTrash by remember { mutableStateOf(false) }
     var showPomodoro by remember { mutableStateOf(false) }
+    var showSocial by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<DocInfo?>(null) }
     var moving by remember { mutableStateOf<List<DocInfo>?>(null) }
@@ -242,7 +244,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                TopRow(version, onCheckUpdate, onPomodoro = { showPomodoro = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
+                TopRow(version, onCheckUpdate, onPomodoro = { showPomodoro = true }, onSocial = { showSocial = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -399,6 +401,7 @@ fun HomeScreen(
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp))
 
         if (showPomodoro) PomodoroScreen { showPomodoro = false }
+        if (showSocial) SocialScreen { showSocial = false }
     }
 
     if (showTemplates) {
@@ -478,7 +481,7 @@ fun HomeScreen(
 // ───────────────────────────── Cabecera ─────────────────────────────
 
 @Composable
-private fun TopRow(version: String, onCheckUpdate: () -> Unit, onPomodoro: () -> Unit, onTrash: () -> Unit, onSettings: () -> Unit) {
+private fun TopRow(version: String, onCheckUpdate: () -> Unit, onPomodoro: () -> Unit, onSocial: () -> Unit, onTrash: () -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     val player = remember { MediaPlayer.create(context, R.raw.easter_egg) }
     DisposableEffect(Unit) { onDispose { player?.release() } }
@@ -512,6 +515,8 @@ private fun TopRow(version: String, onCheckUpdate: () -> Unit, onPomodoro: () ->
             Text("Evability", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.4.sp)
             Text("v$version", fontSize = 12.sp, color = OnSurfaceDim)
         }
+        RoundIconButton(Icons.Default.People, "Amigos", onSocial)
+        Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.Timer, "Ternurín", onPomodoro)
         Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.Delete, "Papelera", onTrash)

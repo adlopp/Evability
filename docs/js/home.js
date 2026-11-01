@@ -6,6 +6,7 @@ import { TEMPLATE_KINDS, templateCanvas } from './templates.js';
 import { openSettings, VERSION } from './settings.js';
 import { openPomodoro, running as pomoRunning } from './pomodoro.js';
 import { openAnalyze } from './analyze.js';
+import { openSocial } from './social.js';
 import { openPdf, pageSizes } from './pdfdoc.js';
 import { exportPdf } from './export.js';
 import { shareOrDownload } from './editor.js';
@@ -181,6 +182,7 @@ export function createHome({ openDoc, onTheme }) {
     fill(root,
       h('div', { class: 'top-row' }, logo,
         h('div', { class: 'grow' }, h('div', { class: 'app-title' }, 'Evability'), h('div', { class: 'dim small' }, 'v' + VERSION)),
+        h('button', { class: 'round', 'aria-label': 'Amigos', title: 'Amigos', onclick: () => { document.getElementById('app').append(openSocial(() => render())); } }, icon('people')),
         h('button', { class: 'round' + (pomoRunning() ? ' live' : ''), 'aria-label': 'Ternurín', title: 'Ternurín', onclick: () => { const p = openPomodoro(() => render()); document.getElementById('app').append(p); } }, icon('timer')),
         h('button', { class: 'round', 'aria-label': 'Papelera', title: 'Papelera', onclick: trashDialog }, icon('trash')),
         h('button', { class: 'round', 'aria-label': 'Ajustes', title: 'Ajustes', onclick: () => openSettings(() => { onTheme?.(); refresh(); }) }, icon('settings'))),

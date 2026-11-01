@@ -60,6 +60,16 @@ object Prefs {
         get() = sp.getInt("pomo_rest", 5)
         set(v) = sp.edit().putInt("pomo_rest", v).apply()
 
+    /** Ternurín en silencio: el temporizador sigue, pero sin alarma ni vibración. */
+    var pomoMuted: Boolean
+        get() = sp.getBoolean("pomo_muted", false)
+        set(v) = sp.edit().putBoolean("pomo_muted", v).apply()
+
+    /** Sesión de la parte social (JSON), vacía si no hay sesión iniciada. */
+    var socialSession: String
+        get() = sp.getString("social_session", "") ?: ""
+        set(v) = sp.edit().putString("social_session", v).apply()
+
     fun setAccent(argb: Long) {
         AccentBase = Color(argb)
         sp.edit().putLong("accent", argb).apply()

@@ -4,7 +4,7 @@
 import { h, icon, toast } from './ui.js';
 
 const KEY = 'ev.pomo';
-const S = Object.assign({ phase: 'IDLE', endAt: 0, phaseMs: 0, completed: 0, study: 25, rest: 5 }, JSON.parse(localStorage.getItem(KEY) || '{}'));
+const S = Object.assign({ phase: 'IDLE', endAt: 0, phaseMs: 0, completed: 0, study: 25, rest: 5, muted: false }, JSON.parse(localStorage.getItem(KEY) || '{}'));
 const listeners = new Set();
 let audio = null, timer = null, wake = null;
 
@@ -60,6 +60,7 @@ function ensureAudio() {
 
 /** Alarma: una serie de pitidos. */
 function ring() {
+  if (S.muted) return; // silenciado: solo cambia de fase
   const ctx = ensureAudio();
   if (ctx) {
     const t0 = ctx.currentTime + 0.05;
@@ -162,8 +163,16 @@ export function openPomodoro(onClose) {
   };
 
   let study = S.study, rest = S.rest;
+  const muteBtn = h('button', { class: 'round', onclick: () => { S.muted = !S.muted; save(); paintMute(); update(); } });
+  const paintMute = () => {
+    muteBtn.replaceChildren(icon(S.muted ? 'mute' : 'volume'));
+    muteBtn.setAttribute('aria-label', S.muted ? 'Activar alarma' : 'Silenciar alarma');
+    muteBtn.title = muteBtn.getAttribute('aria-label');
+    muteBtn.style.color = S.muted ? 'var(--on-dim)' : '';
+  };
   const root = h('div', { class: 'pomo' },
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => { close(); } }, icon('back')), h('h1', { class: 'grow' }, 'Ternurín'),
+      muteBtn,
       h('button', { class: 'round', 'aria-label': 'Tu estudio', title: 'Tu estudio', onclick: () => root.append(openStudyStats()) }, icon('chart'))),
     h('div', { class: 'pomo-main' }, ring_, body));
 
@@ -184,11 +193,13 @@ export function openPomodoro(onClose) {
           h('button', { class: 'btn big', onclick: () => stop() }, icon('stop', 22), ' Detener')]
         : [stepper('Estudio', () => study, (v) => { study = v; }, 1, 180), stepper('Descanso', () => rest, (v) => { rest = v; }, 1, 60),
           h('button', { class: 'btn big', onclick: () => start(study, rest) }, icon('play', 22), ' Empezar'),
-          h('p', { class: 'dim small' }, 'Al terminar cada fase suena una alarma y empieza la siguiente hasta que pulses Detener. Con la app cerrada el iPad no puede avisar.')]));
+          h('p', { class: 'dim small' }, 'Al terminar cada fase suena una alarma y empieza la siguiente hasta que pulses Detener. Con la app cerrada el iPad no puede avisar.'), h('p', { class: 'dim small mute-note' })]));
     }
     if (run) body.firstChild.textContent = `Ternurines completados: ${S.completed}`;
+    const note = body.querySelector('.mute-note'); if (note) note.textContent = S.muted ? 'Alarma silenciada: el reloj cambia de fase sin sonar ni vibrar.' : '';
   }
 
+  paintMute();
   listeners.add(update);
   const raf = setInterval(update, 250);
   update();

@@ -6,6 +6,7 @@ import * as store from './store.js';
 import { createHome } from './home.js';
 import { Editor } from './editor.js';
 import { ALL_STICKER_FILES } from './stickers.js';
+import { startHost } from './social.js';
 
 applyTheme();
 const app = document.getElementById('app');
@@ -36,6 +37,7 @@ async function boot() {
   try { await store.cleanup(); } catch (e) { console.error(e); }
   showHome();
   document.getElementById('boot')?.remove();
+  startHost(); // latido de presencia y avisos de corazones si hay sesión iniciada
   // Pide que el navegador no borre los datos automáticamente (solo funciona si la app está instalada o se usa con frecuencia).
   navigator.storage?.persist?.().catch(() => {});
 }

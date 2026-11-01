@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
@@ -71,6 +73,7 @@ fun PomodoroScreen(onClose: () -> Unit) {
     var rest by remember { mutableIntStateOf(Prefs.pomoRest) }
     val running = Pomodoro.phase != PomoPhase.IDLE
     var showStats by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(Prefs.pomoMuted) }
 
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(running) {
@@ -106,6 +109,16 @@ fun PomodoroScreen(onClose: () -> Unit) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
             Text("Ternurín", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = { muted = !muted; Prefs.pomoMuted = muted },
+                modifier = Modifier.padding(end = 10.dp).size(46.dp).clip(CircleShape).background(Surface1).border(1.dp, Outline, CircleShape),
+            ) {
+                Icon(
+                    if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = if (muted) "Activar alarma" else "Silenciar alarma",
+                    tint = if (muted) OnSurfaceDim else Accent,
+                )
+            }
             IconButton(
                 onClick = { showStats = true },
                 modifier = Modifier.padding(end = 4.dp).size(46.dp).clip(CircleShape).background(Surface1).border(1.dp, Outline, CircleShape),
@@ -168,7 +181,11 @@ fun PomodoroScreen(onClose: () -> Unit) {
                     Text("  Empezar", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.height(10.dp))
-                Text("Al terminar cada fase suena una alarma y empieza la siguiente hasta que pulses Detener.", fontSize = 12.sp, color = OnSurfaceDim)
+                Text(
+                    if (muted) "Alarma silenciada: el reloj cambia de fase sin sonar ni vibrar. Pulsa Detener cuando quieras acabar."
+                    else "Al terminar cada fase suena una alarma y empieza la siguiente hasta que pulses Detener.",
+                    fontSize = 12.sp, color = OnSurfaceDim,
+                )
             }
         }
     }
