@@ -6,14 +6,14 @@ import * as ann from './ann.js';
 
 const MAX_PX = 2000; // cuida la memoria del iPad
 
-export async function exportPdf({ pdf, anns, extraKinds, hidden, sizes, onProgress = () => {} }) {
+export async function exportPdf({ pdf, anns, extraKinds, hidden, sizes, onProgress = () => {}, maxPx = MAX_PX, quality = 0.9 }) {
   const out = await PDFLib.PDFDocument.create();
   const total = pdf.numPages + extraKinds.length;
   const pages = [...Array(total).keys()].filter((i) => !hidden.includes(i));
   let n = 0;
   for (const i of pages) {
     const [pw, ph] = sizes[i < sizes.length ? i : 0];
-    const px = Math.min(MAX_PX, Math.round(pw * 3));
+    const px = Math.min(maxPx, Math.round(pw * 3));
     let canvas;
     if (i < pdf.numPages) canvas = await renderToCanvas(pdf, i + 1, px);
     else if (extraKinds[i - pdf.numPages]) canvas = templateCanvas(extraKinds[i - pdf.numPages], px);
@@ -23,7 +23,7 @@ export async function exportPdf({ pdf, anns, extraKinds, hidden, sizes, onProgre
       const c = canvas.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, canvas.width, canvas.height);
     }
     ann.drawAll(canvas.getContext('2d'), anns.filter((a) => a.page === i), canvas.width);
-    const jpg = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+    const jpg = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', quality));
     const img = await out.embedJpg(await jpg.arrayBuffer());
     out.addPage([pw, ph]).drawImage(img, { x: 0, y: 0, width: pw, height: ph });
     canvas.width = 0; canvas.height = 0;

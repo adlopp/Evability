@@ -132,7 +132,7 @@ class PdfDoc(private val file: File) : Closeable {
 
 /** Genera un PDF nuevo con las páginas originales y las anotaciones integradas (las páginas quedan rasterizadas). */
 object Exporter {
-    fun export(doc: PdfDoc, extraPages: Int, anns: List<Ann>, out: OutputStream, extraKinds: List<String> = emptyList(), hidden: Collection<Int> = emptyList(), onProgress: (Int) -> Unit = {}) {
+    fun export(doc: PdfDoc, extraPages: Int, anns: List<Ann>, out: OutputStream, extraKinds: List<String> = emptyList(), hidden: Collection<Int> = emptyList(), onProgress: (Int) -> Unit = {}, maxPx: Int = 2400) {
         val pdf = PdfDocument()
         try {
             var number = 0
@@ -151,7 +151,7 @@ object Exporter {
                         page.canvas.restore()
                     }
                 } else {
-                    val bmp = doc.render(i, min(2400, pw * 3))
+                    val bmp = doc.render(i, min(maxPx, pw * 3))
                     page.canvas.drawBitmap(bmp, null, RectF(0f, 0f, pw.toFloat(), ph.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
                     bmp.recycle()
                 }

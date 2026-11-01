@@ -262,19 +262,26 @@ async function checkShares() {
   }
 }
 
-/** «Enviar a un amigo»: elige a quién mandar el PDF original del documento. */
-export function openSend(doc, buffer) {
+/**
+ * «Enviar a un amigo»: elige a quién mandar el documento tal cual lo tienes. `source` = { modified, build }:
+ * si tiene cambios (anotaciones, páginas añadidas o eliminadas) `build()` devuelve el PDF con ellos; si no, el original.
+ */
+export function openSend(doc, source) {
   const body = h('div', { class: 'stack' }, h('p', { class: 'dim' }, session ? 'Cargando amigos…' : 'Entra primero en Amigos (el botón de las personas de la cabecera) para poder enviar PDF.'));
   const m = modal({ title: `Enviar «${doc.name}»`, content: body, actions: [{ label: 'Cerrar', primary: true }] });
   if (!session) return;
-  const note = h('p', { class: 'dim small' }, 'Se envía el PDF original, sin tus anotaciones (máx. 10 MB).');
+  const note = h('p', { class: 'dim small' }, source.modified ? 'Se enviará tal cual lo tienes, con tus anotaciones y cambios (máx. 10 MB).' : 'Se enviará el documento tal cual (máx. 10 MB).');
   overview().then(({ friends }) => {
     if (!friends.length) { body.replaceChildren(h('p', { class: 'dim' }, 'Todavía no tienes amigos a quienes enviárselo.'), note); return; }
     const status = h('p', { class: 'dim small' });
     body.replaceChildren(...friends.map((f) => h('div', { class: 'person' }, avatar(f.profile.username, f.profile.photo, 40), h('span', { class: 'grow' }, f.profile.username),
       h('button', { class: 'text-btn strong', onclick: async (e) => {
         const btns = body.querySelectorAll('button'); btns.forEach((b) => { b.disabled = true; });
-        try { await sendPdf(f.profile.uid, doc.name, buffer, (p) => { status.textContent = `Enviando… ${Math.round(p * 100)} %`; }); toast('Enviado a ' + f.profile.username); m.close(); }
+        try {
+          status.textContent = source.modified ? 'Preparando el documento con tus cambios…' : 'Enviando…';
+          await sendPdf(f.profile.uid, doc.name, await source.build(), (p) => { status.textContent = `Enviando… ${Math.round(p * 100)} %`; });
+          toast('Enviado a ' + f.profile.username); m.close();
+        }
         catch (err) { status.textContent = err.message || 'No se pudo enviar'; status.style.color = '#ff6b6b'; btns.forEach((b) => { b.disabled = false; }); }
       } }, 'Enviar'))), status, note);
   }).catch((e) => { body.replaceChildren(h('p', { class: 'err' }, e.message || 'Sin conexión')); });

@@ -73,6 +73,24 @@ export function createHome({ openDoc, onTheme }) {
     if (undo) { await store.restore(list); await refresh(); }
   }
 
+  /** Envía el documento tal cual: con sus anotaciones y cambios si los tiene, o el PDF original si no. */
+  async function sendDoc(d) {
+    const anns = await store.anns(d.id);
+    const modified = anns.length > 0 || d.extra > 0 || (d.hidden || []).length > 0;
+    openSend(d, {
+      modified,
+      build: async () => {
+        if (!modified) return store.pdfBytes(d.id);
+        const pdf = await openPdf(await store.pdfBytes(d.id));
+        try {
+          // un poco más ligero que al exportar, para que quepa en los 10 MB del envío
+          const blob = await exportPdf({ pdf, info: d, anns, extraKinds: d.extraKinds || [], hidden: d.hidden || [], sizes: await pageSizes(pdf), maxPx: 1500, quality: 0.82 });
+          return blob.arrayBuffer();
+        } finally { pdf.destroy(); }
+      },
+    });
+  }
+
   async function exportDoc(d) {
     const m = modal({ title: 'Exportando PDF', content: h('p', { class: 'dim' }, 'Preparando…') });
     try {
@@ -143,7 +161,7 @@ export function createHome({ openDoc, onTheme }) {
           ['Duplicar', async () => { await store.duplicate(d.id); refresh(); }],
           [d.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos', async () => { await store.setFavorite([d.id], !d.favorite); refresh(); }],
           ['Mover a carpeta', () => moveDialog([d])],
-          ['Enviar a un amigo', async () => openSend(d, await store.pdfBytes(d.id))],
+          ['Enviar a un amigo', () => sendDoc(d)],
           ['Exportar PDF con anotaciones', () => exportDoc(d)],
           ['Eliminar', () => deleteDocs([d]), 'danger'],
         ]);
@@ -301,7 +319,7 @@ export function createHome({ openDoc, onTheme }) {
           : chip(t, S.filter.kind === 'folder' && S.filter.name === t, () => { S.filter = { kind: 'folder', name: t }; render(); }, 'folder', () => folderMenu(t)))),
         h('button', { class: 'chip add', 'aria-label': 'Carpeta nueva', title: 'Carpeta nueva', onclick: async () => { const n = await promptDialog({ title: 'Carpeta nueva', label: 'Nombre de la carpeta', confirm: 'Crear' }); if (n?.trim()) { await store.addFolder(n.trim()); refresh(); } } }, icon('plus', 18))) : null,
       !S.docs.length ? h('div', { class: 'empty' }, h('div', { class: 'big-ic' }, icon('upload', 48)), h('h2', {}, 'Todavía no hay documentos'), h('p', { class: 'dim' }, 'Importa un PDF, o crea uno desde una plantilla, y empieza a anotar.'))
-        : !entries.length ? h('p', { class: 'dim pad' }, S.filter.kind === 'friends' && !S.query.trim() ? 'Aquí aparecerán los PDF que te envíen tus amigos. Para enviar uno: menú ⋮ de un documento → «Enviar a un amigo».' : 'Ningún documento coincide con la búsqueda o el filtro.')
+        : !entries.length ? h('p', { class: 'dim pad' }, S.filter.kind === 'friends' && !S.query.trim() ? 'Aquí aparecerán los documentos que te envíen tus amigos. Para enviar uno: menú ⋮ de un documento → «Enviar a un amigo».' : 'Ningún documento coincide con la búsqueda o el filtro.')
           : h('div', { class: 'grid' }, entries.map((e) => (e.header ? h('h3', { class: 'section' }, e.header) : card(e.doc)))),
       selecting ? h('div', { class: 'selbar' },
         h('button', { class: 'icon-btn', onclick: () => { S.selected.clear(); render(); } }, icon('close')),

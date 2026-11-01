@@ -621,7 +621,11 @@ fun SendDialog(doc: DocInfo, store: Store, onDismiss: () -> Unit) {
     var friends by remember { mutableStateOf<List<Social.FriendRow>?>(null) }
     var error by remember { mutableStateOf("") }
     var progress by remember { mutableStateOf<Float?>(null) }
+    var preparing by remember { mutableStateOf(false) }
     val signedIn = Social.session != null
+    // Se envía el documento tal cual: con tus anotaciones y cambios si los tiene, o el PDF original si no.
+    val anns = remember { store.loadAnns(doc.id) }
+    val modified = remember { anns.isNotEmpty() || doc.extra > 0 || doc.hidden.isNotEmpty() }
 
     LaunchedEffect(Unit) {
         if (signedIn) try { friends = Social.overview().friends } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message ?: "Sin conexión" }
@@ -647,13 +651,31 @@ fun SendDialog(doc: DocInfo, store: Store, onDismiss: () -> Unit) {
                                     scope.launch {
                                         error = ""
                                         progress = 0f
+                                        preparing = modified
+                                        var temp: java.io.File? = null
                                         try {
-                                            Social.sendPdf(f.profile.uid, doc.name, store.pdfFile(doc.id)) { progress = it }
+                                            val file = if (modified) {
+                                                withContext(Dispatchers.IO) {
+                                                    java.io.File(ctx.cacheDir, "share-${doc.id}.pdf").also { target ->
+                                                        temp = target
+                                                        target.outputStream().use { out ->
+                                                            PdfDoc(store.pdfFile(doc.id)).use { d ->
+                                                                Exporter.export(d, doc.extra, anns, out, doc.extraKinds, doc.hidden, maxPx = 1400)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } else store.pdfFile(doc.id)
+                                            preparing = false
+                                            Social.sendPdf(f.profile.uid, doc.name, file) { progress = it }
                                             Toast.makeText(ctx, "Enviado a ${f.profile.username}", Toast.LENGTH_SHORT).show()
                                             onDismiss()
                                         } catch (e: Exception) {
                                             error = e.message ?: "No se pudo enviar"
                                             progress = null
+                                            preparing = false
+                                        } finally {
+                                            temp?.delete()
                                         }
                                     }
                                 },
@@ -663,15 +685,20 @@ fun SendDialog(doc: DocInfo, store: Store, onDismiss: () -> Unit) {
                 }
                 progress?.let {
                     Spacer(Modifier.height(10.dp))
-                    LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
-                    Text("Enviando…", fontSize = 12.sp, color = OnSurfaceDim, modifier = Modifier.padding(top = 4.dp))
+                    if (preparing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    else LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
+                    Text(if (preparing) "Preparando el documento con tus cambios…" else "Enviando…", fontSize = 12.sp, color = OnSurfaceDim, modifier = Modifier.padding(top = 4.dp))
                 }
                 if (error.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text(error, color = Color(0xFFFF6B6B), fontSize = 14.sp)
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("Se envía el PDF original, sin tus anotaciones (máx. 10 MB).", fontSize = 12.sp, color = OnSurfaceDim)
+                Text(
+                    if (modified) "Se enviará tal cual lo tienes, con tus anotaciones y cambios (máx. 10 MB)."
+                    else "Se enviará el documento tal cual (máx. 10 MB).",
+                    fontSize = 12.sp, color = OnSurfaceDim,
+                )
             }
         },
         confirmButton = {},
