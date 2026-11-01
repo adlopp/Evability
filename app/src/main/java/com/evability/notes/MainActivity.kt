@@ -52,10 +52,24 @@ class MainActivity : ComponentActivity() {
         handle(intent)
         Prefs.init(applicationContext)
         Social.load()
+        if (Social.session != null) {
+            ShareJob.schedule(applicationContext)
+            if (Prefs.quickAlerts) FriendsWatch.start(applicationContext)
+        }
         StickerBitmaps.init(applicationContext)
         val store = Store(applicationContext)
         store.cleanOrphans()
         setContent { EvabilityTheme { App(store, incoming) } }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.foreground = true
+    }
+
+    override fun onStop() {
+        AppVisibility.foreground = false
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -226,14 +240,25 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
 
     LaunchedEffect(Unit) { checkUpdate(false) }
 
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) reload() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // PDF que te envían los amigos: se guardan en la biblioteca (carpeta «Amigos») en cuanto llegan.
     LaunchedEffect(Unit) {
         Social.receiver = { name, from, bytes ->
-            withContext(Dispatchers.IO) { store.receive(name, from, bytes) }
+            val replaced = withContext(Dispatchers.IO) { store.receive(name, from, bytes).second }
             withContext(Dispatchers.Main) {
                 reload()
-                toast("$from te ha enviado «$name». Está en la carpeta Amigos")
+                toast(
+                    if (replaced) "$from te ha enviado «$name» otra vez. Se ha quedado la última copia (la anterior está en la papelera)"
+                    else "$from te ha enviado «$name». Está en la carpeta ${Prefs.friendsName}",
+                )
             }
+            replaced
         }
     }
 

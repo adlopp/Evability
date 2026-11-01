@@ -374,7 +374,7 @@ fun HomeScreen(
             } else if (entries.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(
-                        if (filter == DocFilter.Friends && query.isBlank()) "Aquí aparecerán los PDF que te envíen tus amigos. Para enviar uno: menú ⋮ de un documento → «Enviar a un amigo»."
+                        if (filter == DocFilter.Friends && query.isBlank()) "Aquí aparecerán los documentos que te envíen tus amigos. Para enviar uno: menú ⋮ de un documento → «Enviar a un amigo»."
                         else "Ningún documento coincide con la búsqueda o el filtro.",
                         color = OnSurfaceDim, modifier = Modifier.padding(vertical = 12.dp),
                     )

@@ -106,6 +106,18 @@ export async function removeFolder(name) {
   await db.put('kv', 'folderOrder', ((await db.get('kv', 'folderOrder')) || []).filter((f) => f !== name));
 }
 
+/**
+ * Guarda un PDF recibido de un amigo. Si ese amigo ya te había enviado uno con el mismo nombre, la copia nueva ocupa su sitio
+ * (carpeta y favorito incluidos) y la anterior va a la papelera, por si tenías anotaciones.
+ */
+export async function receivePdf(bytes, name, from) {
+  const old = (await list()).filter((d) => d.from === from && d.name === name);
+  const keep = old[0];
+  const info = await addPdf(bytes, name, { from, folder: keep?.folder || '', favorite: keep?.favorite || false });
+  if (old.length) await softDelete(old.map((d) => d.id));
+  return { info, replaced: old.length > 0 };
+}
+
 /** Marca de la carpeta «Amigos» dentro del orden de carpetas (no puede coincidir con un nombre de carpeta). */
 export const FRIENDS = '@amigos';
 export const friendsName = () => localStorage.getItem('ev.friendsName') || 'Amigos';

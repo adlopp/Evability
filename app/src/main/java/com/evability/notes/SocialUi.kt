@@ -153,12 +153,14 @@ fun SocialHost() {
     }
 
     val haptic = LocalHapticFeedback.current
+    val appContext = LocalContext.current.applicationContext
     BoxWithConstraints(Modifier.fillMaxSize()) {
         Social.hearts.forEach { heart ->
             androidx.compose.runtime.key(heart.id) {
                 val t = remember { Animatable(0f) }
                 LaunchedEffect(Unit) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    HeartSound.play(appContext)
                     t.animateTo(1f, tween(3000, easing = LinearEasing))
                     Social.hearts.remove(heart)
                 }
@@ -177,6 +179,33 @@ fun SocialHost() {
                 )
             }
         }
+    }
+}
+
+/** La canción del logo («tiki, tiki, tiki») suena entera cada vez que te llega un corazón. */
+private object HeartSound {
+    private var player: android.media.MediaPlayer? = null
+
+    fun play(ctx: android.content.Context) {
+        runCatching {
+            player?.release()
+            player = android.media.MediaPlayer.create(ctx, R.raw.easter_egg)?.also { p ->
+                p.setOnCompletionListener { it.release(); if (player === it) player = null }
+                p.start()
+            }
+        }
+    }
+}
+
+/** «Desconectado hace 5 min»: el último latido de presencia marca cuándo se fue. */
+private fun offlineText(lastSeen: Long, now: Long): String {
+    if (lastSeen <= 0) return "Desconectado"
+    val min = ((now - lastSeen) / 60_000).coerceAtLeast(1)
+    return "Desconectado hace " + when {
+        min < 60 -> "$min min"
+        min < 24 * 60 -> "${min / 60} h"
+        min < 2 * 24 * 60 -> "1 día"
+        else -> "${min / (24 * 60)} días"
     }
 }
 
@@ -250,7 +279,7 @@ private fun loadForCrop(ctx: android.content.Context, uri: Uri): Bitmap {
     return ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }!!
 }
 
-/** Recorte cuadrado → miniatura de 192 px (para las listas, < 28.000 caracteres) y foto grande de hasta 512 px (< 140.000). */
+/** Recorte cuadrado → miniatura de 256 px (para las listas, < 28.000 caracteres) y foto grande de hasta 800 px (< 140.000). */
 private fun encodePhoto(square: Bitmap): Pair<String, String> {
     fun jpeg(size: Int, startQuality: Int, maxChars: Int): String {
         val small = Bitmap.createScaledBitmap(square, size, size, true)
@@ -263,7 +292,7 @@ private fun encodePhoto(square: Bitmap): Pair<String, String> {
             quality -= 8
         }
     }
-    return jpeg(192, 82, 28_000) to jpeg(minOf(512, square.width), 88, 140_000)
+    return jpeg(256, 82, 28_000) to jpeg(minOf(800, square.width), 88, 140_000)
 }
 
 /** Recortar la foto: se arrastra y se pellizca (o se usa el deslizador) para encuadrarla dentro del círculo. */
@@ -403,6 +432,8 @@ private fun LoginForm() {
                     busy = true
                     try {
                         if (creating) Social.signUp(email, user, pass) else Social.signIn(email, pass)
+                        ShareJob.schedule(ctx)
+                        if (Prefs.quickAlerts) FriendsWatch.start(ctx)
                     } catch (e: Exception) {
                         error = e.message ?: "No se pudo completar"
                     }
@@ -484,6 +515,13 @@ private fun FriendsPanel() {
         try { results = Social.search(query) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Sin conexión") }
     }
 
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
             try { cropSrc = withContext(Dispatchers.IO) { loadForCrop(ctx, uri) } } catch (e: Exception) { toast("No se pudo abrir la foto") }
@@ -533,10 +571,30 @@ private fun FriendsPanel() {
                 Text(me.username, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
                 Text("Toca la foto para cambiarla · mantenla pulsada para verla grande", fontSize = 12.sp, color = OnSurfaceDim)
             }
-            TextButton(onClick = { Social.signOut() }) { Text("Salir") }
+            TextButton(onClick = { Social.signOut(); ShareJob.cancel(ctx); FriendsWatch.stop(ctx) }) { Text("Salir") }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(10.dp))
+        var quick by remember { mutableStateOf(Prefs.quickAlerts) }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Avisarme al momento", fontSize = 15.sp, color = OnSurface, fontWeight = FontWeight.Medium)
+                Text(
+                    "Si un amigo te envía un documento, te llega una notificación aunque la app esté cerrada. Deja un aviso fijo en la barra y gasta algo más de batería.",
+                    fontSize = 12.sp, color = OnSurfaceDim,
+                )
+            }
+            androidx.compose.material3.Switch(
+                checked = quick,
+                onCheckedChange = {
+                    quick = it
+                    Prefs.quickAlerts = it
+                    if (it) FriendsWatch.start(ctx) else FriendsWatch.stop(ctx)
+                },
+                colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
         OutlinedTextField(
             query, { query = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("Buscar personas por nombre de usuario") },
@@ -583,7 +641,7 @@ private fun FriendsPanel() {
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(f.profile.username, fontSize = 17.sp, color = OnSurface, fontWeight = FontWeight.Medium)
-                        Text(if (online) "En línea" else "Desconectado", fontSize = 12.sp, color = if (online) Accent else OnSurfaceDim)
+                        Text(if (online) "En línea" else offlineText(f.lastSeen, now), fontSize = 12.sp, color = if (online) Accent else OnSurfaceDim)
                     }
                     if (wait > 0) {
                         val secs = (wait / 1000).toInt()
@@ -613,7 +671,7 @@ private fun PersonRow(p: Social.Profile, onHold: (Boolean) -> Unit, actions: @Co
     }
 }
 
-/** «Enviar a un amigo»: elige a quién mandar el PDF original del documento. */
+/** «Enviar a un amigo»: elige a quién mandar el documento (tal cual lo tienes). */
 @Composable
 fun SendDialog(doc: DocInfo, store: Store, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
@@ -623,7 +681,7 @@ fun SendDialog(doc: DocInfo, store: Store, onDismiss: () -> Unit) {
     var progress by remember { mutableStateOf<Float?>(null) }
     var preparing by remember { mutableStateOf(false) }
     val signedIn = Social.session != null
-    // Se envía el documento tal cual: con tus anotaciones y cambios si los tiene, o el PDF original si no.
+    // Se envía el documento tal cual: con tus anotaciones y cambios si los tiene, o el original si no.
     val anns = remember { store.loadAnns(doc.id) }
     val modified = remember { anns.isNotEmpty() || doc.extra > 0 || doc.hidden.isNotEmpty() }
 
@@ -637,7 +695,7 @@ fun SendDialog(doc: DocInfo, store: Store, onDismiss: () -> Unit) {
         text = {
             Column {
                 when {
-                    !signedIn -> Text("Entra primero en Amigos (el botón de las personas de la cabecera) para poder enviar PDF.", color = OnSurfaceDim)
+                    !signedIn -> Text("Entra primero en Amigos (el botón de las personas de la cabecera) para poder enviar documentos.", color = OnSurfaceDim)
                     friends == null && error.isEmpty() -> Text("Cargando amigos…", color = OnSurfaceDim)
                     friends.orEmpty().isEmpty() && error.isEmpty() -> Text("Todavía no tienes amigos a quienes enviárselo.", color = OnSurfaceDim)
                     else -> friends.orEmpty().forEach { f ->

@@ -38,7 +38,13 @@ export function createHome({ openDoc, onTheme }) {
   const S = { docs: [], folders: [], query: '', sort: 'RECENT', filter: { kind: 'all' }, selected: new Set() };
 
   // PDF que te envían los amigos: se guardan en la biblioteca (carpeta «Amigos») en cuanto llegan.
-  setReceiver(async (name, from, bytes) => { await store.addPdf(bytes, name, { from }); toast(`${from} te ha enviado «${name}». Está en la carpeta Amigos`, 5000); refresh(); });
+  setReceiver(async (name, from, bytes) => {
+    const { replaced } = await store.receivePdf(bytes, name, from);
+    const msg = replaced ? `${from} te ha enviado «${name}» otra vez. Se ha quedado la última copia (la anterior está en la papelera)` : `${from} te ha enviado «${name}». Está en la carpeta ${store.friendsName()}`;
+    toast(msg, 6000);
+    if (document.hidden && window.Notification?.permission === 'granted') new Notification(replaced ? `${from} te ha enviado una versión nueva` : `${from} te ha enviado un documento`, { body: `«${name}» está en la carpeta ${store.friendsName()}` });
+    refresh();
+  });
 
   async function refresh() {
     [S.docs, S.folders, S.order] = await Promise.all([store.list(), store.folders(), store.orderedFolders()]);

@@ -206,7 +206,7 @@ export async function poke(uid) {
 
 let lastShownPoke = -1;
 
-// ───────── PDF entre amigos ─────────
+// ───────── documentos entre amigos ─────────
 
 export const MAX_SHARE = 10 * 1024 * 1024, CHUNK = 600000;
 let receiver = null;
@@ -217,10 +217,10 @@ const boolV = (b) => ({ booleanValue: b });
 const toB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 const fromB64 = (b) => Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
 
-/** Envía un PDF a un amigo, troceado en partes de 600 KB (Firestore admite 1 MB por documento). */
+/** Envía un documento a un amigo, troceado en partes de 600 KB (Firestore admite 1 MB por documento). */
 export async function sendPdf(toUid, name, buffer, onProgress = () => {}) {
   const me = (await live()).uid, bytes = new Uint8Array(buffer);
-  if (bytes.length > MAX_SHARE) throw new Error('Este PDF pesa más de 10 MB y no se puede enviar');
+  if (bytes.length > MAX_SHARE) throw new Error('Este documento pesa más de 10 MB y no se puede enviar');
   const chunks = Math.max(1, Math.ceil(bytes.length / CHUNK)), id = uid();
   await commit(write(`shares/${id}`, { from: str(me), to: str(toUid), name: str(name.slice(0, 150)), size: intV(bytes.length), chunks: intV(chunks), ready: boolV(false) }, { serverTime: 'at' }));
   try {
@@ -236,22 +236,23 @@ export async function sendPdf(toUid, name, buffer, onProgress = () => {}) {
   }
 }
 
-/** Baja los PDF que te han enviado, los entrega a `receiver` y los borra de la nube. */
+/** Baja los documentos que te han enviado, los entrega a `receiver` y los borra de la nube. */
 async function checkShares() {
   if (!receiver) return;
   const me = (await live()).uid;
   const where = { compositeFilter: { op: 'AND', filters: [filter('to', 'EQUAL', str(me)), filter('ready', 'EQUAL', boolV(true))] } };
-  for (const d of await query('shares', where, 5)) {
+  // De más antiguo a más nuevo: si te lo mandan dos veces, la última copia es la que se queda.
+  for (const d of (await query('shares', where, 5)).sort((a, b) => time(a, 'at') - time(b, 'at'))) {
     const id = idOf(d.name);
     if (receiving.has(id)) continue;
     receiving.add(id);
     try {
-      const chunks = Number(d.fields?.chunks?.integerValue || 0), from = text(d, 'from'), name = text(d, 'name') || 'PDF recibido';
+      const chunks = Number(d.fields?.chunks?.integerValue || 0), from = text(d, 'from'), name = text(d, 'name') || 'Documento recibido';
       const parts = [];
       for (let i = 0; i < chunks; i += 3) {
         const ids = Array.from({ length: Math.min(3, chunks - i) }, (_, k) => String(i + k));
         const got = await getAll(`shares/${id}/parts`, ids);
-        for (const p of ids) { if (!got[p]) throw new Error('Faltan partes del PDF'); parts.push(fromB64(text(got[p], 'data'))); }
+        for (const p of ids) { if (!got[p]) throw new Error('Faltan partes del documento'); parts.push(fromB64(text(got[p], 'data'))); }
       }
       const bytes = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0;
       for (const p of parts) { bytes.set(p, at); at += p.length; }
@@ -264,10 +265,10 @@ async function checkShares() {
 
 /**
  * «Enviar a un amigo»: elige a quién mandar el documento tal cual lo tienes. `source` = { modified, build }:
- * si tiene cambios (anotaciones, páginas añadidas o eliminadas) `build()` devuelve el PDF con ellos; si no, el original.
+ * si tiene cambios (anotaciones, páginas añadidas o eliminadas) `build()` devuelve el documento con ellos; si no, el original.
  */
 export function openSend(doc, source) {
-  const body = h('div', { class: 'stack' }, h('p', { class: 'dim' }, session ? 'Cargando amigos…' : 'Entra primero en Amigos (el botón de las personas de la cabecera) para poder enviar PDF.'));
+  const body = h('div', { class: 'stack' }, h('p', { class: 'dim' }, session ? 'Cargando amigos…' : 'Entra primero en Amigos (el botón de las personas de la cabecera) para poder enviar documentos.'));
   const m = modal({ title: `Enviar «${doc.name}»`, content: body, actions: [{ label: 'Cerrar', primary: true }] });
   if (!session) return;
   const note = h('p', { class: 'dim small' }, source.modified ? 'Se enviará tal cual lo tienes, con tus anotaciones y cambios (máx. 10 MB).' : 'Se enviará el documento tal cual (máx. 10 MB).');
@@ -299,7 +300,18 @@ async function checkPokes() {
 }
 
 /** Un corazón en un sitio cualquiera de la pantalla que desaparece a los 3 segundos. */
+// La canción del logo («tiki, tiki, tiki») suena entera cuando llega un corazón. Los navegadores solo dejan sonar un audio
+// que se ha «desbloqueado» antes con un toque del usuario, así que se prepara con el primer toque en la app.
+const heartSong = new Audio('easter-egg.mp3');
+heartSong.preload = 'auto';
+document.addEventListener('pointerdown', () => {
+  heartSong.muted = true;
+  heartSong.play().then(() => { heartSong.pause(); heartSong.currentTime = 0; heartSong.muted = false; }).catch(() => { heartSong.muted = false; });
+}, { once: true });
+
 export function showHeart() {
+  heartSong.currentTime = 0;
+  heartSong.play().catch(() => {});
   const el = h('div', { class: 'float-heart', style: { left: 12 + Math.random() * 76 + '%', top: 15 + Math.random() * 60 + '%' } }, '❤');
   document.body.append(el);
   navigator.vibrate?.(60);
@@ -320,6 +332,16 @@ export function startHost() {
 }
 export function stopHost() { hostTimers.forEach(clearInterval); hostTimers = []; }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && session && hostTimers.length) { heartbeat().catch(() => {}); checkPokes().catch(() => {}); } });
+
+/** «En línea» o «Desconectado hace 5 min»: el último latido de presencia marca cuándo se fue. */
+function presence(lastSeen) {
+  if (lastSeen > 0 && Date.now() - lastSeen < ONLINE_MS) return { online: true, text: 'En línea' };
+  if (lastSeen <= 0) return { online: false, text: 'Desconectado' };
+  const min = Math.max(1, Math.floor((Date.now() - lastSeen) / 60000));
+  const ago = min < 60 ? `${min} min` : min < 1440 ? `${Math.floor(min / 60)} h` : min < 2880 ? '1 día' : `${Math.floor(min / 1440)} días`;
+  return { online: false, text: `Desconectado hace ${ago}` };
+}
+const paintPresence = (el, lastSeen) => { const p = presence(lastSeen); el.textContent = p.text; el.style.color = p.online ? 'var(--accent)' : 'var(--on-dim)'; };
 
 // ───────── pantalla ─────────
 
@@ -401,8 +423,8 @@ function openCrop(file) {
         do { out = c.toDataURL('image/jpeg', q).split(',')[1]; q -= 0.08; } while (out.length > max && q > 0.3);
         return out;
       };
-      // miniatura de 192 px para las listas (< 28.000 caracteres) y foto grande de hasta 512 px (< 140.000) para ampliar
-      return { thumb: jpeg(192, 0.82, 28000), full: jpeg(Math.max(192, Math.min(512, Math.round(side))), 0.88, 140000) };
+      // miniatura de 256 px para las listas (< 28.000 caracteres) y foto grande de hasta 800 px (< 140.000) para ampliar
+      return { thumb: jpeg(256, 0.82, 28000), full: jpeg(Math.max(256, Math.min(800, Math.round(side))), 0.88, 140000) };
     };
     let result = null;
     modal({
@@ -446,7 +468,11 @@ export function openSocial(onClose) {
     toggle.onclick = () => { creating = !creating; err.textContent = ''; paint(); };
     go.onclick = async () => {
       go.disabled = true; err.textContent = '';
-      try { await (creating ? signUp(email.value, user.value, pass.value) : signIn(email.value, pass.value)); startHost(); showPanel(); }
+      try {
+        await (creating ? signUp(email.value, user.value, pass.value) : signIn(email.value, pass.value));
+        startHost(); showPanel();
+        if (window.Notification?.permission === 'default') Notification.requestPermission(); // para avisar de los documentos que te lleguen
+      }
       catch (e) { err.textContent = e.message; go.disabled = false; }
     };
     paint();
@@ -503,7 +529,7 @@ export function openSocial(onClose) {
         const wait = f.lastPokeAt + COOLDOWN_MS + 2000 - Date.now();
         const mm = Math.max(0, Math.ceil(wait / 1000));
         return h('div', { class: 'person', 'data-uid': f.profile.uid }, avatar(f.profile.username, f.profile.photo, 46, online, f.profile.uid),
-          h('div', { class: 'grow' }, h('div', {}, f.profile.username), h('div', { class: 'small', style: { color: online ? 'var(--accent)' : 'var(--on-dim)' } }, online ? 'En línea' : 'Desconectado')),
+          h('div', { class: 'grow' }, h('div', {}, f.profile.username), h('div', { class: 'small seen', 'data-ts': f.lastSeen, style: { color: online ? 'var(--accent)' : 'var(--on-dim)' } }, presence(f.lastSeen).text)),
           h('span', { class: 'dim small cd', 'data-until': f.lastPokeAt + COOLDOWN_MS + 2000 }, wait > 0 ? `${Math.floor(mm / 60)}:${String(mm % 60).padStart(2, '0')}` : ''),
           h('button', { class: 'icon-btn heart', disabled: wait > 0, 'aria-label': 'Mandar un corazón', onclick: act(async () => { await poke(f.profile.uid); toast('❤ enviado a ' + f.profile.username); }) }, icon('heart')),
           h('button', { class: 'icon-btn', 'aria-label': 'Eliminar amigo', onclick: async () => { if (await confirmDialog('Eliminar amigo', `¿Dejar de ser amigo de ${f.profile.username}? Dejaréis de veros en línea y de mandaros corazones.`, 'Eliminar')) act(() => removeFriend(f.profile.uid))(); } }, icon('userMinus')));
@@ -519,6 +545,7 @@ export function openSocial(onClose) {
     paintLists(); refresh();
     timers.push(setInterval(refresh, 15000));
     // cuenta atrás de los corazones
+    timers.push(setInterval(() => root.querySelectorAll('.seen').forEach((el) => paintPresence(el, Number(el.dataset.ts))), 5000));
     timers.push(setInterval(() => root.querySelectorAll('.cd').forEach((el) => {
       const left = Math.ceil((Number(el.dataset.until) - Date.now()) / 1000);
       el.textContent = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : '';

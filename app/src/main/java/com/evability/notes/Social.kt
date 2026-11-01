@@ -357,23 +357,23 @@ object Social {
         repeat(fresh.coerceAtMost(3)) { showHeart() }
     }
 
-    // ───────── PDF entre amigos ─────────
+    // ───────── documentos entre amigos ─────────
 
     const val MAX_SHARE = 10 * 1024 * 1024
     private const val CHUNK = 600_000
 
-    /** Lo que hace la app con un PDF recibido: lo guarda en la biblioteca. Lo pone `MainActivity`. */
-    var receiver: (suspend (name: String, from: String, bytes: ByteArray) -> Unit)? = null
+    /** Lo que hace la app con un documento recibido: lo guarda en la biblioteca. Lo pone `MainActivity`. */
+    var receiver: (suspend (name: String, from: String, bytes: ByteArray) -> Boolean)? = null
     private val receiving = HashSet<String>()
 
     private fun int(v: Long) = JSONObject().put("integerValue", v.toString())
     private fun JSONObject.int(key: String) = optJSONObject("fields")?.optJSONObject(key)?.optString("integerValue")?.toIntOrNull() ?: 0
 
-    /** Envía un PDF a un amigo, troceado en partes de 600 KB (Firestore admite 1 MB por documento). */
+    /** Envía un documento a un amigo, troceado en partes de 600 KB (Firestore admite 1 MB por documento). */
     suspend fun sendPdf(toUid: String, name: String, file: File, onProgress: (Float) -> Unit) = withContext(Dispatchers.IO) {
         val me = live().uid
         val size = file.length()
-        if (size > MAX_SHARE) throw SocialError("Este PDF pesa más de 10 MB y no se puede enviar")
+        if (size > MAX_SHARE) throw SocialError("Este documento pesa más de 10 MB y no se puede enviar")
         val chunks = ((size + CHUNK - 1) / CHUNK).toInt().coerceAtLeast(1)
         val id = UUID.randomUUID().toString()
         commit(
@@ -404,21 +404,24 @@ object Social {
         }
     }
 
-    /** Baja los PDF que te han enviado, los entrega a [receiver] y los borra de la nube. */
-    suspend fun checkShares() = withContext(Dispatchers.IO) {
-        val recv = receiver ?: return@withContext
+    /** Baja los documentos que te han enviado, los entrega a [receiver] y los borra de la nube. */
+    suspend fun checkShares(
+        recv: (suspend (name: String, from: String, bytes: ByteArray) -> Boolean)? = receiver,
+    ) = withContext(Dispatchers.IO) {
+        recv ?: return@withContext
         val me = live().uid
         val where = JSONObject().put(
             "compositeFilter",
             JSONObject().put("op", "AND").put("filters", JSONArray().put(filter("to", "EQUAL", str(me))).put(filter("ready", "EQUAL", JSONObject().put("booleanValue", true)))),
         )
-        for (d in query("shares", where, 5)) {
+        // De más antiguo a más nuevo: si te lo mandan dos veces, la última copia es la que se queda.
+        for (d in query("shares", where, 5).sortedBy { it.time("at") }) {
             val id = idOf(d.getString("name"))
             if (!receiving.add(id)) continue
             try {
                 val chunks = d.int("chunks")
                 val from = d.text("from")
-                val name = d.text("name").ifBlank { "PDF recibido" }
+                val name = d.text("name").ifBlank { "Documento recibido" }
                 val bytes = ByteArrayOutputStream()
                 var i = 0
                 while (i < chunks) {
@@ -427,7 +430,7 @@ object Social {
                     val parts = HashMap<String, JSONObject>()
                     val arr = JSONArray(got)
                     for (k in 0 until arr.length()) arr.getJSONObject(k).optJSONObject("found")?.let { parts[idOf(it.getString("name"))] = it }
-                    for (p in ids) bytes.write(Base64.decode(parts[p]?.text("data") ?: throw SocialError("Faltan partes del PDF"), Base64.DEFAULT))
+                    for (p in ids) bytes.write(Base64.decode(parts[p]?.text("data") ?: throw SocialError("Faltan partes del documento"), Base64.DEFAULT))
                     i += ids.size
                 }
                 val sender = getAll("users", listOf(from))[from]?.text("username") ?: "un amigo"

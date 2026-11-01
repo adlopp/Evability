@@ -274,10 +274,15 @@ class Store(context: Context) {
     }
 
     /** Guarda un PDF recibido de un amigo (aparece en la carpeta «Amigos»). Lanza excepción si no es un PDF válido. */
-    fun receive(name: String, from: String, bytes: ByteArray): DocInfo {
+    fun receive(name: String, from: String, bytes: ByteArray): Pair<DocInfo, Boolean> {
+        // Si ese amigo ya te había enviado un documento con el mismo nombre, la copia nueva ocupa su sitio
+        // (carpeta y favorito incluidos) y la anterior va a la papelera, por si tenías anotaciones.
+        val old = loadIndex().filter { it.from == from && it.name == name }
         val info = createGenerated(name) { it.writeBytes(bytes) }
-        update(info.id) { it.copy(from = from) }
-        return info.copy(from = from)
+        val keep = old.firstOrNull()
+        update(info.id) { it.copy(from = from, folder = keep?.folder ?: "", favorite = keep?.favorite ?: false) }
+        if (old.isNotEmpty()) softDelete(old.map { it.id })
+        return info.copy(from = from) to old.isNotEmpty()
     }
 
     @Synchronized
