@@ -65,7 +65,7 @@
    "i": "tax"
   },
   {
-   "n": "Estación 1",
+   "n": "Estación Dr. Javi",
    "t": "station",
    "p": 200,
    "r": [
@@ -177,7 +177,7 @@
    ]
   },
   {
-   "n": "Estación 2",
+   "n": "Estación Zafirosis",
    "t": "station",
    "p": 200,
    "r": [
@@ -288,7 +288,7 @@
    ]
   },
   {
-   "n": "Estación 3",
+   "n": "Estación Sergio Borracho",
    "t": "station",
    "p": 200,
    "r": [
@@ -400,7 +400,7 @@
    ]
   },
   {
-   "n": "Estación 4",
+   "n": "Estación Cátedra",
    "t": "station",
    "p": 200,
    "r": [

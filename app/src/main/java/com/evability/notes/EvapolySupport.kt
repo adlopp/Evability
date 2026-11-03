@@ -77,6 +77,26 @@ object PolyData {
 /** Sonidos del Evapoly sintetizados (mismo diseño que en la web): dados, pasos, monedas, compra, cárcel, cartas, turno y victoria. */
 object PolySound {
     private const val RATE = 22050
+    private var app: Context? = null
+
+    fun init(ctx: Context) { app = ctx.applicationContext }
+
+    /** Reproduce un sonido grabado (assets) una vez. */
+    private fun clip(file: String, vol: Float) {
+        val c = app ?: return
+        runCatching {
+            val fd = c.assets.openFd(file)
+            val mp = MediaPlayer()
+            mp.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+            fd.close()
+            mp.setVolume(vol, vol)
+            mp.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            mp.setOnCompletionListener { it.release() }
+            mp.setOnErrorListener { m, _, _ -> runCatching { m.release() }; true }
+            mp.setOnPreparedListener { it.start() }
+            mp.prepareAsync()
+        }
+    }
 
     private fun tone(buf: FloatArray, start: Double, f1: Double, f2: Double, dur: Double, amp: Double, square: Boolean = false) {
         val s0 = (start * RATE).toInt()
@@ -94,7 +114,7 @@ object PolySound {
     }
 
     private fun synth(kind: String): FloatArray = when (kind) {
-        "dice" -> FloatArray((0.75 * RATE).toInt()).also { b -> val r = Random(3); for (i in 0 until 9) { val f = 180.0 + r.nextDouble() * 260; tone(b, i * 0.075, f, f, 0.05, 0.28, true) } }
+        "chest" -> FloatArray((1.6 * RATE).toInt()).also { tone(it, 0.0, 180.0, 180.0, 0.1, 0.3, true); tone(it, 0.45, 520.0, 900.0, 0.5, 0.3); tone(it, 1.1, 784.0, 784.0, 0.35, 0.35) }
         "step" -> FloatArray((0.06 * RATE).toInt()).also { tone(it, 0.0, 520.0, 520.0, 0.04, 0.2) }
         "coin" -> FloatArray((0.35 * RATE).toInt()).also { tone(it, 0.0, 988.0, 988.0, 0.09, 0.45); tone(it, 0.09, 1319.0, 1319.0, 0.22, 0.45) }
         "pay" -> FloatArray((0.3 * RATE).toInt()).also { tone(it, 0.0, 440.0, 440.0, 0.1, 0.45); tone(it, 0.1, 330.0, 330.0, 0.18, 0.45) }
@@ -107,6 +127,8 @@ object PolySound {
     }
 
     fun play(kind: String) {
+        if (kind == "dice") { clip("evapoly-dados.mp3", 0.9f); return }
+        if (kind == "siren") { clip("evapoly-policia.mp3", 0.8f); return }
         runCatching {
             val data = synth(kind).map { (it.coerceIn(-1f, 1f) * 32000).toInt().toShort() }.toShortArray()
             val track = AudioTrack.Builder()

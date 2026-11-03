@@ -16,6 +16,7 @@ const loadIcons = () => (iconsP ||= fetch('data/evapoly-icons.json').then((r) =>
 export async function polyIcon(name) { const i = await loadIcons(); return h('span', { class: 'pico', html: svgOf({ p: i[name] }) }); }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const svgInner = (parts) => parts.map((p) => `<path d="${p.d}" fill="${p.f || 'none'}" stroke="${p.s || 'none'}" stroke-width="${p.w}" stroke-linecap="round" stroke-linejoin="round" opacity="${p.o}"/>`).join('');
 const svgOf = (t) => `<svg viewBox="0 0 100 100" aria-hidden="true">${t.p.map((p) => `<path d="${p.d}" fill="${p.f || 'none'}" stroke="${p.s || 'none'}" stroke-width="${p.w}" stroke-linecap="round" stroke-linejoin="round" opacity="${p.o}"/>`).join('')}</svg>`;
 
 // ───── sonidos (sintetizados) y música de fondo (más baja que los sonidos) ─────
@@ -29,14 +30,20 @@ function tone(f, at, dur, { type = 'sine', vol = 0.22, to = f } = {}) {
   g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   o.connect(g).connect(c.destination); o.start(t0); o.stop(t0 + dur + 0.02);
 }
+const clips = {};
+/** Sonidos grabados (los dados y la sirena): se reproducen desde el principio cada vez. */
+function playClip(file, vol) {
+  try { const a = (clips[file] ||= new Audio(file)); a.volume = vol; a.currentTime = 0; a.play().catch(() => {}); } catch { /* sin audio */ }
+}
 const SFX = {
-  dice() { for (let i = 0; i < 9; i++) tone(180 + Math.random() * 260, i * 0.075, 0.05, { type: 'square', vol: 0.12 }); },
+  dice() { playClip('music/evapoly-dados.mp3', 0.9); },
+  siren() { playClip('music/evapoly-policia.mp3', 0.8); },
   step() { tone(520, 0, 0.04, { type: 'triangle', vol: 0.1 }); },
   coin() { tone(988, 0, 0.09, { type: 'triangle' }); tone(1319, 0.09, 0.22, { type: 'triangle' }); },
   pay() { tone(440, 0, 0.1, { type: 'triangle' }); tone(330, 0.1, 0.18, { type: 'triangle' }); },
   buy() { tone(523, 0, 0.12, { type: 'triangle' }); tone(659, 0.1, 0.12, { type: 'triangle' }); tone(784, 0.2, 0.3, { type: 'triangle' }); },
   build() { tone(200, 0, 0.07, { type: 'square', vol: 0.15 }); tone(300, 0.09, 0.07, { type: 'square', vol: 0.15 }); },
-  jail() { tone(160, 0, 0.5, { type: 'sawtooth', vol: 0.18, to: 70 }); },
+  chest() { tone(180, 0, 0.1, { type: 'square', vol: 0.12 }); tone(520, 0.45, 0.5, { vol: 0.12, to: 900 }); tone(784, 1.1, 0.35, { type: 'triangle', vol: 0.15 }); },
   card() { tone(700, 0, 0.08); tone(1050, 0.08, 0.14); },
   turn() { tone(660, 0, 0.12); tone(880, 0.12, 0.22); },
   win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.14, 0.3, { type: 'triangle' })); },
@@ -52,7 +59,7 @@ const stopMusic = () => { music?.pause(); };
 
 // ───── tablero ─────
 
-const K = 12.5, E = (100 - 2 * K) / 9;
+const K = 12, E = (100 - 2 * K) / 9;
 function cellOf(i) {
   let row, col;
   if (i <= 10) { row = 10; col = 10 - i; } else if (i <= 20) { row = 10 - (i - 10); col = 0; } else if (i <= 30) { row = 0; col = i - 20; } else { row = i - 30; col = 10; }
@@ -63,7 +70,12 @@ const sideOf = (i) => (i % 10 === 0 ? 'corner' : i < 10 ? 'bot' : i < 20 ? 'left
 const centerOf = (i) => { const c = cellOf(i); return { x: c.l + c.w / 2, y: c.t + c.h / 2 }; };
 
 const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
-const dieEl = (n) => h('div', { class: 'die' }, Array.from({ length: 9 }, (_, i) => h('i', { class: PIPS[n].includes(i) ? 'on' : '' })));
+/** Un dado que se redibuja cambiando solo los puntos (así la animación de giro no se reinicia). */
+function makeDie() {
+  const dots = Array.from({ length: 9 }, () => h('i', {}));
+  const el = h('div', { class: 'die' }, dots);
+  return { el, set: (n) => dots.forEach((d, i) => d.classList.toggle('on', PIPS[n].includes(i))) };
+}
 
 const mine = (s, me) => { const a = []; for (let i = 0; i < 40; i++) if (s.own[i] === me) a.push(i); return a; };
 
@@ -85,9 +97,21 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (on) startMusic(); else stopMusic();
     musicBtn.replaceChildren(icon(on ? 'volume' : 'mute'));
   } }, icon(musicOn() ? 'volume' : 'mute'));
+  const fsBtn = h('button', { class: 'icon-btn', 'aria-label': 'Pantalla completa', title: 'Pantalla completa', onclick: () => setFull(!root.classList.contains('full')) }, icon('expand'));
   const root = h('div', { class: 'pomo poly' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Evapoly'), musicBtn),
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Evapoly'), fsBtn, musicBtn),
+    h('button', { class: 'icon-btn pfull-exit', 'aria-label': 'Salir de pantalla completa', onclick: () => setFull(false) }, icon('shrink')),
     body);
+  /** Pantalla completa: se quita la cabecera, el tablero ocupa casi todo en el centro y a un lado queda la información del turno en pequeño. */
+  function setFull(on) {
+    root.classList.toggle('full', on);
+    fsBtn.replaceChildren(icon(on ? 'shrink' : 'expand'));
+    if (on) root.requestFullscreen?.().catch(() => {});
+    else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  }
+  const onFs = () => { if (!document.fullscreenElement && root.classList.contains('full') && root.dataset.nativeFs) { root.classList.remove('full'); fsBtn.replaceChildren(icon('expand')); } };
+  document.addEventListener('fullscreenchange', onFs);
+  root.addEventListener('fullscreenchange', () => { if (document.fullscreenElement === root) root.dataset.nativeFs = '1'; });
 
   const nameOf = (uid) => names[uid] || '?';
   const seatOf = (uid) => (room ? room.players.indexOf(uid) : -1);
@@ -128,7 +152,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── sala de espera ─────
   let lobbySig = '';
-  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.status]);
+  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.status]);
   function renderLobby() {
     lobbySig = sigOf();
     const isHost = room.host === me, inRoom = room.players.includes(me), invitedOnly = !inRoom && room.invited.includes(me);
@@ -151,11 +175,11 @@ export function openEvapoly({ roomId, api, onClose }) {
     const moneyOut = h('b', {}, eur(room.money));
     const slider = h('input', { type: 'range', min: MONEY_MIN, max: MONEY_MAX, step: MONEY_STEP, value: room.money, disabled: !isHost,
       oninput: () => { moneyOut.textContent = eur(Number(slider.value)); },
-      onchange: async () => { try { await api.setCfg(room, { money: Number(slider.value), goBonus: room.goBonus, auction: room.auction }); room.money = Number(slider.value); lobbySig = sigOf(); } catch (e) { toast(e.message); } } });
+      onchange: async () => { try { await api.setCfg(room, { ...cfgOf(), money: Number(slider.value) }); room.money = Number(slider.value); lobbySig = sigOf(); } catch (e) { toast(e.message); } } });
     const toggle = (label, key) => h('label', { class: 'ptoggle' }, h('span', {}, label),
       h('input', { type: 'checkbox', checked: room[key], disabled: !isHost, onchange: async (e) => {
         const v = e.target.checked;
-        try { await api.setCfg(room, { money: room.money, goBonus: key === 'goBonus' ? v : room.goBonus, auction: key === 'auction' ? v : room.auction }); room[key] = v; lobbySig = sigOf(); }
+        try { await api.setCfg(room, { ...cfgOf(), [key]: v }); room[key] = v; lobbySig = sigOf(); }
         catch (err) { e.target.checked = !v; toast(err.message); }
       } }), h('i', {}));
 
@@ -172,7 +196,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(body, h('div', { class: 'poly-lobby' }, seats, tokRow,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Dinero inicial'), moneyOut), slider,
-        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction')),
+        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus')),
       h('div', { class: 'pbtns' }, buttons)));
   }
   const firstFreeTok = () => { const used = new Set(Object.values(room.tok)); return toks.findIndex((_, i) => !used.has(i)); };
@@ -189,13 +213,13 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── partida ─────
-  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction });
+  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus });
   function startState() {
     state = initGame(data, room.players.length, cfgOf(), room.seed);
     acts = [];
     for (const a of room.acts) { applyText(state, a); acts.push(a); }
     view = { pos: state.pos.slice() };
-    log = []; q.length = 0; dice = null; seen = state.turn;
+    log = []; q.length = 0; dice = null; seen = state.turn; pathSet = new Set(); slowSeat = -1; lastCash = null; deltas.length = 0;
     buildBoard();
   }
   function rebuild() {
@@ -244,57 +268,110 @@ export function openEvapoly({ roomId, api, onClose }) {
     while (q.length && !closed) {
       const e = q.shift();
       if (e.k === 'dice') {
+        pathSet = new Set(); paintPath();
         SFX.dice();
-        dice = { d1: e.d1, d2: e.d2, rolling: true }; paintCenter();
-        await wait(900);
+        // los dados giran cambiando de cara y se van frenando hasta quedarse en el resultado
+        const t0 = Date.now();
+        while (Date.now() - t0 < 1400 && !closed) {
+          dice = { d1: 1 + Math.floor(Math.random() * 6), d2: 1 + Math.floor(Math.random() * 6), rolling: true }; paintCenter();
+          await wait(60 + (Date.now() - t0) / 9);
+        }
         dice = { d1: e.d1, d2: e.d2, rolling: false }; paintCenter();
-      } else if (e.k === 'move' || e.k === 'jail') {
+        await wait(350);
+      } else if (e.k === 'move') {
         const from = view.pos[e.seat], to = e.to, dir = e.dir ?? 1;
-        let p = from; const steps = e.k === 'jail' ? 0 : ((to - from) * dir + 40) % 40;
-        if (e.k === 'jail') { SFX.jail(); view.pos[e.seat] = to; paintTokens(); await wait(450); }
-        else for (let i = 0; i < steps; i++) { p = (p + dir + 40) % 40; view.pos[e.seat] = p; SFX.step(); paintTokens(); await wait(e.seat === mySeat() || steps < 8 ? 150 : 110); }
+        const steps = ((to - from) * dir + 40) % 40;
+        pathSet = new Set(Array.from({ length: steps + 1 }, (_, i) => (from + dir * i + 80) % 40)); paintPath();
+        let p = from;
+        for (let i = 0; i < steps; i++) { p = (p + dir + 40) % 40; view.pos[e.seat] = p; SFX.step(); paintTokens(); await wait(e.seat === mySeat() || steps < 8 ? 160 : 120); }
+      } else if (e.k === 'jail') {
+        // sirena, luces de policía y la ficha cruza el tablero en diagonal hasta la cárcel
+        SFX.siren(); boardEl.classList.add('police'); slowSeat = e.seat; paintTokens();
+        await wait(60); view.pos[e.seat] = e.to; paintTokens();
+        await wait(3000);
+        slowSeat = -1; boardEl.classList.remove('police'); paintTokens();
       } else if (e.k === 'pay' || e.k === 'debt') SFX.pay();
       else if (e.k === 'go' || e.k === 'gain') SFX.coin();
       else if (e.k === 'buy') SFX.buy();
       else if (e.k === 'build') SFX.build();
-      else if (e.k === 'card') { SFX.card(); }
       else if (e.k === 'win') SFX.win();
-      if (e.m) { log.push(say(e.m)); if (log.length > 40) log.shift(); paintLog(); }
+      if (e.m && e.k !== 'card') { log.push(say(e.m)); if (log.length > 40) log.shift(); paintLog(); }
       if (e.k === 'buy' || e.k === 'build' || e.k === 'mort') paintBoard();
-      if (e.k === 'card') { dice = dice && { ...dice }; await showCard(e); }
+      if (e.k === 'card') { log.push(say(e.m)); paintLog(); await showCard(e); }
     }
     running = false;
     view.pos = state.pos.slice();
-    if (state.turn !== seen) { seen = state.turn; if (state.turn === mySeat() && state.phase !== 'over') SFX.turn(); }
+    if (state.turn !== seen) { seen = state.turn; if (state.turn === mySeat() && state.phase !== 'over' && state.phase !== 'order') { SFX.turn(); banner('Te toca', mySeat()); } }
     renderGame();
   }
 
+  /** Cartel que aparece un momento sobre el tablero (por ejemplo «Te toca»). */
+  function banner(text, seat) {
+    if (!boardEl) return;
+    const b = h('div', { class: 'pbanner', style: `--c:${COLORS[seat]}` }, text);
+    boardEl.append(b); setTimeout(() => b.remove(), 1800);
+  }
+
+  /** Suerte, Caja y La Peza: una animación a pantalla del tablero (la ven todos) con la carta en el centro. */
   function showCard(e) {
     return new Promise((resolve) => {
-      const m = modal({
-        title: e.deck === 'c' ? 'Suerte' : e.deck === 'h' ? 'Caja de comunidad' : 'La Peza',
-        content: h('div', { class: 'pcard-text' }, h('b', {}, seatName(e.seat)), h('p', {}, e.text)),
-        actions: [{ label: 'Vale', primary: true }], onClose: resolve,
-      });
-      setTimeout(() => { m.close(); }, 4200);
+      const kind = e.deck === 'h' ? 'chest' : e.deck === 'c' ? 'chance' : 'peza';
+      const title = kind === 'chest' ? 'Caja de comunidad' : kind === 'chance' ? 'Suerte' : 'La Peza';
+      const cp = icons.chest;
+      const art = kind === 'chest'
+        ? h('div', { class: 'pfx-art', html: `<svg viewBox="0 0 100 100" aria-hidden="true"><g>${svgInner([cp[0], cp[2], cp[3], cp[4]])}</g><g class="lid">${svgInner([cp[1], cp[5]])}</g></svg>` })
+        : h('div', { class: 'pfx-art', html: svgOf({ p: icons[kind === 'chance' ? 'chance' : 'tax'] }) });
+      const fx = h('div', { class: 'pfx ' + kind }, art,
+        h('div', { class: 'pfx-card' }, h('b', { class: 'pfx-title' }, title), h('span', { class: 'pfx-who' }, seatName(e.seat)), h('p', {}, e.text)));
+      boardEl.append(fx);
+      if (kind === 'chest') SFX.chest(); else SFX.card();
+      let done = false;
+      const end = () => { if (done) return; done = true; fx.classList.add('out'); setTimeout(() => { fx.remove(); resolve(); }, 320); };
+      fx.addEventListener('click', end);
+      setTimeout(end, 5600);
     });
   }
 
   // ───── dibujo ─────
-  let boardEl = null, tokensEl = null, centerEl = null, sideEl = null, logEl = null, actEl = null;
+  let boardEl = null, gridEl = null, tokensEl = null, centerEl = null, sideEl = null, logEl = null, actEl = null, diceBox = null, potEl = null;
+  const dieA = makeDie(), dieB = makeDie();
+  let pathSet = new Set(), slowSeat = -1, lastCash = null;
+  const deltas = [];
+
+  /** Tamaño de letra (en em) con el que el nombre cabe entero en `w` × `hgt` em, partiendo en líneas. */
+  function fitName(text, w, hgt) {
+    const words = text.split(' '), lw = Math.max(...words.map((x) => x.length));
+    for (let fs = 1.12; fs >= 0.4; fs -= 0.03) {
+      const per = Math.max(1, Math.floor(w / (fs * 0.58)));
+      if (lw > per) continue;
+      let lines = 1, cur = 0;
+      for (const wd of words) { const add = cur ? cur + 1 + wd.length : wd.length; if (add <= per) cur = add; else { lines++; cur = wd.length; } }
+      if (lines * fs * 1.1 <= hgt) return fs;
+    }
+    return 0.4;
+  }
+  const GS = 0.97; // la cuadrícula ocupa el 97 % del tablero: queda un marco para que el color del dueño no toque el borde
+  const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return ((n >> 16) * 0.3 + ((n >> 8) & 255) * 0.59 + (n & 255) * 0.11) / 255; };
+
   function buildBoard() {
     boardEl = h('div', { class: 'pboard' });
+    gridEl = h('div', { class: 'pgrid' });
     for (let i = 0; i < 40; i++) {
       const c = cellOf(i), q2 = data.squares[i], side = sideOf(i);
-      const g = q2.g ? data.groups[q2.g] : null;
-      const special = q2.t === 'chance' || q2.t === 'chest';
-      const el = h('div', { class: `psq t-${q2.t} s-${side}` + (g ? '' : ' noband'), 'data-i': i, style: { left: c.l + '%', top: c.t + '%', width: c.w + '%', height: c.h + '%' } },
-        g ? h('i', { class: 'band', style: { background: g } }) : null,
-        q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
-        special ? null : h('span', { class: 'nm', style: { fontSize: ((side === 'bot' || side === 'top') ? 0.92 : 1.05) * Math.min(q2.n.length <= 14 ? 1 : q2.n.length <= 20 ? 0.85 : q2.n.length <= 26 ? 0.72 : 0.62, Math.max(...q2.n.split(' ').map((w) => w.length)) >= 12 ? 0.62 : Math.max(...q2.n.split(' ').map((w) => w.length)) >= 10 ? 0.75 : 1) + 'em' } }, q2.n),
-        special ? h('small', {}, q2.n) : null,
-        q2.p ? h('small', { class: 'pr' }, eur(q2.p)) : null,
-        h('b', { class: 'own' }), h('span', { class: 'bld' }));
+      const g = q2.g ? data.groups[q2.g] : null, special = q2.t === 'chance' || q2.t === 'chest';
+      // dentro de la casilla todo se dibuja como en las de abajo; las de los lados se giran (como en el tablero de verdad)
+      const cw = c.w * GS * 0.62, ch = c.h * GS * 0.62, sideways = side === 'left' || side === 'right';
+      const W = sideways ? ch : cw, H = sideways ? cw : ch;
+      const body = H - (g ? 2.9 : 0) - (side === 'corner' ? 0 : 1.5) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g ? 1.1 : 0) - 0.3;
+      const fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
+      const pin = h('div', { class: 'pin', style: sideways ? { width: W + 'em', height: H + 'em' } : {} },
+        g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'bld' }), h('span', { class: 'pr' }, eur(q2.p))) : null,
+        h('div', { class: 'pbody' },
+          q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
+          h('span', { class: 'nm', style: { fontSize: fs + 'em' } }, q2.n),
+          q2.p && !g ? h('span', { class: 'pr2' }, eur(q2.p)) : null),
+        side === 'corner' ? null : h('div', { class: 'pown' }));
+      const el = h('div', { class: `psq t-${q2.t} s-${side}`, 'data-i': i, style: { left: c.l + '%', top: c.t + '%', width: c.w + '%', height: c.h + '%' } }, pin);
       // mantener pulsado: la casilla se agranda mientras se sigue pulsando; un toque corto abre su ficha
       let timer, held = false, zoom = null;
       el.addEventListener('pointerdown', () => {
@@ -305,18 +382,22 @@ export function openEvapoly({ roomId, api, onClose }) {
       ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => el.addEventListener(ev, end));
       el.addEventListener('contextmenu', (e) => e.preventDefault());
       el.addEventListener('click', () => { if (held) { held = false; return; } openSquare(i); });
-      boardEl.append(el);
+      gridEl.append(el);
     }
     tokensEl = h('div', { class: 'ptokens' });
-    centerEl = h('div', { class: 'pcenter' });
-    boardEl.append(centerEl, tokensEl);
+    potEl = h('div', { class: 'ppot' });
+    diceBox = h('div', { class: 'pdice', style: { visibility: 'hidden' } }, dieA.el, dieB.el);
+    const deck = (cls, ico, label) => h('div', { class: 'pdeck ' + cls }, h('span', { class: 'dk-ico', html: svgOf({ p: icons[ico] }) }), label);
+    centerEl = h('div', { class: 'pcenter' }, deck('c', 'chance', 'Suerte'), deck('h', 'chest', 'Caja'), h('div', { class: 'ptitle' }, 'EVAPOLY'), potEl, diceBox);
+    gridEl.append(centerEl, tokensEl);
+    boardEl.append(gridEl);
     const sideBox = h('div', { class: 'pside' });
     sideEl = h('div', { class: 'pplayers' });
     actEl = h('div', { class: 'pact' });
     logEl = h('div', { class: 'plog' });
     sideBox.append(sideEl, actEl, logEl);
     fill(body, h('div', { class: 'poly-main' }, boardEl, sideBox));
-    paintBoard(); paintTokens(); paintCenter(); paintLog();
+    paintBoard(); paintTokens(); paintCenter(); paintLog(); paintPath();
   }
 
   /** Copia ampliada de una casilla (con su dueño y edificios) en el centro de la pantalla. */
@@ -324,34 +405,36 @@ export function openEvapoly({ roomId, api, onClose }) {
     const F = Math.min(30, Math.max(18, window.innerWidth / 13)), z = el.cloneNode(true);
     z.classList.add('pzoom');
     z.removeAttribute('data-i');
-    Object.assign(z.style, { position: 'fixed', left: '50%', top: '42%', transform: 'translate(-50%, -50%)', width: (c.w / 100 * 62 * F) + 'px', height: (c.h / 100 * 62 * F) + 'px', fontSize: F + 'px' });
+    Object.assign(z.style, { position: 'fixed', left: '50%', top: '42%', transform: 'translate(-50%, -50%)', width: (c.w * GS * 0.62 * F) + 'px', height: (c.h * GS * 0.62 * F) + 'px', fontSize: F + 'px' });
     return z;
   }
 
   function paintBoard() {
-    if (!boardEl) return;
+    if (!gridEl) return;
     for (let i = 0; i < 40; i++) {
-      const el = boardEl.children[i], o = state.own[i];
+      const el = gridEl.children[i], o = state.own[i];
       el.classList.toggle('owned', o >= 0); el.classList.toggle('mort', !!state.mort[i]);
-      const ow = el.querySelector('.own');
-      ow.style.background = o >= 0 ? COLORS[o] : 'transparent'; ow.style.display = o >= 0 ? '' : 'none';
-      const lvl = state.lvl[i], bld = el.querySelector('.bld');
-      bld.replaceChildren(...(lvl === 5 ? [h('u', { class: 'hotel' })] : Array.from({ length: lvl }, () => h('u', { class: 'house' }))));
+      const ow = el.querySelector('.pown');
+      if (ow) { ow.style.background = o >= 0 ? COLORS[o] : 'transparent'; ow.style.visibility = o >= 0 ? 'visible' : 'hidden'; }
+      const bld = el.querySelector('.bld');
+      if (bld) { const lvl = state.lvl[i]; bld.replaceChildren(...(lvl === 5 ? [h('u', { class: 'hotel' })] : Array.from({ length: lvl }, () => h('u', { class: 'house' })))); }
     }
   }
+  /** Casillas que se iluminan en amarillo: todas las del recorrido de la última tirada. */
+  function paintPath() { if (gridEl) for (let i = 0; i < 40; i++) gridEl.children[i].classList.toggle('hl', pathSet.has(i)); }
   function paintTokens() {
     if (!tokensEl) return;
     tokensEl.replaceChildren(...state.pos.map((_, s) => {
       if (state.bk[s]) return null;
       const c = centerOf(view.pos[s]), dx = (s % 2 ? 1 : -1) * 1.6, dy = (s < 2 ? -1 : 1) * 1.6;
-      return h('span', { class: 'ptk on-board' + (state.turn === s ? ' turn' : ''), style: `--c:${COLORS[s]};left:${c.x + dx}%;top:${c.y + dy}%`, html: svgOf(tokenOf(s)) });
+      return h('span', { class: 'ptk on-board' + (state.turn === s && state.phase !== 'order' ? ' turn' : '') + (slowSeat === s ? ' slow' : ''), style: `--c:${COLORS[s]};left:${c.x + dx}%;top:${c.y + dy}%`, html: svgOf(tokenOf(s)) });
     }));
   }
   function paintCenter() {
     if (!centerEl) return;
-    const d = dice;
-    fill(centerEl, h('div', { class: 'ptitle' }, 'EVAPOLY'), state && state.pot > 0 ? h('div', { class: 'ppot' }, `La Peza · ${eur(state.pot)}`) : null,
-      d ? h('div', { class: 'pdice' + (d.rolling ? ' rolling' : '') }, dieEl(d.d1), dieEl(d.d2)) : null);
+    potEl.textContent = state && state.pot > 0 ? `La Peza · ${eur(state.pot)}` : '';
+    potEl.style.display = state && state.pot > 0 ? '' : 'none';
+    if (dice) { dieA.set(dice.d1); dieB.set(dice.d2); diceBox.style.visibility = 'visible'; diceBox.classList.toggle('rolling', !!dice.rolling); diceBox.classList.toggle('landed', !dice.rolling); }
   }
   function paintLog() { if (logEl) { fill(logEl, log.slice(-4).map((l) => h('div', {}, l))); logEl.scrollTop = logEl.scrollHeight; } }
 
@@ -359,13 +442,21 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (!state || !sideEl) return;
     const s = state, my = mySeat();
     paintBoard(); paintTokens(); paintCenter();
+    // variación de dinero de cada jugador (+50, −200…) que sube y se desvanece junto a su nombre
+    if (lastCash) s.cash.forEach((c, i) => { const d = c - lastCash[i]; if (d) deltas.push({ seat: i, at: Date.now(), cls: d > 0 ? 'up' : 'down', text: (d > 0 ? '+' : '−') + eur(Math.abs(d)) }); });
+    lastCash = s.cash.slice();
+    while (deltas.length && Date.now() - deltas[0].at > 1600) deltas.shift();
     // jugadores: a la derecha, uno debajo de otro; el que tiene el turno lleva un recuadro de su color
     fill(sideEl, room.players.map((u, i) => {
       const jail = s.jail[i], bk = s.bk[i];
-      return h('div', { class: 'pp' + (s.turn === i && s.phase !== 'over' ? ' turn' : '') + (bk ? ' bk' : ''), style: `--c:${COLORS[i]}` },
-        tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')),
-          h('small', {}, bk ? 'Quiebra' : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? 'Maricarmen' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · '))),
+      const turn = s.phase === 'order' ? s.ordCand[i] && !s.ordRolls[i] : s.turn === i && s.phase !== 'over';
+      const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? 'Maricarmen' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
+      const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : ''), style: `--c:${COLORS[i]}` },
+        turn && s.phase !== 'over' ? h('i', { class: 'pturn' }, s.phase === 'order' ? 'Tira' : i === my ? 'Te toca' : 'Turno') : null,
+        tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info)),
         h('span', { class: 'cash' }, eur(s.cash[i])));
+      for (const d of deltas) if (d.seat === i && Date.now() - d.at < 1500) row.append(h('span', { class: 'pdelta ' + d.cls, style: `animation-delay:-${Date.now() - d.at}ms` }, d.text));
+      return row;
     }));
     paintActions();
   }
@@ -381,6 +472,10 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (my < 0) status('Espectador');
     else if (s.trade && s.trade.to === my) out.push(tradeBox(s.trade, true));
     else if (s.trade && s.trade.from === my) { status('Esperando respuesta'); out.push(h('div', { class: 'pbtns' }, btn('Cancelar trato', 'N', { primary: false }))); }
+    else if (s.phase === 'order') {
+      if (s.ordCand[my] && !s.ordRolls[my]) out.push(h('div', { class: 'pbtns' }, btn('Tirar dados', 'r', { cls: 'cta' })));
+      else status(s.ordRolls[my] ? `Sacaste ${s.ordRolls[my]}` : 'Esperando');
+    }
     else if (s.phase === 'over') status(`Gana ${seatName(s.winner)}`);
     else if (s.phase === 'debt') {
       const d = s.debts[0];
@@ -397,17 +492,17 @@ export function openEvapoly({ roomId, api, onClose }) {
     else if (s.phase === 'roll') {
       const row = [];
       if (s.jail[my]) { row.push(btn(`Pagar ${eur(JAIL_FINE)}`, 'p', { primary: false, disabled: s.cash[my] < JAIL_FINE })); if (s.jf[my] > 0) row.push(btn('Usar carta', 'c', { primary: false })); }
-      row.push(btn('Tirar dados', 'r'));
+      row.push(btn('Tirar dados', 'r', { cls: 'cta' }));
       out.push(h('div', { class: 'pbtns' }, row));
     } else if (s.phase === 'buy') {
       const qd = data.squares[s.buy];
       status(`${qd.n} · ${eur(qd.p)}`);
       out.push(h('div', { class: 'pbtns' }, btn('Comprar', 'b', { disabled: s.cash[my] < qd.p }), s.cfg.auction ? btn('Subastar', 'a', { primary: false }) : null, btn('No comprar', 'n', { primary: false })));
-    } else if (s.phase === 'end') out.push(h('div', { class: 'pbtns' }, btn('Terminar turno', 'e')));
+    } else if (s.phase === 'end') out.push(h('div', { class: 'pbtns' }, btn('Terminar turno', 'e', { cls: 'cta' })));
     // acciones secundarias en tu turno
     if (my >= 0 && cur === my && (s.phase === 'roll' || s.phase === 'end') && !s.trade) {
       out.push(h('div', { class: 'pbtns small' },
-        h('button', { class: 'text-btn', disabled: running, onclick: openTrade }, 'Tratar'),
+        h('button', { class: 'text-btn', disabled: running, onclick: openTrade }, 'Negociar'),
         h('button', { class: 'text-btn', disabled: running, onclick: async () => { if (await confirmDialog('Abandonar', '', 'Abandonar')) send('z'); } }, 'Abandonar')));
     }
     fill(actEl, out);
@@ -487,13 +582,13 @@ export function openEvapoly({ roomId, api, onClose }) {
         err && (gc + rc + give.size + take.size + gj + rj) ? h('small', { class: 'perr' }, err) : null,
         h('div', { class: 'pbtns' }, h('button', { class: 'btn', disabled: !!err, onclick: () => { m.close(); send(code); } }, 'Proponer')));
     };
-    const m = modal({ title: 'Tratar', content, actions: [{ label: 'Cerrar' }], wide: true });
+    const m = modal({ title: 'Negociar', content, actions: [{ label: 'Cerrar' }], wide: true });
     draw();
   }
 
   // ───── salir ─────
   function close() {
-    closed = true; clearTimeout(timer); stopMusic(); root.remove(); onClose?.();
+    closed = true; clearTimeout(timer); stopMusic(); document.removeEventListener('fullscreenchange', onFs); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); root.remove(); onClose?.();
   }
 
   fill(body, h('div', { class: 'dim', style: { padding: '24px', textAlign: 'center' } }, '…'));

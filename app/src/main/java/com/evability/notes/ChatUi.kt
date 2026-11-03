@@ -1,5 +1,13 @@
 package com.evability.notes
 
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.filled.Close
@@ -112,6 +120,8 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     val myName = Social.session?.username ?: ""
     val listState = rememberLazyListState()
     val hour = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     var delSince by remember { mutableLongStateOf(Social.serverNow()) }
     var menuMsg by remember { mutableStateOf<Social.ChatMessage?>(null) }
@@ -235,14 +245,18 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startRecording()
         else askMic.launch(Manifest.permission.RECORD_AUDIO)
     }
+    val bars = remember { mutableStateListOf<Float>() }
     LaunchedEffect(recording) {
+        bars.clear()
         while (recording) {
+            bars.add(VoiceRecorder.level())
+            if (bars.size > 70) bars.removeAt(0)
             recMs = VoiceRecorder.elapsed()
             if (recMs >= VoiceRecorder.MAX_MS) {
                 finishRecording(true)
                 break
             }
-            delay(200)
+            delay(70)
         }
     }
     DisposableEffect(Unit) { onDispose { VoicePlayer.stop(); VoiceRecorder.cancel() } }
@@ -350,8 +364,37 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                         if (showAvatar) Avatar(if (m.mine) myName else friend.username, if (m.mine) myPhoto else friend.photo, 32)
                         else Spacer(Modifier.width(32.dp))
                     }
+                    // deslizar un mensaje hacia la derecha para responderle, como en WhatsApp
+                    var dragX by remember(m.id) { mutableFloatStateOf(0f) }
+                    val maxPx = with(density) { 96.dp.toPx() }
+                    val trigger = maxPx * 0.6f
+                    val pull = (dragX / trigger).coerceIn(0f, 1f)
+                    Box(
+                        Modifier.fillMaxWidth().pointerInput(m.id, m.deleted) {
+                            var crossed = false
+                            detectHorizontalDragGestures(
+                                onDragStart = { crossed = false },
+                                onDragEnd = {
+                                    if (dragX >= trigger && !m.deleted) replyTo = m
+                                    scope.launch { androidx.compose.animation.core.animate(dragX, 0f, animationSpec = androidx.compose.animation.core.tween(180)) { v, _ -> dragX = v } }
+                                },
+                                onDragCancel = { scope.launch { androidx.compose.animation.core.animate(dragX, 0f, animationSpec = androidx.compose.animation.core.tween(180)) { v, _ -> dragX = v } } },
+                                onHorizontalDrag = { _, dx ->
+                                    if (!m.deleted) {
+                                        dragX = (dragX + dx).coerceIn(0f, maxPx)
+                                        if (!crossed && dragX >= trigger) { crossed = true; haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
+                                    }
+                                },
+                            )
+                        },
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Reply, null, tint = Accent,
+                            modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp).size(26.dp)
+                                .graphicsLayer { alpha = pull; scaleX = 0.5f + 0.5f * pull; scaleY = 0.5f + 0.5f * pull },
+                        )
                     Row(
-                        Modifier.fillMaxWidth(),
+                        Modifier.fillMaxWidth().offset { IntOffset(dragX.toInt(), 0) },
                         horizontalArrangement = if (m.mine) Arrangement.End else Arrangement.Start,
                         verticalAlignment = Alignment.Bottom,
                     ) {
@@ -383,6 +426,7 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                         }
                         if (m.mine) { Spacer(Modifier.width(8.dp)); Photo() }
                     }
+                    }
                 }
             }
         }
@@ -408,7 +452,18 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                 IconButton(onClick = { VoiceRecorder.cancel(); recording = false }) { Icon(Icons.Default.Delete, "Cancelar", tint = OnSurfaceDim) }
                 Box(Modifier.size(10.dp).background(Color(0xFFE53935), CircleShape))
                 Spacer(Modifier.width(8.dp))
-                Text(mmss(recMs), color = OnSurface, fontSize = 17.sp, modifier = Modifier.weight(1f))
+                // onda en directo: cada barra es el volumen de tu voz en ese momento
+                androidx.compose.foundation.Canvas(Modifier.weight(1f).height(36.dp)) {
+                    val w = 3.dp.toPx(); val gap = 2.dp.toPx(); val maxBars = (size.width / (w + gap)).toInt()
+                    val shown = bars.takeLast(maxBars)
+                    shown.forEachIndexed { i, v ->
+                        val hgt = maxOf(3.dp.toPx(), v * size.height)
+                        val x = size.width - (shown.size - i) * (w + gap)
+                        drawRoundRect(Accent.copy(alpha = 0.35f + 0.65f * v), androidx.compose.ui.geometry.Offset(x, (size.height - hgt) / 2), androidx.compose.ui.geometry.Size(w, hgt), androidx.compose.ui.geometry.CornerRadius(w / 2))
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(mmss(recMs), color = OnSurface, fontSize = 15.sp)
                 IconButton(onClick = { finishRecording(true) }) { Icon(Icons.AutoMirrored.Filled.Send, "Enviar audio", tint = Accent) }
             } else {
                 IconButton(onClick = { showGames = true }) { Icon(Icons.Default.SportsEsports, "Minijuegos", tint = OnSurface) }

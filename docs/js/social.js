@@ -366,6 +366,7 @@ const roomOf = (d, id) => (d ? {
   id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), acts: list(d, 'acts'),
   tok: Object.fromEntries(Object.entries(d.fields?.tok?.mapValue?.fields || {}).map(([k, v]) => [k, Number(v.integerValue)])),
   money: Number(d.fields?.money?.integerValue || 1500), goBonus: d.fields?.goBonus?.booleanValue === true, auction: d.fields?.auction?.booleanValue === true,
+  pot: d.fields?.pot?.booleanValue !== false, dblBonus: d.fields?.dblBonus?.booleanValue === true,
   seed: Number(d.fields?.seed?.integerValue || 0),
 } : null);
 const getRoom = async (id) => roomOf((await getAll('rooms', [id]).catch(() => ({})))[id], id);
@@ -374,7 +375,7 @@ const getRoom = async (id) => roomOf((await getAll('rooms', [id]).catch(() => ({
 async function createRoom(friendUid) {
   const me = (await live()).uid, pair = pairId(me, friendUid), id = uid();
   await commit(
-    write(`rooms/${id}`, { host: str(me), invited: strs([friendUid]), players: strs([me]), tok: { mapValue: { fields: { [me]: intV(0) } } }, money: intV(1500), goBonus: boolV(false), auction: boolV(true), status: str('lobby'), seed: intV(0), acts: strs([]) }, { serverTime: 'at' }),
+    write(`rooms/${id}`, { host: str(me), invited: strs([friendUid]), players: strs([me]), tok: { mapValue: { fields: { [me]: intV(0) } } }, money: intV(1500), goBonus: boolV(false), auction: boolV(true), pot: boolV(true), dblBonus: boolV(false), status: str('lobby'), seed: intV(0), acts: strs([]) }, { serverTime: 'at' }),
     write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('poly'), game: str(id) }, { serverTime: 'at' }),
     write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
   return id;
@@ -394,7 +395,7 @@ const polyApi = (id) => ({
   },
   join: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs([...room.players, me]), tok: { mapValue: { fields: { [me]: intV(tok) } } } }, ['players', `tok.\`${me}\``])); },
   leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
-  setCfg: async (room, c) => { await commit(writeMask(`rooms/${room.id}`, { money: intV(c.money), goBonus: boolV(c.goBonus), auction: boolV(c.auction) }, ['money', 'goBonus', 'auction'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`rooms/${room.id}`, { money: intV(c.money), goBonus: boolV(c.goBonus), auction: boolV(c.auction), pot: boolV(c.pot), dblBonus: boolV(c.dblBonus) }, ['money', 'goBonus', 'auction', 'pot', 'dblBonus'])); },
   setTok: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { tok: { mapValue: { fields: { [me]: intV(tok) } } } }, [`tok.\`${me}\``])); },
   start: async (room, seed) => { await commit(writeMask(`rooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
   act: async (room, acts, over) => { await commit(writeMask(`rooms/${room.id}`, { acts: strs(acts), ...(over ? { status: str('finished') } : {}) }, over ? ['acts', 'status'] : ['acts'])); },
@@ -524,9 +525,10 @@ function openChat(friend) {
     replyBar.style.display = m ? '' : 'none';
     if (m) input.focus();
   }
-  const recDot = h('i', { class: 'rec-dot' }), recTime = h('span', {}, '0:00');
+  const recDot = h('i', { class: 'rec-dot' }), recTime = h('span', {}, '0:00'), wave = h('canvas', { class: 'wave', width: 600, height: 72 });
+  let analyser = null, waveTimer = null, ctxAudio = null; const bars = [];
   const recRow = h('div', { class: 'rec-row', style: { display: 'none' } },
-    h('button', { class: 'icon-btn', 'aria-label': 'Cancelar', onclick: () => cancelRec() }, icon('trash')), recDot, h('span', { class: 'grow' }, recTime),
+    h('button', { class: 'icon-btn', 'aria-label': 'Cancelar', onclick: () => cancelRec() }, icon('trash')), recDot, wave, h('span', { class: 'rtime' }, recTime),
     h('button', { class: 'icon-btn accent', 'aria-label': 'Enviar audio', onclick: () => finishRec(true) }, icon('send')));
   const root = h('div', { class: 'pomo chat' },
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')),
@@ -631,7 +633,26 @@ function openChat(friend) {
       try { await deleteMessage(friend.uid, m.id, m.kind); markGone(m.id); } catch (e) { toast(e.message || 'No se pudo borrar'); }
     } }, icon('trash', 16));
     const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
-    const el = h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [delBtn, replyBtn, bubble, av] : [av, bubble, replyBtn]));
+    const swipeIco = h('span', { class: 'swipe-ico' }, icon('reply', 20));
+    const el = h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, swipeIco, ...(m.mine ? [delBtn, replyBtn, bubble, av] : [av, bubble, replyBtn]));
+    // deslizar el mensaje hacia la derecha para responderle, como en WhatsApp
+    let sx = 0, sy = 0, dx = 0, drag = false, crossed = false;
+    const TRIGGER = 56, MAXPULL = 90;
+    el.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; sx = e.clientX; sy = e.clientY; dx = 0; drag = false; crossed = false; });
+    el.addEventListener('pointermove', (e) => {
+      if (!sx || rowsById.get(m.id)?.gone) return;
+      const mx = e.clientX - sx, my = e.clientY - sy;
+      if (!drag) { if (mx > 12 && mx > Math.abs(my) * 1.6) { drag = true; el.setPointerCapture?.(e.pointerId); } else if (Math.abs(my) > 12 || mx < -12) { sx = 0; return; } else return; }
+      dx = Math.max(0, Math.min(MAXPULL, mx * 0.85));
+      bubble.style.transition = 'none'; bubble.style.transform = `translateX(${dx}px)`;
+      swipeIco.style.opacity = String(Math.min(1, dx / TRIGGER)); swipeIco.style.transform = `translateY(-50%) scale(${0.5 + 0.5 * Math.min(1, dx / TRIGGER)})`;
+      if (!crossed && dx >= TRIGGER) { crossed = true; navigator.vibrate?.(15); }
+    });
+    const endSwipe = () => {
+      if (drag && dx >= TRIGGER) setReply(m);
+      bubble.style.transition = 'transform .18s'; bubble.style.transform = ''; swipeIco.style.opacity = '0'; sx = 0; drag = false;
+    };
+    ['pointerup', 'pointercancel'].forEach((ev) => el.addEventListener(ev, endSwipe));
     rowsById.set(m.id, { bubble, el, m, gone: false });
     if (m.del) { rowsById.get(m.id).gone = true; goneContent(bubble, m); delBtn.remove(); replyBtn.remove(); }
     return { mine: m.mine, av, el };
@@ -686,9 +707,24 @@ function openChat(friend) {
   async function beginRec() {
     try { recording = await startRecording(); } catch { toast('Sin permiso de micrófono'); return; }
     normalRow.style.display = 'none'; recRow.style.display = '';
+    // onda en directo: cada barra es el volumen de tu voz en ese momento
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext; ctxAudio = new AC(); analyser = ctxAudio.createAnalyser(); analyser.fftSize = 512;
+      ctxAudio.createMediaStreamSource(recording.stream).connect(analyser);
+      const buf = new Uint8Array(analyser.fftSize), g = wave.getContext('2d'); bars.length = 0;
+      waveTimer = setInterval(() => {
+        analyser.getByteTimeDomainData(buf);
+        let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
+        bars.push(Math.min(1, Math.sqrt(sum / buf.length) * 3.2)); if (bars.length > 120) bars.shift();
+        const W = wave.width, H = wave.height, bw = 5, gap = 3, n = Math.floor(W / (bw + gap)), shown = bars.slice(-n);
+        g.clearRect(0, 0, W, H);
+        const col = getComputedStyle(root).getPropertyValue('--accent').trim() || '#f5a9c6';
+        shown.forEach((v, i) => { const hh = Math.max(6, v * H), x = W - (shown.length - i) * (bw + gap); g.globalAlpha = 0.35 + 0.65 * v; g.fillStyle = col; g.beginPath(); g.roundRect(x, (H - hh) / 2, bw, hh, 2.5); g.fill(); });
+      }, 60);
+    } catch { /* sin análisis de volumen: queda solo el contador */ }
     recTimer = setInterval(() => { const ms = Date.now() - recording.startedAt; recTime.textContent = mmss(ms); if (ms >= MAX_AUDIO_MS) finishRec(true); }, 200);
   }
-  function resetRec() { clearInterval(recTimer); recording = null; normalRow.style.display = ''; recRow.style.display = 'none'; recTime.textContent = '0:00'; }
+  function resetRec() { clearInterval(waveTimer); ctxAudio?.close().catch(() => {}); ctxAudio = null; clearInterval(recTimer); recording = null; normalRow.style.display = ''; recRow.style.display = 'none'; recTime.textContent = '0:00'; }
   async function finishRec(sendIt) {
     if (!recording) return;
     const r = recording; resetRec();

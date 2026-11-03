@@ -21,7 +21,7 @@ object Poly {
     class Sq(val n: String, val t: String, val g: String?, val p: Int, val r: IntArray, val i: String? = null)
     class Card(val x: String, val e: String)
     class Data(val squares: List<Sq>, val groups: Map<String, String>, val house: Map<String, Int>, val chance: List<Card>, val chest: List<Card>)
-    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean)
+    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false)
     class Deck(var order: List<Int> = emptyList(), var i: Int = 0, var held: Int = -1, var held2: Int = -1)
     class Auction(val sq: Int, var bid: Int, var bidder: Int, val active: MutableList<Int>, var cur: Int)
     class Debt(val seat: Int, val amt: Int, var to: Int, val why: String, val rent: Boolean = false, val tax: Boolean = false)
@@ -64,6 +64,8 @@ object Poly {
         val mc = IntArray(n) // cartas Maricarmen en la mano
         var mcBy = -1
         var pot = 0 // impuestos acumulados en La Peza
+        var ordCand = BooleanArray(n) { true } // quién tira para decidir quién empieza
+        var ordRolls = IntArray(n)
         var turn = 0
         var phase = "roll"
         var dbl = 0
@@ -107,7 +109,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, hs.toString(), ht.toString(), heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -138,14 +140,8 @@ object Poly {
         val s = State(data, n, cfg, seed)
         s.deckC.order = shuffled(s, data.chance.size)
         s.deckH.order = shuffled(s, data.chest.size)
-        var cand = (0 until n).toList()
-        while (cand.size > 1) {
-            val rolls = cand.map { rint(s, 6) + rint(s, 6) + 2 }
-            val best = rolls.max()
-            cand = cand.filterIndexed { i, _ -> rolls[i] == best }
-        }
-        s.turn = cand[0]
-        say(s, "@${s.turn} empieza la partida", "start")
+        s.phase = "order"
+        say(s, "Todos tiran los dados: empieza el que saque más", "start")
         return s
     }
 
@@ -167,7 +163,7 @@ object Poly {
         } else if (s.cash[seat] >= amt) {
             s.cash[seat] -= amt
             if (to >= 0) s.cash[to] += amt
-            if (tax) s.pot += amt
+            if (tax && s.cfg.pot) s.pot += amt
             say(s, if (to >= 0) "@$seat paga ${eur(amt)} a @$to$why" else "@$seat paga ${eur(amt)}$why", "pay", seat = seat, to = to, amt = amt)
         } else {
             s.debts.add(Debt(seat, amt, to, why, false, tax))
@@ -225,7 +221,7 @@ object Poly {
                 }
             }
             "tax" -> pay(s, seat, q.p, -1, " de ${q.n.lowercase()}", false, true)
-            "parking" -> if (s.pot > 0) {
+            "parking" -> if (s.cfg.pot && s.pot > 0) {
                 val v = s.pot
                 s.pot = 0
                 s.cash[seat] += v
@@ -408,6 +404,28 @@ object Poly {
         val free = s.phase == "roll" || s.phase == "end"
         fun ok(): String? { if (!dry) s.acts++; return null }
 
+        // al principio todos tiran para ver quién empieza
+        if (s.phase == "order") {
+            if (op != 'r') return "Primero hay que tirar los dados para ver quién empieza"
+            if (!s.ordCand[seat] || s.ordRolls[seat] > 0) return "Ya has tirado"
+            if (dry) return null
+            val a = rint(s, 6) + 1; val b = rint(s, 6) + 1
+            s.ordRolls[seat] = a + b
+            say(s, "@$seat saca $a y $b", "dice", seat = seat, d1 = a, d2 = b)
+            if (!(0 until s.n).any { s.ordCand[it] && s.ordRolls[it] == 0 }) {
+                val best = (0 until s.n).filter { s.ordCand[it] }.maxOf { s.ordRolls[it] }
+                val win = (0 until s.n).filter { s.ordCand[it] && s.ordRolls[it] == best }
+                if (win.size == 1) {
+                    s.turn = win[0]; s.phase = "roll"; s.ordCand = BooleanArray(s.n); s.ordRolls = IntArray(s.n)
+                    say(s, "@${win[0]} saca $best y empieza la partida", "start")
+                } else {
+                    s.ordCand = BooleanArray(s.n) { it in win }; s.ordRolls = IntArray(s.n)
+                    say(s, "Empate a $best: vuelven a tirar ${win.joinToString(" y ") { "@$it" }}", "start")
+                }
+            }
+            return ok()
+        }
+
         if (s.trade != null && op != 'Y' && op != 'N' && op != 'z') return "Hay un trato pendiente"
 
         when (op) {
@@ -430,7 +448,11 @@ object Poly {
                     } else { say(s, "@$seat sigue en la cárcel (${s.jt[seat]}/3)"); s.again = false }
                 } else if (a == b) {
                     if (++s.dbl >= 3) { say(s, "@$seat saca tres dobles seguidos"); sendJail(s, seat, "") }
-                    else { s.again = true; moveDice(s, seat, a + b) }
+                    else {
+                        s.again = true
+                        if (s.cfg.dblBonus) { val v = if (s.dbl == 1) 50 else 100; s.cash[seat] += v; say(s, "@$seat gana ${eur(v)} por dobles", "gain", seat = seat, amt = v) }
+                        moveDice(s, seat, a + b)
+                    }
                 } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b) }
                 settle(s)
                 return ok()
@@ -556,7 +578,7 @@ object Poly {
                 if (s.cash[seat] < d.amt) return "No tienes dinero suficiente"
                 if (dry) return null
                 s.debts.removeAt(0)
-                if (d.tax) s.pot += d.amt
+                if (d.tax && s.cfg.pot) s.pot += d.amt
                 s.cash[seat] -= d.amt
                 if (d.to >= 0) s.cash[d.to] += d.amt
                 say(s, "@$seat paga ${eur(d.amt)}${if (d.to >= 0) " a @${d.to}" else ""}${d.why}", "pay", seat = seat, to = d.to, amt = d.amt)

@@ -35,25 +35,19 @@ function shuffled(s, n) {
 // ───── estado inicial ─────
 export function initGame(data, n, cfg, seed) {
   const s = {
-    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction }, r: seed | 0,
+    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus }, r: seed | 0,
     pos: Array(n).fill(0), cash: Array(n).fill(cfg.money), jail: Array(n).fill(false), jt: Array(n).fill(0), jf: Array(n).fill(0),
     bk: Array(n).fill(false),
     own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false), hs: HOUSES, ht: HOTELS,
     deck: { c: { order: [], i: 0, held: -1, held2: -1 }, h: { order: [], i: 0, held: -1, held2: -1 } }, mc: Array(n).fill(0), mcBy: -1, pot: 0,
     turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, trade: null,
-    heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0,
+    heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0),
   };
   s.deck.c.order = shuffled(s, data.cards.chance.length);
   s.deck.h.order = shuffled(s, data.cards.chest.length);
-  // quién empieza: todos tiran y empieza el más alto (los empates vuelven a tirar)
-  let cand = Array.from({ length: n }, (_, i) => i), best = 0;
-  while (cand.length > 1) {
-    const rolls = cand.map(() => rint(s, 6) + rint(s, 6) + 2);
-    best = Math.max(...rolls);
-    cand = cand.filter((_, i) => rolls[i] === best);
-  }
-  s.turn = cand[0];
-  say(s, `@${s.turn} empieza la partida`, 'start');
+  // quién empieza: cada jugador tira los dados y empieza el más alto (los empates vuelven a tirar)
+  s.phase = 'order';
+  say(s, 'Todos tiran los dados: empieza el que saque más', 'start');
   return s;
 }
 
@@ -96,7 +90,7 @@ function pay(s, seat, amt, to, why, rent = false, tax = false) {
   } else if (s.cash[seat] >= amt) {
     s.cash[seat] -= amt;
     if (to >= 0) s.cash[to] += amt;
-    if (tax) s.pot += amt; // los impuestos se acumulan en La Peza
+    if (tax && s.cfg.pot) s.pot += amt; // los impuestos se acumulan en La Peza (si la regla está activada)
     say(s, to >= 0 ? `@${seat} paga ${eur(amt)} a @${to}${why}` : `@${seat} paga ${eur(amt)}${why}`, 'pay', { seat, to, amt });
   } else {
     s.debts.push({ seat, amt, to, why, tax });
@@ -156,7 +150,7 @@ function land(s, seat, i, ctx) {
     }
     case 'tax': pay(s, seat, q.p, -1, ` de ${q.n.toLowerCase()}`, false, true); break;
     case 'parking':
-      if (s.pot > 0) {
+      if (s.cfg.pot && s.pot > 0) {
         const v = s.pot; s.pot = 0; s.cash[seat] += v;
         s.ev.push({ k: 'card', m: 'La Peza: Tito Pepe te ha soltado unos fajos de billetes', seat, text: 'Tito Pepe te ha soltado unos fajos de billetes', deck: 'p' });
         say(s, `@${seat} se lleva ${eur(v)} de los impuestos de ${q.n}`, 'gain', { seat, amt: v });
@@ -322,6 +316,30 @@ export function act(s, seat, code, dry = false) {
   const mine = seat === s.turn, free = s.phase === 'roll' || s.phase === 'end';
   const ok = () => { if (!dry) s.acts++; return OK; };
 
+  // al principio todos tiran para ver quién empieza
+  if (s.phase === 'order') {
+    if (op !== 'r') return 'Primero hay que tirar los dados para ver quién empieza';
+    if (!s.ordCand[seat] || s.ordRolls[seat] > 0) return 'Ya has tirado';
+    if (dry) return OK;
+    const a = rint(s, 6) + 1, b = rint(s, 6) + 1;
+    s.ordRolls[seat] = a + b;
+    say(s, `@${seat} saca ${a} y ${b}`, 'dice', { seat, d1: a, d2: b });
+    if (!s.ordCand.some((c, i) => c && s.ordRolls[i] === 0)) {
+      let best = 0;
+      for (let i = 0; i < s.n; i++) if (s.ordCand[i]) best = Math.max(best, s.ordRolls[i]);
+      const win = [];
+      for (let i = 0; i < s.n; i++) if (s.ordCand[i] && s.ordRolls[i] === best) win.push(i);
+      if (win.length === 1) {
+        s.turn = win[0]; s.phase = 'roll'; s.ordCand = Array(s.n).fill(false); s.ordRolls = Array(s.n).fill(0);
+        say(s, `@${win[0]} saca ${best} y empieza la partida`, 'start');
+      } else {
+        s.ordCand = Array.from({ length: s.n }, (_, i) => win.includes(i)); s.ordRolls = Array(s.n).fill(0);
+        say(s, `Empate a ${best}: vuelven a tirar ${win.map((w) => '@' + w).join(' y ')}`, 'start');
+      }
+    }
+    return ok();
+  }
+
   // un trato pendiente solo admite respuesta
   if (s.trade && op !== 'Y' && op !== 'N' && op !== 'z') return 'Hay un trato pendiente';
 
@@ -345,7 +363,11 @@ export function act(s, seat, code, dry = false) {
         } else { say(s, `@${seat} sigue en la cárcel (${s.jt[seat]}/3)`); s.again = false; }
       } else if (a === b) {
         if (++s.dbl >= 3) { say(s, `@${seat} saca tres dobles seguidos`); sendJail(s, seat, ''); }
-        else { s.again = true; moveDice(s, seat, a + b); }
+        else {
+          s.again = true;
+          if (s.cfg.dblBonus) { const v = s.dbl === 1 ? 50 : 100; s.cash[seat] += v; say(s, `@${seat} gana ${eur(v)} por dobles`, 'gain', { seat, amt: v }); }
+          moveDice(s, seat, a + b);
+        }
       } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b); }
       settle(s);
       return ok();
@@ -462,7 +484,7 @@ export function act(s, seat, code, dry = false) {
       if (s.cash[seat] < d.amt) return 'No tienes dinero suficiente';
       if (dry) return OK;
       s.debts.shift();
-      if (d.tax) s.pot += d.amt;
+      if (d.tax && s.cfg.pot) s.pot += d.amt;
       s.cash[seat] -= d.amt;
       if (d.to >= 0) s.cash[d.to] += d.amt;
       say(s, `@${seat} paga ${eur(d.amt)}${d.to >= 0 ? ` a @${d.to}` : ''}${d.why}`, 'pay', { seat, to: d.to, amt: d.amt });
@@ -538,4 +560,4 @@ export function applyText(s, text) {
 }
 
 /** Resumen del estado, para comparar partidas entre JS y Kotlin. */
-export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.hs, s.ht, s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
+export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.hs, s.ht, s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);

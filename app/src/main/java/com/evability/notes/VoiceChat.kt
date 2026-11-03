@@ -45,6 +45,9 @@ object VoiceRecorder {
         }
     }
 
+    /** Volumen del micrófono ahora mismo, de 0 a 1 (para la onda que sube mientras hablas). */
+    fun level(): Float = runCatching { Math.sqrt((recorder?.maxAmplitude ?: 0) / 32768.0).toFloat().coerceIn(0f, 1f) }.getOrDefault(0f)
+
     fun elapsed(): Long = if (recorder == null) 0L else SystemClock.elapsedRealtime() - startedAt
 
     /** Termina la grabación. Devuelve el archivo y su duración, o null si no hay nada (p. ej. un toque demasiado corto). */
