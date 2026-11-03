@@ -1,11 +1,11 @@
 // Service worker: guarda la app en el dispositivo para que funcione sin conexión.
 // Estrategia: se responde enseguida con lo guardado y, si hay conexión, se actualiza en segundo plano (la versión nueva se ve al abrir otra vez).
 
-const CACHE = 'evability-web-22';
+const CACHE = 'evability-web-23';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/main.js', 'js/theme.js', 'js/ui.js', 'js/db.js', 'js/store.js', 'js/pdfdoc.js', 'js/templates.js', 'js/ann.js', 'js/editor.js',
-  'js/export.js', 'js/home.js', 'js/settings.js', 'js/pomodoro.js', 'js/gemini.js', 'js/summarypdf.js', 'js/analyze.js', 'js/stickers.js', 'js/social.js', 'js/wordle.js', 'js/chess.js', 'js/chess-engine.js', 'pieces/wK.svg', 'pieces/wQ.svg', 'pieces/wR.svg', 'pieces/wB.svg', 'pieces/wN.svg', 'pieces/wP.svg', 'pieces/bK.svg', 'pieces/bQ.svg', 'pieces/bR.svg', 'pieces/bB.svg', 'pieces/bN.svg', 'pieces/bP.svg', 'data/wordle-answers.txt', 'data/wordle-valid.txt',
+  'js/export.js', 'js/home.js', 'js/settings.js', 'js/pomodoro.js', 'js/gemini.js', 'js/summarypdf.js', 'js/analyze.js', 'js/stickers.js', 'js/social.js', 'js/wordle.js', 'js/chess.js', 'js/evapoly.js', 'js/evapoly-engine.js', 'data/evapoly.json', 'data/evapoly-tokens.json', 'data/evapoly-icons.json', 'js/chess-engine.js', 'pieces/wK.svg', 'pieces/wQ.svg', 'pieces/wR.svg', 'pieces/wB.svg', 'pieces/wN.svg', 'pieces/wP.svg', 'pieces/bK.svg', 'pieces/bQ.svg', 'pieces/bR.svg', 'pieces/bB.svg', 'pieces/bN.svg', 'pieces/bP.svg', 'data/wordle-answers.txt', 'data/wordle-valid.txt',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js', 'vendor/jszip.min.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/logo.png', 'easter-egg.mp3',
 ];

@@ -102,6 +102,7 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     var showGames by remember { mutableStateOf(false) }
     var playingWordle by remember { mutableStateOf(false) }
     var chessId by remember { mutableStateOf<String?>(null) }
+    var polyId by remember { mutableStateOf<String?>(null) }
     var pickingTime by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var recMs by remember { mutableLongStateOf(0L) }
@@ -240,7 +241,29 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         ChessScreen(friend, id) { chessId = null; scope.launch { runCatching { load() } } }
         return
     }
-    if (showGames) MiniGamesDialog(onWordle = { showGames = false; playingWordle = true }, onChess = { showGames = false; pickingTime = true }, onDismiss = { showGames = false })
+    polyId?.let { id ->
+        EvapolyScreen(id) { polyId = null; scope.launch { runCatching { load() } } }
+        return
+    }
+    if (showGames) MiniGamesDialog(
+        onWordle = { showGames = false; playingWordle = true },
+        onChess = { showGames = false; pickingTime = true },
+        onPoly = {
+            showGames = false
+            scope.launch {
+                try {
+                    val id = Social.createPoly(friend.uid)
+                    load()
+                    polyId = id
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, e.message ?: "No se pudo crear la sala", Toast.LENGTH_SHORT).show()
+                }
+            }
+        },
+        onDismiss = { showGames = false },
+    )
     if (pickingTime) {
         ChessTimeDialog(
             onPick = { mins ->
@@ -304,6 +327,7 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                             }
                             if (m.kind == "image") PhotoRow(m, friend.uid)
                             else if (m.kind == "audio") AudioRow(m, friend.uid, if (m.mine) OnAccent else OnSurface)
+                            else if (m.kind == "poly") PolyCard(m, if (m.mine) OnAccent else OnSurface) { polyId = it }
                             else if (m.kind == "chess") ChessCard(m, friend, if (m.mine) OnAccent else OnSurface) { chessId = m.id }
                             else Text(m.text, fontSize = 16.sp, color = if (m.mine) OnAccent else OnSurface)
                             Text(

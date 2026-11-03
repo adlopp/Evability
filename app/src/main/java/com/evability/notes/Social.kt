@@ -41,7 +41,7 @@ object Social {
     class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long, val studying: Boolean = false)
     class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>)
     class Heart(val id: Long, val x: Float, val y: Float)
-    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "")
+    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "", val game: String = "")
 
     /** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
     val unread = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
@@ -471,7 +471,7 @@ object Social {
     }
 
     private fun messageOf(d: JSONObject, me: String) =
-        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"), d.text("rq"), d.text("rf"))
+        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"), d.text("rq"), d.text("rf"), d.text("game"))
 
     private fun orderByAt(direction: String) =
         JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "at")).put("direction", direction))
@@ -618,6 +618,100 @@ object Social {
         if (data.isEmpty()) throw SocialError("No se pudo cargar el audio")
         f.writeBytes(Base64.decode(data, Base64.DEFAULT))
         f
+    }
+
+    // ───────── Evapoly: salas en la nube ─────────
+
+    /** `players` = asientos por orden de llegada (el primero crea la sala); `tok` = ficha de cada jugador; `acts` = acciones de la partida. */
+    class PolyRoom(
+        val id: String, val host: String, val invited: List<String>, val players: List<String>, val tok: Map<String, Int>,
+        val money: Int, val goBonus: Boolean, val auction: Boolean, val status: String, val seed: Int, val acts: List<String>,
+    )
+
+    private fun roomOf(d: JSONObject?, id: String): PolyRoom? = d?.let {
+        val tf = it.optJSONObject("fields")?.optJSONObject("tok")?.optJSONObject("mapValue")?.optJSONObject("fields")
+        val tok = HashMap<String, Int>()
+        if (tf != null) for (k in tf.keys()) tok[k] = tf.getJSONObject(k).optString("integerValue").toIntOrNull() ?: 0
+        PolyRoom(
+            id, it.text("host"), it.list("invited"), it.list("players"), tok, it.int("money").takeIf { m -> m > 0 } ?: 1500,
+            it.bool("goBonus"), it.bool("auction"), it.text("status"), it.int("seed"), it.list("acts"),
+        )
+    }
+
+    private fun bool(v: Boolean) = JSONObject().put("booleanValue", v)
+    private fun tokMap(uid: String, tok: Int) = JSONObject().put("mapValue", JSONObject().put("fields", JSONObject().put(uid, int(tok.toLong()))))
+
+    suspend fun polyRoom(id: String): PolyRoom? = withContext(Dispatchers.IO) { roomOf(getAll("rooms", listOf(id))[id], id) }
+
+    /** Crea la sala y manda la invitación al chat del amigo (el id de la sala es el del mensaje). */
+    suspend fun createPoly(friendUid: String): String = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val id = UUID.randomUUID().toString()
+        commit(
+            write(
+                "rooms/$id",
+                JSONObject().put("host", str(me)).put("invited", strs(listOf(friendUid))).put("players", strs(listOf(me))).put("tok", tokMap(me, 0))
+                    .put("money", int(1500)).put("goBonus", bool(false)).put("auction", bool(true)).put("status", str("lobby")).put("seed", int(0)).put("acts", strs(emptyList())),
+                serverTime = "at",
+            ),
+            write("chats/$pair/messages/$id", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("poly")).put("game", str(id)), serverTime = "at"),
+            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+        )
+        id
+    }
+
+    suspend fun polyInvite(room: PolyRoom, friendUid: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        commit(
+            writeMask("rooms/${room.id}", JSONObject().put("invited", strs(room.invited + friendUid)), listOf("invited")),
+            write("chats/$pair/messages/${UUID.randomUUID()}", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("poly")).put("game", str(room.id)), serverTime = "at"),
+            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+        )
+    }
+
+    suspend fun polyJoin(room: PolyRoom, tok: Int) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("rooms/${room.id}", JSONObject().put("players", strs(room.players + me)).put("tok", tokMap(me, tok)), listOf("players", "tok.$me")))
+    }
+
+    suspend fun polyLeave(room: PolyRoom) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("rooms/${room.id}", JSONObject().put("players", strs(room.players.filter { it != me })), listOf("players")))
+    }
+
+    suspend fun polyCfg(room: PolyRoom, money: Int, goBonus: Boolean, auction: Boolean) = withContext(Dispatchers.IO) {
+        commit(
+            writeMask(
+                "rooms/${room.id}", JSONObject().put("money", int(money.toLong())).put("goBonus", bool(goBonus)).put("auction", bool(auction)),
+                listOf("money", "goBonus", "auction"),
+            ),
+        )
+    }
+
+    suspend fun polyTok(room: PolyRoom, tok: Int) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("rooms/${room.id}", JSONObject().put("tok", tokMap(me, tok)), listOf("tok.$me")))
+    }
+
+    suspend fun polyStart(room: PolyRoom, seed: Int) = withContext(Dispatchers.IO) {
+        commit(writeMask("rooms/${room.id}", JSONObject().put("status", str("playing")).put("seed", int(seed.toLong())), listOf("status", "seed")))
+    }
+
+    /** Manda la lista completa de acciones (una más que la de la nube); `over` marca la partida como terminada. */
+    suspend fun polyAct(id: String, acts: List<String>, over: Boolean) = withContext(Dispatchers.IO) {
+        val f = JSONObject().put("acts", strs(acts))
+        val mask = arrayListOf("acts")
+        if (over) { f.put("status", str("finished")); mask.add("status") }
+        commit(writeMask("rooms/$id", f, mask))
+    }
+
+    suspend fun polyRemove(id: String) = withContext(Dispatchers.IO) { commit(delete("rooms/$id")) }
+
+    suspend fun profilesOf(uids: List<String>): Map<String, Profile> = withContext(Dispatchers.IO) {
+        val d = getAll("users", uids)
+        uids.associateWith { profile(it, d[it]) }
     }
 
     // ───────── ajedrez: partidas en la nube ─────────

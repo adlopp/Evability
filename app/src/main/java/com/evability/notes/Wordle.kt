@@ -144,7 +144,7 @@ private fun statusColor(s: Int) = when (s) {
 
 /** Lista de minijuegos del clip del chat: Wordle y Evadrez (ajedrez) disponibles; los demás salen bloqueados. */
 @Composable
-fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onDismiss: () -> Unit) {
+fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Unit, onDismiss: () -> Unit) {
     @Composable
     fun GameRow(name: String, subtitle: String?, enabled: Boolean, onClick: () -> Unit) {
         val shape = RoundedCornerShape(16.dp)
@@ -171,7 +171,7 @@ fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onDismiss: () -> 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 GameRow("Wordle", null, true, onWordle)
                 GameRow("Evadrez", null, true, onChess)
-                GameRow("Evapoly", "Próximamente", false) {}
+                GameRow("Evapoly", null, true, onPoly)
                 GameRow("???", "Próximamente", false) {}
             }
         },

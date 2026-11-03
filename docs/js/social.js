@@ -5,6 +5,7 @@ import { h, icon, toast, confirmDialog, modal, uid } from './ui.js';
 import { studying } from './pomodoro.js';
 import { openWordle } from './wordle.js';
 import { openChess } from './chess.js';
+import { openEvapoly, polyIcon } from './evapoly.js';
 
 const PROJECT = 'evability-a4c4d';
 const API_KEY = 'AIzaSyD1LmNMAePR63FPvCldLWPXQl4JvmnFars';
@@ -344,6 +345,47 @@ function pickTime() {
   });
 }
 
+// ───── Evapoly: salas en la nube ─────
+
+const roomOf = (d, id) => (d ? {
+  id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), acts: list(d, 'acts'),
+  tok: Object.fromEntries(Object.entries(d.fields?.tok?.mapValue?.fields || {}).map(([k, v]) => [k, Number(v.integerValue)])),
+  money: Number(d.fields?.money?.integerValue || 1500), goBonus: d.fields?.goBonus?.booleanValue === true, auction: d.fields?.auction?.booleanValue === true,
+  seed: Number(d.fields?.seed?.integerValue || 0),
+} : null);
+const getRoom = async (id) => roomOf((await getAll('rooms', [id]).catch(() => ({})))[id], id);
+
+/** Crea la sala (con la ficha 0 para quien la crea) y manda la invitación al chat del amigo. */
+async function createRoom(friendUid) {
+  const me = (await live()).uid, pair = pairId(me, friendUid), id = uid();
+  await commit(
+    write(`rooms/${id}`, { host: str(me), invited: strs([friendUid]), players: strs([me]), tok: { mapValue: { fields: { [me]: intV(0) } } }, money: intV(1500), goBonus: boolV(false), auction: boolV(true), status: str('lobby'), seed: intV(0), acts: strs([]) }, { serverTime: 'at' }),
+    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('poly'), game: str(id) }, { serverTime: 'at' }),
+    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+  return id;
+}
+
+const polyApi = (id) => ({
+  me: () => session.uid,
+  get: () => getRoom(id),
+  profiles: async (uids) => { const d = await getAll('users', uids); return Object.fromEntries(uids.map((u) => [u, profile(u, d[u])])); },
+  friends: async () => (await overview()).friends.map((f) => f.profile),
+  invite: async (room, friendUid) => {
+    const me = (await live()).uid, pair = pairId(me, friendUid);
+    await commit(
+      writeMask(`rooms/${room.id}`, { invited: strs([...room.invited, friendUid]) }, ['invited']),
+      write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(''), kind: str('poly'), game: str(room.id) }, { serverTime: 'at' }),
+      write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+  },
+  join: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs([...room.players, me]), tok: { mapValue: { fields: { [me]: intV(tok) } } } }, ['players', `tok.${me}`])); },
+  leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`rooms/${room.id}`, { money: intV(c.money), goBonus: boolV(c.goBonus), auction: boolV(c.auction) }, ['money', 'goBonus', 'auction'])); },
+  setTok: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { tok: { mapValue: { fields: { [me]: intV(tok) } } } }, [`tok.${me}`])); },
+  start: async (room, seed) => { await commit(writeMask(`rooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
+  act: async (room, acts, over) => { await commit(writeMask(`rooms/${room.id}`, { acts: strs(acts), ...(over ? { status: str('finished') } : {}) }, over ? ['acts', 'status'] : ['acts'])); },
+  remove: async (room) => { await commit(del(`rooms/${room.id}`)); },
+});
+
 // ───── audios ─────
 
 const MAX_AUDIO_MS = 120000;
@@ -423,12 +465,12 @@ let playing = null; // { id, audio, stop() }: solo suena un audio a la vez
 function stopPlaying() { playing?.stop(); playing = null; }
 
 /** Lista de minijuegos del clip del chat: Wordle y Evadrez (ajedrez) disponibles; los demás salen bloqueados. */
-function openGames(onWordle, onChess) {
+function openGames(onWordle, onChess, onPoly) {
   const row = (name, sub, fn) => h('button', { class: 'game-row' + (fn ? '' : ' locked'), disabled: !fn, onclick: fn ? () => { m.close(); fn(); } : null },
     icon(fn ? 'grid' : 'lock', 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
   const m = modal({
     title: 'Minijuegos',
-    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess), row('Evapoly', 'Próximamente', null), row('???', 'Próximamente', null)),
+    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess), row('Evapoly', null, onPoly), row('???', 'Próximamente', null)),
     actions: [{ label: 'Cerrar' }],
   });
 }
@@ -444,6 +486,10 @@ function openChat(friend) {
       if (mins === null) return;
       try { const id = await createGame(friend.uid, mins); await load(); root.append(openChess({ friend, gameId: id, api: chessApi(friend, id), onClose: () => tick() })); }
       catch (e) { toast(e.message || 'No se pudo crear la partida'); }
+    },
+    async () => {
+      try { const id = await createRoom(friend.uid); await load(); root.append(openEvapoly({ roomId: id, api: polyApi(id), onClose: () => tick() })); }
+      catch (e) { toast(e.message || 'No se pudo crear la sala'); }
     }) }, icon('gamepad'));
   const fileInput = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: async () => {
     const f = fileInput.files[0]; fileInput.value = '';
@@ -527,12 +573,28 @@ function openChat(friend) {
     return h('div', { class: 'chess-card' }, h('img', { src: 'pieces/wN.svg', alt: '' }), h('div', { class: 'grow' }, h('b', {}, 'Evadrez'), h('small', {}, mins), status), btn);
   }
 
+  /** Invitación al Evapoly: cómo va la sala y botón para unirse o abrirla. */
+  function polyCard(m) {
+    const status = h('small', {}, ''), btn = h('button', { class: 'btn small-btn' }, 'Abrir');
+    const paint = (r) => {
+      if (!r) { status.textContent = ''; return; }
+      const inRoom = r.players.includes(session?.uid);
+      status.textContent = r.status === 'lobby' ? `Sala · ${r.players.length}/4` : r.status === 'playing' ? 'En juego' : 'Terminada';
+      btn.textContent = r.status === 'lobby' && !inRoom ? 'Unirse' : 'Abrir';
+    };
+    const refresh = () => getRoom(m.game).then(paint).catch(() => {});
+    btn.onclick = () => root.append(openEvapoly({ roomId: m.game, api: polyApi(m.game), onClose: refresh }));
+    refresh(); cardTimers.push(setInterval(refresh, 6000));
+    const ico = h('span', { class: 'poly-ico' }); polyIcon('dice').then((e) => ico.append(e)).catch(() => {});
+    return h('div', { class: 'chess-card' }, ico, h('div', { class: 'grow' }, h('b', {}, 'Evapoly'), status), btn);
+  }
+
   const makeRow = (m, me) => {
     seen.add(m.id);
     const av = m.mine ? avatar(session?.username || '', me.photo, 32, null, session?.uid) : avatar(friend.username, friend.photo, 32, null, friend.uid);
     const quote = m.rq ? h('div', { class: 'quote' }, h('b', {}, m.rf === session?.uid ? 'Tú' : friend.username), h('span', {}, m.rq)) : null;
     const replyBtn = h('button', { class: 'reply-btn', 'aria-label': 'Responder', onclick: () => setReply(m) }, icon('reply', 16));
-    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
     return { mine: m.mine, av, el: h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [replyBtn, bubble, av] : [av, bubble, replyBtn])) };
   };
   async function load() {

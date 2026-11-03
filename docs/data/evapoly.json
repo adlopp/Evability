@@ -1,0 +1,592 @@
+{
+ "groups": {
+  "brown": "#8B5A2B",
+  "sky": "#7EC8E3",
+  "pink": "#D35FB7",
+  "orange": "#F08A24",
+  "red": "#D62828",
+  "yellow": "#F4D03F",
+  "green": "#2E9B4F",
+  "blue": "#1D4E9E"
+ },
+ "house": {
+  "brown": 50,
+  "sky": 50,
+  "pink": 100,
+  "orange": 100,
+  "red": 150,
+  "yellow": 150,
+  "green": 200,
+  "blue": 200
+ },
+ "squares": [
+  {
+   "n": "Salida",
+   "t": "go",
+   "i": "go"
+  },
+  {
+   "n": "Calle Cojones",
+   "t": "street",
+   "g": "brown",
+   "p": 60,
+   "r": [
+    2,
+    10,
+    30,
+    90,
+    160,
+    250
+   ]
+  },
+  {
+   "n": "Caja",
+   "t": "chest",
+   "i": "chest"
+  },
+  {
+   "n": "Calle Colgones",
+   "t": "street",
+   "g": "brown",
+   "p": 60,
+   "r": [
+    4,
+    20,
+    60,
+    180,
+    320,
+    450
+   ]
+  },
+  {
+   "n": "Impuesto",
+   "t": "tax",
+   "p": 200,
+   "i": "tax"
+  },
+  {
+   "n": "Estación 1",
+   "t": "station",
+   "p": 200,
+   "r": [
+    25,
+    50,
+    100,
+    200
+   ],
+   "i": "train"
+  },
+  {
+   "n": "Calle Fresca",
+   "t": "street",
+   "g": "sky",
+   "p": 100,
+   "r": [
+    6,
+    30,
+    90,
+    270,
+    400,
+    550
+   ]
+  },
+  {
+   "n": "Suerte",
+   "t": "chance",
+   "i": "chance"
+  },
+  {
+   "n": "Calle Enséñame el WhatsApp",
+   "t": "street",
+   "g": "sky",
+   "p": 100,
+   "r": [
+    6,
+    30,
+    90,
+    270,
+    400,
+    550
+   ]
+  },
+  {
+   "n": "Calle Quién Es Esta",
+   "t": "street",
+   "g": "sky",
+   "p": 120,
+   "r": [
+    8,
+    40,
+    100,
+    300,
+    450,
+    600
+   ]
+  },
+  {
+   "n": "Cárcel",
+   "t": "jail",
+   "i": "jail"
+  },
+  {
+   "n": "Calle Pelusín",
+   "t": "street",
+   "g": "pink",
+   "p": 140,
+   "r": [
+    10,
+    50,
+    150,
+    450,
+    625,
+    750
+   ]
+  },
+  {
+   "n": "ElectroD",
+   "t": "utility",
+   "p": 150,
+   "i": "bulb"
+  },
+  {
+   "n": "Calle Saona",
+   "t": "street",
+   "g": "pink",
+   "p": 140,
+   "r": [
+    10,
+    50,
+    150,
+    450,
+    625,
+    750
+   ]
+  },
+  {
+   "n": "Calle Chawy",
+   "t": "street",
+   "g": "pink",
+   "p": 160,
+   "r": [
+    12,
+    60,
+    180,
+    500,
+    700,
+    900
+   ]
+  },
+  {
+   "n": "Estación 2",
+   "t": "station",
+   "p": 200,
+   "r": [
+    25,
+    50,
+    100,
+    200
+   ],
+   "i": "train"
+  },
+  {
+   "n": "Calle Eu Farei x10",
+   "t": "street",
+   "g": "orange",
+   "p": 180,
+   "r": [
+    14,
+    70,
+    200,
+    550,
+    750,
+    950
+   ]
+  },
+  {
+   "n": "Caja",
+   "t": "chest",
+   "i": "chest"
+  },
+  {
+   "n": "Calle Gitano Ronaldo",
+   "t": "street",
+   "g": "orange",
+   "p": 180,
+   "r": [
+    14,
+    70,
+    200,
+    550,
+    750,
+    950
+   ]
+  },
+  {
+   "n": "Calle Andrés Sindieta",
+   "t": "street",
+   "g": "orange",
+   "p": 200,
+   "r": [
+    16,
+    80,
+    220,
+    600,
+    800,
+    1000
+   ]
+  },
+  {
+   "n": "La Peza",
+   "t": "parking",
+   "i": "parking"
+  },
+  {
+   "n": "Calle Muslito",
+   "t": "street",
+   "g": "red",
+   "p": 220,
+   "r": [
+    18,
+    90,
+    250,
+    700,
+    875,
+    1050
+   ]
+  },
+  {
+   "n": "Suerte",
+   "t": "chance",
+   "i": "chance"
+  },
+  {
+   "n": "Calle Pollo",
+   "t": "street",
+   "g": "red",
+   "p": 220,
+   "r": [
+    18,
+    90,
+    250,
+    700,
+    875,
+    1050
+   ]
+  },
+  {
+   "n": "Calle Patata",
+   "t": "street",
+   "g": "red",
+   "p": 240,
+   "r": [
+    20,
+    100,
+    300,
+    750,
+    925,
+    1100
+   ]
+  },
+  {
+   "n": "Estación 3",
+   "t": "station",
+   "p": 200,
+   "r": [
+    25,
+    50,
+    100,
+    200
+   ],
+   "i": "train"
+  },
+  {
+   "n": "Calle Arrancapechos",
+   "t": "street",
+   "g": "yellow",
+   "p": 260,
+   "r": [
+    22,
+    110,
+    330,
+    800,
+    975,
+    1150
+   ]
+  },
+  {
+   "n": "Calle Siesta",
+   "t": "street",
+   "g": "yellow",
+   "p": 260,
+   "r": [
+    22,
+    110,
+    330,
+    800,
+    975,
+    1150
+   ]
+  },
+  {
+   "n": "ChauGuau",
+   "t": "utility",
+   "p": 150,
+   "i": "tap"
+  },
+  {
+   "n": "Calle Abuelo",
+   "t": "street",
+   "g": "yellow",
+   "p": 280,
+   "r": [
+    24,
+    120,
+    360,
+    850,
+    1025,
+    1200
+   ]
+  },
+  {
+   "n": "Ir a cárcel",
+   "t": "gotojail",
+   "i": "gotojail"
+  },
+  {
+   "n": "Calle Ternurín",
+   "t": "street",
+   "g": "green",
+   "p": 300,
+   "r": [
+    26,
+    130,
+    390,
+    900,
+    1100,
+    1275
+   ]
+  },
+  {
+   "n": "Calle Winnie The Pooh",
+   "t": "street",
+   "g": "green",
+   "p": 300,
+   "r": [
+    26,
+    130,
+    390,
+    900,
+    1100,
+    1275
+   ]
+  },
+  {
+   "n": "Caja",
+   "t": "chest",
+   "i": "chest"
+  },
+  {
+   "n": "Calle Croqueta",
+   "t": "street",
+   "g": "green",
+   "p": 320,
+   "r": [
+    28,
+    150,
+    450,
+    1000,
+    1200,
+    1400
+   ]
+  },
+  {
+   "n": "Estación 4",
+   "t": "station",
+   "p": 200,
+   "r": [
+    25,
+    50,
+    100,
+    200
+   ],
+   "i": "train"
+  },
+  {
+   "n": "Suerte",
+   "t": "chance",
+   "i": "chance"
+  },
+  {
+   "n": "Calle Masón",
+   "t": "street",
+   "g": "blue",
+   "p": 350,
+   "r": [
+    35,
+    175,
+    500,
+    1100,
+    1300,
+    1500
+   ]
+  },
+  {
+   "n": "Impuesto de lujo",
+   "t": "tax",
+   "p": 100,
+   "i": "lux"
+  },
+  {
+   "n": "Calle Alfa",
+   "t": "street",
+   "g": "blue",
+   "p": 400,
+   "r": [
+    50,
+    200,
+    600,
+    1400,
+    1700,
+    2000
+   ]
+  }
+ ],
+ "cards": {
+  "chance": [
+   {
+    "x": "Avanza hasta la Salida.",
+    "e": "to:0"
+   },
+   {
+    "x": "Avanza hasta la última calle azul.",
+    "e": "to:39"
+   },
+   {
+    "x": "Avanza hasta la primera calle rosa. Si pasas por la Salida, cobras.",
+    "e": "to:11"
+   },
+   {
+    "x": "Avanza hasta la última calle roja. Si pasas por la Salida, cobras.",
+    "e": "to:24"
+   },
+   {
+    "x": "Avanza hasta el servicio más cercano. Si no tiene dueño, puedes comprarlo; si lo tiene, tira los dados y paga 10 veces lo que salga.",
+    "e": "near:u"
+   },
+   {
+    "x": "Avanza hasta la estación más cercana. Si tiene dueño, paga el doble del alquiler.",
+    "e": "near:s"
+   },
+   {
+    "x": "Avanza hasta la estación más cercana. Si tiene dueño, paga el doble del alquiler.",
+    "e": "near:s"
+   },
+   {
+    "x": "El banco te paga un dividendo de 50 €.",
+    "e": "cash:50"
+   },
+   {
+    "x": "Sales gratis de la cárcel. Guarda esta carta hasta que la necesites.",
+    "e": "free"
+   },
+   {
+    "x": "Retrocede 3 casillas.",
+    "e": "back:3"
+   },
+   {
+    "x": "Ve directamente a la cárcel. No pases por la Salida ni cobres.",
+    "e": "jail"
+   },
+   {
+    "x": "Reparaciones: paga 25 € por cada casa y 100 € por cada hotel.",
+    "e": "repair:25:100"
+   },
+   {
+    "x": "Multa por exceso de velocidad: paga 15 €.",
+    "e": "cash:-15"
+   },
+   {
+    "x": "Haz un viaje hasta la Estación 1. Si pasas por la Salida, cobras.",
+    "e": "to:5"
+   },
+   {
+    "x": "Te nombran presidente de la junta: paga 50 € a cada jugador.",
+    "e": "eachpay:50"
+   },
+   {
+    "x": "Tu préstamo de obras vence: cobras 150 €.",
+    "e": "cash:150"
+   },
+   {
+    "x": "Maricarmen: te perdona un alquiler. Guárdala y úsala cuando te toque pagarlo.",
+    "e": "mc"
+   }
+  ],
+  "chest": [
+   {
+    "x": "Avanza hasta la Salida.",
+    "e": "to:0"
+   },
+   {
+    "x": "Error del banco a tu favor: cobras 200 €.",
+    "e": "cash:200"
+   },
+   {
+    "x": "Honorarios del médico: paga 50 €.",
+    "e": "cash:-50"
+   },
+   {
+    "x": "Vendes unas acciones: cobras 50 €.",
+    "e": "cash:50"
+   },
+   {
+    "x": "Sales gratis de la cárcel. Guarda esta carta hasta que la necesites.",
+    "e": "free"
+   },
+   {
+    "x": "Ve directamente a la cárcel. No pases por la Salida ni cobres.",
+    "e": "jail"
+   },
+   {
+    "x": "Fondo de vacaciones: cobras 100 €.",
+    "e": "cash:100"
+   },
+   {
+    "x": "Devolución de Hacienda: cobras 20 €.",
+    "e": "cash:20"
+   },
+   {
+    "x": "Es tu cumpleaños: cada jugador te da 10 €.",
+    "e": "eachget:10"
+   },
+   {
+    "x": "Seguro de vida: cobras 100 €.",
+    "e": "cash:100"
+   },
+   {
+    "x": "Gastos de hospital: paga 100 €.",
+    "e": "cash:-100"
+   },
+   {
+    "x": "Matrícula del colegio: paga 50 €.",
+    "e": "cash:-50"
+   },
+   {
+    "x": "Cobras 25 € por una consultoría.",
+    "e": "cash:25"
+   },
+   {
+    "x": "Reparaciones en la calle: paga 40 € por cada casa y 115 € por cada hotel.",
+    "e": "repair:40:115"
+   },
+   {
+    "x": "Ganas un concurso de belleza: cobras 10 €.",
+    "e": "cash:10"
+   },
+   {
+    "x": "Recibes una herencia: cobras 100 €.",
+    "e": "cash:100"
+   }
+  ]
+ }
+}

@@ -11,8 +11,8 @@ android {
         applicationId = "com.evability.notes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "1.9.7"
+        versionCode = 36
+        versionName = "1.10.0"
     }
 
     buildTypes {
@@ -34,6 +34,14 @@ android {
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 }
+
+// El tablero, las cartas, las fichas y la música del Evapoly viven en docs/ (los usa también la web): se copian a los assets al compilar.
+val syncPolyAssets by tasks.registering(Copy::class) {
+    from("../docs/data/evapoly.json", "../docs/data/evapoly-tokens.json", "../docs/data/evapoly-icons.json", "../docs/music/evapoly.mp3")
+    into(layout.buildDirectory.dir("generated/polyAssets"))
+}
+android.sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/polyAssets"))
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(syncPolyAssets) }
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.09.03"))

@@ -66,3 +66,10 @@ una foto de 96×96 y la última conexión; los documentos nunca se suben. Los co
 
 - Piezas de Evadrez (el ajedrez) «Fresca»: sadsnake1, licencia [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (colección de [lichess](https://github.com/lichess-org/lila/tree/master/public/piece/fresca)).
 - Lista de palabras del Wordle: palabras españolas del diccionario de [an-array-of-spanish-words](https://github.com/words/an-array-of-spanish-words) ordenadas por frecuencia según [FrequencyWords](https://github.com/hermitdave/FrequencyWords).
+
+## Evapoly (Monopoly)
+
+Monopoly para 2 a 4 amigos, desde el mando del chat. Las reglas están en `docs/js/evapoly-engine.js` (web) y `EvapolyEngine.kt` (Android),
+que son idénticos: la partida es una lista de acciones que cada dispositivo aplica con la misma semilla. Para cambiar los **nombres de las
+casillas** (y precios, alquileres o cartas) basta con editar `docs/data/evapoly.json`: la web lo lee tal cual y Android lo copia a sus
+assets al compilar. Las fichas dibujadas están en `docs/data/evapoly-tokens.json` y la música de fondo en `docs/music/evapoly.mp3`.

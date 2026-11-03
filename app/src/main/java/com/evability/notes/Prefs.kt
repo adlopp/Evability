@@ -70,6 +70,11 @@ object Prefs {
         get() = sp.getString("social_session", "") ?: ""
         set(v) = sp.edit().putString("social_session", v).apply()
 
+    /** Música de fondo del Evapoly. */
+    var polyMusic: Boolean
+        get() = sp.getBoolean("poly_music", true)
+        set(v) = sp.edit().putBoolean("poly_music", v).apply()
+
     /** Fondo negro en los minijuegos (Wordle y Evadrez). */
     var gameDark: Boolean
         get() = sp.getBoolean("game_dark", false)

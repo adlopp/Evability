@@ -10,6 +10,13 @@ service cloud.firestore {
     function areFriends(a, b) { return exists(/databases/$(database)/documents/friends/$(pair(a, b))); }
     function inChat(pairId) { return signedIn() && request.auth.uid in pairId.split('_') && exists(/databases/$(database)/documents/friends/$(pairId)); }
     function otherOf(m) { return m[0] == request.auth.uid ? m[1] : m[0]; }
+    // hasta 3 invitados, todos amigos de quien crea la sala
+    function invitedOk(inv) {
+      return inv.size() <= 3
+        && (inv.size() < 1 || areFriends(request.auth.uid, inv[0]))
+        && (inv.size() < 2 || areFriends(request.auth.uid, inv[1]))
+        && (inv.size() < 3 || areFriends(request.auth.uid, inv[2]));
+    }
 
     // nombre de usuario -> uid (el nombre solo se puede reservar una vez)
     match /usernames/{name} {
@@ -133,6 +140,8 @@ service cloud.firestore {
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
             || (request.resource.data.kind == 'image' && request.resource.data.text.size() == 0
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
+            || (request.resource.data.kind == 'poly' && request.resource.data.text.size() == 0
+                && request.resource.data.game is string && request.resource.data.game.size() < 64)
             || (request.resource.data.kind == 'chess' && request.resource.data.text.size() == 0
                 && request.resource.data.game is string && request.resource.data.game.size() < 64
                 && request.resource.data.mins is int && request.resource.data.mins >= 0 && request.resource.data.mins <= 60)
@@ -179,6 +188,56 @@ service cloud.firestore {
           && request.resource.data.from == request.auth.uid
           && request.resource.data.data is string && request.resource.data.data.size() <= 700000;
       }
+    }
+
+    // salas del Evapoly (Monopoly) de hasta 4 jugadores: rooms/{id}. `players` = asientos por orden de llegada (el primero es quien
+    // la crea), `tok` = ficha de cada uno, `acts` = lista de acciones de la partida (cada jugador añade una; las reglas del juego las
+    // aplica y valida cada dispositivo con el mismo motor y la semilla `seed`).
+    match /rooms/{id} {
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'tok', 'money', 'goBonus', 'auction', 'status', 'seed', 'acts', 'at'])
+        && request.resource.data.host == request.auth.uid
+        && request.resource.data.players == [request.auth.uid]
+        && invitedOk(request.resource.data.invited)
+        && request.resource.data.status == 'lobby'
+        && request.resource.data.money is int && request.resource.data.money >= 500 && request.resource.data.money <= 2500
+        && request.resource.data.goBonus is bool && request.resource.data.auction is bool
+        && request.resource.data.acts.size() == 0
+        && request.resource.data.at == request.time;
+      allow update: if signedIn() && (
+        // el anfitrión cambia las reglas o invita a más amigos (solo en la sala de espera)
+        (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['money', 'goBonus', 'auction', 'invited'])
+          && request.resource.data.money is int && request.resource.data.money >= 500 && request.resource.data.money <= 2500
+          && request.resource.data.goBonus is bool && request.resource.data.auction is bool
+          && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
+        // un invitado entra
+        || (resource.data.status == 'lobby' && request.auth.uid in resource.data.invited && !(request.auth.uid in resource.data.players)
+          && resource.data.players.size() < 4
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'tok'])
+          && request.resource.data.players == resource.data.players.concat([request.auth.uid]))
+        // un jugador sale (menos el anfitrión)
+        || (resource.data.status == 'lobby' && request.auth.uid != resource.data.host && request.auth.uid in resource.data.players
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'tok'])
+          && request.resource.data.players.size() == resource.data.players.size() - 1
+          && !(request.auth.uid in request.resource.data.players)
+          && resource.data.players.hasAll(request.resource.data.players))
+        // elegir ficha
+        || (resource.data.status == 'lobby' && request.auth.uid in resource.data.players
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tok']))
+        // empezar la partida
+        || (request.auth.uid == resource.data.host && resource.data.status == 'lobby' && resource.data.players.size() >= 2
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'seed'])
+          && request.resource.data.status == 'playing' && request.resource.data.seed is int)
+        // jugar: exactamente una acción más
+        || (resource.data.status == 'playing' && request.auth.uid in resource.data.players
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acts', 'status'])
+          && request.resource.data.acts.size() == resource.data.acts.size() + 1
+          && (request.resource.data.status == 'playing' || request.resource.data.status == 'finished'))
+      );
+      allow delete: if signedIn() && request.auth.uid == resource.data.host;
     }
 
     // toques (corazones): id = destino_origen; como mucho uno cada 15 minutos por amigo (lo comprueba el servidor)
