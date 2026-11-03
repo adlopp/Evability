@@ -122,6 +122,11 @@ service cloud.firestore {
 
       match /messages/{msgId} {
         allow read, delete: if inChat(pairId);
+        // borrar un mensaje propio: se vacía y queda marcado (del) con la hora (delAt) para que el otro lo vea sin releer todo el chat
+        allow update: if inChat(pairId) && resource.data.from == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['del', 'text', 'rq', 'delAt'])
+          && request.resource.data.del == true && request.resource.data.text == ''
+          && request.resource.data.delAt == request.time;
         // Mensaje de texto, de audio (kind = 'audio': solo guarda la duración; el audio va aparte, en audio/{mismo id}) o de foto
         // (kind = 'image': la foto va en ese mismo documento audio/{mismo id}).
         allow create: if inChat(pairId)

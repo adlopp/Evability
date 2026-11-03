@@ -211,7 +211,7 @@ const unread = new Map();
 let friendUidsCache = [], friendsFetchedAt = 0;
 export const anyUnread = () => [...unread.values()].some(Boolean);
 
-const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0), rq: text(d, 'rq'), rf: text(d, 'rf') });
+const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0), rq: text(d, 'rq'), rf: text(d, 'rf'), del: d.fields?.del?.booleanValue === true });
 
 async function queryUnder(parent, structured) {
   const arr = JSON.parse(await postText(`${DOCS}/${parent}:runQuery`, JSON.stringify({ structuredQuery: structured }), { token: (await live()).idToken }));
@@ -258,6 +258,21 @@ async function sendMessage(friendUid, textMsg, reply) {
   await commit(
     write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(t), ...(reply ? { rid: str(reply.msg.id), rq: str(reply.preview.slice(0, 120)), rf: str(reply.msg.mine ? me : friendUid) } : {}) }, { serverTime: 'at' }),
     write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+}
+
+/** Borra un mensaje propio para los dos: queda vacío y marcado, y si llevaba audio o foto se borra también su contenido. */
+async function deleteMessage(friendUid, id, kind) {
+  const pair = pairId((await live()).uid, friendUid);
+  await commit(writeMask(`chats/${pair}/messages/${id}`, { del: boolV(true), text: str(''), rq: str('') }, ['del', 'text', 'rq'], 'delAt'),
+    ...(kind === 'audio' || kind === 'image' ? [del(`chats/${pair}/audio/${id}`)] : []));
+}
+
+/** Mensajes borrados desde `since` (ms): así el otro lado los ve sin volver a leer todo el chat. */
+async function chatDeletions(friendUid, since) {
+  const pair = pairId((await live()).uid, friendUid);
+  const q = { from: [{ collectionId: 'messages' }], where: filter('delAt', 'GREATER_THAN', { timestampValue: new Date(since).toISOString() }), orderBy: [{ field: { fieldPath: 'delAt' }, direction: 'ASCENDING' }], limit: 50 };
+  const docs = await queryUnder(`chats/${pair}`, q);
+  return { ids: docs.map((d) => idOf(d.name)), max: Math.max(0, ...docs.map((d) => time(d, 'delAt'))) };
 }
 
 function markRead(friendUid, at) {
@@ -589,15 +604,40 @@ function openChat(friend) {
     return h('div', { class: 'chess-card' }, ico, h('div', { class: 'grow' }, h('b', {}, 'Evapoly'), status), btn);
   }
 
+  const rowsById = new Map();
+  let delSince = serverNow();
+  const goneContent = (bubble, m) => bubble.replaceChildren(h('span', { class: 'gone' }, 'Mensaje borrado'), h('small', {}, fmt(m.at)));
+  function markGone(id) {
+    const r = rowsById.get(id);
+    if (!r || r.gone) return;
+    r.gone = true;
+    if (playing?.id === id) stopPlaying();
+    goneContent(r.bubble, r.m);
+    r.el.querySelectorAll('.reply-btn').forEach((b) => b.remove());
+  }
+  async function applyDeletions() {
+    const r = await chatDeletions(friend.uid, delSince);
+    for (const id of r.ids) markGone(id);
+    delSince = Math.max(delSince, r.max);
+  }
+
   const makeRow = (m, me) => {
     seen.add(m.id);
     const av = m.mine ? avatar(session?.username || '', me.photo, 32, null, session?.uid) : avatar(friend.username, friend.photo, 32, null, friend.uid);
     const quote = m.rq ? h('div', { class: 'quote' }, h('b', {}, m.rf === session?.uid ? 'Tú' : friend.username), h('span', {}, m.rq)) : null;
     const replyBtn = h('button', { class: 'reply-btn', 'aria-label': 'Responder', onclick: () => setReply(m) }, icon('reply', 16));
+    const delBtn = h('button', { class: 'reply-btn', 'aria-label': 'Borrar', onclick: async () => {
+      if (!(await confirmDialog('Borrar mensaje', '', 'Borrar'))) return;
+      try { await deleteMessage(friend.uid, m.id, m.kind); markGone(m.id); } catch (e) { toast(e.message || 'No se pudo borrar'); }
+    } }, icon('trash', 16));
     const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
-    return { mine: m.mine, av, el: h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [replyBtn, bubble, av] : [av, bubble, replyBtn])) };
+    const el = h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [delBtn, replyBtn, bubble, av] : [av, bubble, replyBtn]));
+    rowsById.set(m.id, { bubble, el, m, gone: false });
+    if (m.del) { rowsById.get(m.id).gone = true; goneContent(bubble, m); delBtn.remove(); replyBtn.remove(); }
+    return { mine: m.mine, av, el };
   };
   async function load() {
+    await applyDeletions().catch(() => {});
     const raw = await chatMessages(friend.uid, lastAt);
     if (lastAt === 0 && raw.length < 50) hasMore = false;
     const fresh = raw.filter((m) => !seen.has(m.id));

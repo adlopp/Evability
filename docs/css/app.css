@@ -400,3 +400,5 @@ textarea.field { resize: vertical; }
 .ppot { font-weight: 800; font-size: calc(var(--bs) / 28); color: #8a5a14; background: rgba(255,255,255,.7); padding: .2em .7em; border-radius: 1em; }
 
 .psq { -webkit-touch-callout: none; touch-action: manipulation; } .psq.pzoom { z-index: 300; pointer-events: none; box-shadow: 0 10px 40px rgba(0,0,0,.6); border-radius: 6px; border-width: 2px; color: #1c1b22; transition: none; }
+
+.bubble .gone { font-style: italic; opacity: .65; }

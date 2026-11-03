@@ -132,22 +132,24 @@ object PolySound {
 /** Música de fondo de las salas del Evapoly (assets/evapoly.mp3): en bucle y más bajita que los sonidos. */
 object PolyMusic {
     private var player: MediaPlayer? = null
-    private const val VOLUME = 0.12f
+    private const val VOLUME = 0.25f
 
     fun start(ctx: Context) {
         if (!Prefs.polyMusic || player != null) return
         runCatching {
             val fd = ctx.assets.openFd("evapoly.mp3")
-            player = MediaPlayer().apply {
-                setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
-                fd.close()
-                isLooping = true
-                setVolume(VOLUME, VOLUME)
-                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
-                prepare()
-                start()
-            }
-        }
+            val p = MediaPlayer()
+            player = p
+            p.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+            fd.close()
+            p.isLooping = true
+            p.setVolume(VOLUME, VOLUME)
+            p.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+            // se prepara en segundo plano: así abrir la sala no espera a que cargue la canción
+            p.setOnPreparedListener { if (player === it) it.start() }
+            p.setOnErrorListener { mp, _, _ -> runCatching { mp.release() }; if (player === mp) player = null; true }
+            p.prepareAsync()
+        }.onFailure { player = null }
     }
 
     fun stop() {

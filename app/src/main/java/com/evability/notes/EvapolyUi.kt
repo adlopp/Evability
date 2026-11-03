@@ -344,6 +344,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var inviteList by remember { mutableStateOf<List<Social.Profile>?>(null) }
     var musicOn by remember { mutableStateOf(Prefs.polyMusic) }
     var lastTurn by remember { mutableIntStateOf(-1) }
+    var loadError by remember { mutableStateOf("") }
 
     fun toast(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
     fun seatOf(uid: String) = room?.players?.indexOf(uid) ?: -1
@@ -463,20 +464,21 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         @Suppress("UNUSED_VARIABLE") val unused = r
     }
 
+    LaunchedEffect(Unit) { PolyMusic.start(ctx) }
     LaunchedEffect(Unit) {
-        PolyMusic.start(ctx)
         while (true) {
             try {
                 val r = Social.polyRoom(roomId)
                 if (r == null) { toast("La sala se ha cerrado"); onClose(); return@LaunchedEffect }
                 val wasLobby = room == null || room?.status == "lobby"
                 room = r
+                loadError = ""
                 loadNames(r)
                 if (r.status != "lobby") { if (st == null || wasLobby) buildState(r) else syncActs(r) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // sin red: se reintenta
+                loadError = e.message ?: e.javaClass.simpleName // sin red o sin permiso: se reintenta y se enseña el motivo
             }
             delay(1_500)
         }
@@ -496,7 +498,12 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
             }) { Icon(if (musicOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff, "Música", tint = OnSurface) }
         }
         if (r == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("…", color = OnSurfaceDim, fontSize = 24.sp) }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                    Text("…", color = OnSurfaceDim, fontSize = 24.sp)
+                    if (loadError.isNotEmpty()) Text(loadError, color = OnSurfaceDim, fontSize = 14.sp, textAlign = TextAlign.Center)
+                }
+            }
         } else if (r.status == "lobby" || st == null) {
             PolyLobby(
                 r, me, names, photos, toks.size, onToast = ::toast,

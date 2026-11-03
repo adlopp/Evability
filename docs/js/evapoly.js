@@ -45,7 +45,7 @@ let music = null;
 const musicOn = () => { try { return localStorage.getItem('ev.polyMusic') !== '0'; } catch { return true; } };
 function startMusic() {
   if (!musicOn()) return;
-  if (!music) { music = new Audio('music/evapoly.mp3'); music.loop = true; music.volume = 0.12; }
+  if (!music) { music = new Audio('music/evapoly.mp3'); music.loop = true; music.volume = 0.25; }
   music.play().catch(() => {});
 }
 const stopMusic = () => { music?.pause(); };

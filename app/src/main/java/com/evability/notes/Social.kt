@@ -41,7 +41,10 @@ object Social {
     class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long, val studying: Boolean = false)
     class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>)
     class Heart(val id: Long, val x: Float, val y: Float)
-    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "", val game: String = "")
+    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "", val game: String = "", val deleted: Boolean = false) {
+        /** El mismo mensaje ya borrado: sin contenido, solo queda el aviso. */
+        fun gone() = ChatMessage(id, mine, "", at, kind, 0L, 0, "", "", game, true)
+    }
 
     /** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
     val unread = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
@@ -471,7 +474,7 @@ object Social {
     }
 
     private fun messageOf(d: JSONObject, me: String) =
-        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"), d.text("rq"), d.text("rf"), d.text("game"))
+        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"), d.text("rq"), d.text("rf"), d.text("game"), d.bool("del"))
 
     private fun orderByAt(direction: String) =
         JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "at")).put("direction", direction))
@@ -560,6 +563,27 @@ object Social {
             ),
             write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
         )
+    }
+
+    /** Borra un mensaje propio para los dos: queda vacío y marcado, y si llevaba audio o foto se borra también su contenido. */
+    suspend fun deleteMessage(friendUid: String, m: ChatMessage) = withContext(Dispatchers.IO) {
+        val pair = pairId(live().uid, friendUid)
+        val writes = arrayListOf(
+            writeMask("chats/$pair/messages/${m.id}", JSONObject().put("del", bool(true)).put("text", str("")).put("rq", str("")), listOf("del", "text", "rq"), "delAt"),
+        )
+        if (m.kind == "audio" || m.kind == "image") writes.add(delete("chats/$pair/audio/${m.id}"))
+        commit(*writes.toTypedArray())
+    }
+
+    /** Ids de los mensajes borrados desde `since` (ms) y la hora del último: el otro lado los ve sin releer todo el chat. */
+    suspend fun chatDeletions(friendUid: String, since: Long): Pair<List<String>, Long> = withContext(Dispatchers.IO) {
+        val pair = pairId(live().uid, friendUid)
+        val q = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
+            .put("where", filter("delAt", "GREATER_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(since).toString())))
+            .put("orderBy", JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "delAt")).put("direction", "ASCENDING")))
+            .put("limit", 50)
+        val docs = queryUnder("chats/$pair", q)
+        docs.map { idOf(it.getString("name")) } to (docs.maxOfOrNull { it.time("delAt") } ?: 0L)
     }
 
     /** Manda un audio: el contenido va en su propio documento y el mensaje solo lleva la duración (así el chat carga ligero). */

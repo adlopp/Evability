@@ -1,5 +1,7 @@
 package com.evability.notes
 
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.combinedClickable
 import android.widget.Toast
@@ -111,7 +113,19 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     val listState = rememberLazyListState()
     val hour = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
+    var delSince by remember { mutableLongStateOf(Social.serverNow()) }
+    var menuMsg by remember { mutableStateOf<Social.ChatMessage?>(null) }
+
     suspend fun load() {
+        runCatching {
+            val (ids, newest) = Social.chatDeletions(friend.uid, delSince)
+            for (id in ids) {
+                val ix = messages.indexOfFirst { it.id == id }
+                if (ix >= 0 && !messages[ix].deleted) messages[ix] = messages[ix].gone()
+                if (VoicePlayer.playingId == id) VoicePlayer.stop()
+            }
+            delSince = maxOf(delSince, newest)
+        }
         val raw = Social.chatMessages(friend.uid, lastAt)
         if (lastAt == 0L && raw.size < 50) hasMore = false
         val fresh = raw.filter { m -> messages.none { it.id == m.id } }
@@ -241,6 +255,36 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         ChessScreen(friend, id) { chessId = null; scope.launch { runCatching { load() } } }
         return
     }
+    menuMsg?.let { m ->
+        AlertDialog(
+            onDismissRequest = { menuMsg = null },
+            title = null,
+            text = {
+                Column {
+                    TextButton(onClick = { replyTo = m; menuMsg = null }, modifier = Modifier.fillMaxWidth()) { Text("Responder", fontSize = 17.sp) }
+                    if (m.mine) TextButton(
+                        onClick = {
+                            menuMsg = null
+                            scope.launch {
+                                try {
+                                    Social.deleteMessage(friend.uid, m)
+                                    val ix = messages.indexOfFirst { it.id == m.id }
+                                    if (ix >= 0) messages[ix] = messages[ix].gone()
+                                    if (VoicePlayer.playingId == m.id) VoicePlayer.stop()
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    Toast.makeText(ctx, e.message ?: "No se pudo borrar", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Borrar", fontSize = 17.sp) }
+                }
+            },
+            confirmButton = { TextButton(onClick = { menuMsg = null }) { Text("Cancelar") } },
+        )
+    }
     polyId?.let { id ->
         EvapolyScreen(id) { polyId = null; scope.launch { runCatching { load() } } }
         return
@@ -315,17 +359,19 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                         Column(
                             Modifier.widthIn(max = 440.dp)
                                 .background(if (m.mine) Accent else Surface2, RoundedCornerShape(18.dp))
-                                .combinedClickable(onClick = {}, onLongClick = { replyTo = m })
+                                .combinedClickable(onClick = {}, onLongClick = { if (!m.deleted) menuMsg = m })
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                         ) {
-                            if (m.replyText.isNotEmpty()) {
+                            if (m.deleted) Text("Mensaje borrado", fontSize = 15.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = (if (m.mine) OnAccent else OnSurface).copy(alpha = 0.65f))
+                            else if (m.replyText.isNotEmpty()) {
                                 val fg = if (m.mine) OnAccent else OnSurface
                                 Column(Modifier.padding(bottom = 6.dp).background(fg.copy(alpha = 0.15f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
                                     Text(if (m.replyFrom == Social.session?.uid) "Tú" else friend.username, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = fg.copy(alpha = 0.85f))
                                     Text(m.replyText, fontSize = 13.sp, maxLines = 2, color = fg.copy(alpha = 0.85f))
                                 }
                             }
-                            if (m.kind == "image") PhotoRow(m, friend.uid)
+                            if (m.deleted) { /* solo el aviso */ }
+                            else if (m.kind == "image") PhotoRow(m, friend.uid)
                             else if (m.kind == "audio") AudioRow(m, friend.uid, if (m.mine) OnAccent else OnSurface)
                             else if (m.kind == "poly") PolyCard(m, if (m.mine) OnAccent else OnSurface) { polyId = it }
                             else if (m.kind == "chess") ChessCard(m, friend, if (m.mine) OnAccent else OnSurface) { chessId = m.id }
