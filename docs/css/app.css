@@ -285,12 +285,16 @@ textarea.field { resize: vertical; }
   .cside .cplayer:first-child { order: 1 !important; } .cside .cbanner { order: 2 !important; } .cside .cactions { order: 3 !important; } .cside .cplayer:last-child { order: 4 !important; }
 }
 
-/* Evadrez a pantalla completa */
+/* Evadrez a pantalla completa: tablero en el centro, el rival arriba a la izquierda, tú abajo a la derecha y el botón de salir arriba a la derecha */
 .cplayer .cfull-exit { display: none; }
 .pomo.chess.full .pomo-top, .pomo.chess.full .cbanner, .pomo.chess.full .cactions { display: none; }
-.pomo.chess.full .chess-main { --bs: min(100vw, calc(100vh - 100px)); padding: 2px; justify-content: center; }
-.pomo.chess.full .cplayer .cfull-exit { display: inline-flex; }
-.pomo.chess.full .cboard { border-radius: 6px; }
+.pomo.chess.full .chess-main { --bs: min(100vw, calc(100vh - 130px)); padding: 0; justify-content: center; align-items: center; overflow: hidden; }
+.pomo.chess.full .cside { display: contents; }
+.pomo.chess.full .cplayer { position: fixed; width: 260px; box-sizing: border-box; background: var(--surface1); z-index: 3; }
+.pomo.chess.full .cside .cplayer:first-child { top: calc(var(--safe-top) + 8px); left: 8px; order: initial; }
+.pomo.chess.full .cside .cplayer:last-child { bottom: calc(var(--safe-bottom) + 8px); right: 8px; order: initial; }
+.pomo.chess.full .cplayer .cfull-exit { display: inline-flex; position: fixed; top: calc(var(--safe-top) + 8px); right: 8px; background: var(--surface2); border-radius: 50%; z-index: 4; }
+.pomo.chess.full .cboard { border-radius: 6px; order: initial; }
 @media (orientation: landscape) and (min-width: 900px) {
-  .pomo.chess.full .chess-main { --bs: min(calc(100vh - 12px), 74vw); }
+  .pomo.chess.full .chess-main { --bs: min(calc(100vh - 16px), calc(100vw - 560px)); flex-direction: column; }
 }

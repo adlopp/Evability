@@ -589,46 +589,48 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     }
 
     // El tablero ocupa casi toda la pantalla. En horizontal (tablet) va a la izquierda a toda altura y los jugadores, el estado y
-    // los botones quedan a su derecha; en vertical, jugadores arriba y abajo y los botones debajo. En pantalla completa se quitan
-    // la cabecera, el estado y los botones, y el tablero ocupa todo lo que puede.
+    // los botones quedan a su derecha; en vertical, jugadores arriba y abajo y los botones debajo.
+    // En pantalla completa el tablero va en el centro de la pantalla, el rival arriba a la izquierda, tú abajo a la derecha y el botón
+    // de salir arriba a la derecha.
     BoxWithConstraints(
         Modifier.fillMaxSize().background(Bg).then(if (fullScreen) Modifier else Modifier.statusBarsPadding().navigationBarsPadding()),
     ) {
-        if (maxWidth > maxHeight * 1.2f) {
-            val side = (if (fullScreen) maxHeight - 8.dp else minOf(maxHeight - 16.dp, maxWidth * 0.64f)).coerceAtLeast(200.dp)
-            Row(Modifier.fillMaxSize().padding(if (fullScreen) 4.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (fullScreen) {
+            val land = maxWidth > maxHeight * 1.2f
+            val side = (if (land) minOf(maxHeight - 8.dp, maxWidth - 560.dp) else minOf(maxWidth, maxHeight - 130.dp)).coerceAtLeast(200.dp)
+            Box(Modifier.fillMaxSize()) {
+                Box(Modifier.align(Alignment.Center)) { Board(side) }
+                Bar(opp, friend.username, friend.photo, Modifier.align(Alignment.TopStart).padding(8.dp).width(260.dp))
+                Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.align(Alignment.BottomEnd).padding(8.dp).width(260.dp))
+                Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) { ExitFullScreen() }
+            }
+        } else if (maxWidth > maxHeight * 1.2f) {
+            val side = minOf(maxHeight - 16.dp, maxWidth * 0.64f).coerceAtLeast(200.dp)
+            Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Board(side)
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = Alignment.CenterHorizontally) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        if (fullScreen) Box(Modifier.fillMaxWidth().padding(4.dp), contentAlignment = Alignment.CenterEnd) { ExitFullScreen() } else Header()
+                        Header()
                         Bar(opp, friend.username, friend.photo, Modifier.fillMaxWidth())
                     }
-                    if (!fullScreen) StatusPanel()
+                    StatusPanel()
                     Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.fillMaxWidth())
                 }
             }
         } else {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (!fullScreen) Header()
+                Header()
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val side = (if (fullScreen) minOf(maxWidth, maxHeight - 100.dp) else minOf(maxWidth - 8.dp, maxHeight - 104.dp, 900.dp)).coerceAtLeast(200.dp)
+                    val side = minOf(maxWidth - 8.dp, maxHeight - 104.dp, 900.dp).coerceAtLeast(200.dp)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        if (fullScreen) {
-                            Row(Modifier.width(side), verticalAlignment = Alignment.CenterVertically) {
-                                Bar(opp, friend.username, friend.photo, Modifier.weight(1f))
-                                Spacer(Modifier.width(6.dp))
-                                ExitFullScreen()
-                            }
-                        } else {
-                            Bar(opp, friend.username, friend.photo, Modifier.width(side))
-                        }
+                        Bar(opp, friend.username, friend.photo, Modifier.width(side))
                         Spacer(Modifier.height(4.dp))
                         Board(side)
                         Spacer(Modifier.height(4.dp))
                         Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.width(side))
                     }
                 }
-                if (!fullScreen) StatusPanel()
+                StatusPanel()
             }
         }
     }
