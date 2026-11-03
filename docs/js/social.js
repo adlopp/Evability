@@ -2,6 +2,7 @@
 // habla con Firebase por su API REST (sin SDK). Las claves no son secretas; la seguridad la ponen las reglas de `firestore.rules`.
 
 import { h, icon, toast, confirmDialog, modal, uid } from './ui.js';
+import { studying } from './pomodoro.js';
 
 const PROJECT = 'evability-a4c4d';
 const API_KEY = 'AIzaSyD1LmNMAePR63FPvCldLWPXQl4JvmnFars';
@@ -135,7 +136,7 @@ export async function resetPassword(rawEmail) {
   catch (e) { throw e.message === 'Usuario o contraseña incorrectos' ? new Error('No hay ninguna cuenta con ese correo') : e; }
 }
 
-export function signOut() { saveSession(null); lastShownPoke = -1; }
+export function signOut() { saveSession(null); lastShownPoke = -1; unread.clear(); friendUidsCache = []; }
 
 export async function myProfile() { const s = await live(); return profile(s.uid, (await getAll('users', [s.uid]))[s.uid]); }
 /** Guarda la miniatura (la de las listas) y, aparte, la foto en alta resolución para cuando se amplía. */
@@ -175,7 +176,7 @@ export async function overview() {
   const presence = await getAll('presence', friendUids).catch(() => ({}));
   const pokes = await getAll('pokes', friendUids.map((u) => `${u}_${me}`)).catch(() => ({}));
   return {
-    friends: friendUids.map((u) => ({ profile: profile(u, profiles[u]), lastSeen: time(presence[u], 'lastSeen'), lastPokeAt: time(pokes[`${u}_${me}`], 'at') }))
+    friends: friendUids.map((u) => ({ profile: profile(u, profiles[u]), lastSeen: time(presence[u], 'lastSeen'), lastPokeAt: time(pokes[`${u}_${me}`], 'at'), studying: presence[u]?.fields?.studying?.booleanValue === true }))
       .sort((a, b) => a.profile.username.localeCompare(b.profile.username)),
     incoming: incomingUids.map((u) => profile(u, profiles[u])),
     outgoing,
@@ -194,9 +195,107 @@ export async function accept(uid) {
 export async function decline(uid) { await commit(del(`requests/${uid}_${(await live()).uid}`)); }
 export async function removeFriend(uid) { const m = [(await live()).uid, uid].sort(); await commit(del(`friends/${m[0]}_${m[1]}`)); }
 
+// ───────── chat ─────────
+
+const pairId = (a, b) => (a < b ? `${a}_${b}` : `${b}_${a}`);
+const readKey = (pair) => 'ev.chatRead.' + pair;
+const chatRead = (pair) => Number(localStorage.getItem(readKey(pair)) || 0);
+/** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
+const unread = new Map();
+let friendUidsCache = [], friendsFetchedAt = 0;
+export const anyUnread = () => [...unread.values()].some(Boolean);
+
+async function queryUnder(parent, structured) {
+  const arr = JSON.parse(await postText(`${DOCS}/${parent}:runQuery`, JSON.stringify({ structuredQuery: structured }), { token: (await live()).idToken }));
+  return arr.filter((r) => r.document).map((r) => r.document);
+}
+const orderByAt = (direction) => [{ field: { fieldPath: 'at' }, direction }];
+
+/** Mira si algún amigo te ha escrito algo que no has leído (una lectura por amigo). */
+async function checkChats() {
+  const me = (await live()).uid;
+  if (!friendUidsCache.length || Date.now() - friendsFetchedAt > 60000) {
+    friendUidsCache = (await query('friends', filter('members', 'ARRAY_CONTAINS', str(me)))).map((d) => list(d, 'members').find((u) => u !== me));
+    friendsFetchedAt = Date.now();
+  }
+  if (!friendUidsCache.length) return;
+  const metas = await getAll('chats', friendUidsCache.map((u) => pairId(me, u)));
+  for (const u of friendUidsCache) {
+    const pair = pairId(me, u), meta = metas[pair];
+    unread.set(u, !!meta && text(meta, 'lastFrom') !== me && time(meta, 'lastAt') > chatRead(pair));
+  }
+  document.querySelector('.top-row .round[aria-label=Amigos]')?.classList.toggle('badge', anyUnread());
+}
+
+/** Mensajes del chat: los 50 últimos si `after` es 0, o solo los posteriores a `after` (ms). */
+async function chatMessages(friendUid, after) {
+  const me = (await live()).uid, pair = pairId(me, friendUid), base = { from: [{ collectionId: 'messages' }] };
+  const q = after <= 0 ? { ...base, orderBy: orderByAt('DESCENDING'), limit: 50 }
+    : { ...base, where: filter('at', 'GREATER_THAN', { timestampValue: new Date(after).toISOString() }), orderBy: orderByAt('ASCENDING'), limit: 100 };
+  const msgs = (await queryUnder(`chats/${pair}`, q)).map((d) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at') }));
+  if (after > 0) return msgs;
+  // Al abrir el chat se borran los mensajes más antiguos: solo se conservan los últimos 200.
+  try {
+    const old = await queryUnder(`chats/${pair}`, { ...base, orderBy: orderByAt('DESCENDING'), offset: 200, limit: 50 });
+    if (old.length) await commit(...old.map((d) => del(`chats/${pair}/messages/${idOf(d.name)}`)));
+  } catch { /* se borrarán otro día */ }
+  return msgs.reverse();
+}
+
+async function sendMessage(friendUid, textMsg) {
+  const me = (await live()).uid, pair = pairId(me, friendUid), t = textMsg.trim().slice(0, 500);
+  if (!t) return;
+  await commit(
+    write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(t) }, { serverTime: 'at' }),
+    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+}
+
+function markRead(friendUid, at) {
+  if (!session) return;
+  localStorage.setItem(readKey(pairId(session.uid, friendUid)), String(at));
+  unread.set(friendUid, false);
+  document.querySelector('.top-row .round[aria-label=Amigos]')?.classList.toggle('badge', anyUnread());
+}
+
+/** Chat con un amigo: los mensajes se ven en cuanto llegan (se consultan cada 3 s mientras la pantalla está abierta). */
+function openChat(friend) {
+  const listEl = h('div', { class: 'chat-list' });
+  const input = h('input', { class: 'field', placeholder: 'Mensaje', maxlength: 500, autocomplete: 'off' });
+  const sendBtn = h('button', { class: 'icon-btn accent', 'aria-label': 'Enviar' }, icon('send'));
+  const root = h('div', { class: 'pomo chat' },
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')),
+      avatar(friend.username, friend.photo, 38), h('h1', {}, friend.username)),
+    listEl, h('div', { class: 'chat-input' }, input, sendBtn));
+  const seen = new Set(); let lastAt = 0, timer;
+  const fmt = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  async function load() {
+    const fresh = (await chatMessages(friend.uid, lastAt)).filter((m) => !seen.has(m.id));
+    if (!fresh.length) return;
+    const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80 || !seen.size;
+    for (const m of fresh) { seen.add(m.id); listEl.append(h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, m.text, h('small', {}, fmt(m.at)))); }
+    lastAt = Math.max(lastAt, ...fresh.map((m) => m.at));
+    markRead(friend.uid, lastAt);
+    if (atBottom) listEl.scrollTop = listEl.scrollHeight;
+  }
+  async function send() {
+    const t = input.value.trim();
+    if (!t) return;
+    input.value = '';
+    try { await sendMessage(friend.uid, t); await load(); listEl.scrollTop = listEl.scrollHeight; }
+    catch (e) { input.value = t; toast(e.message || 'No se pudo enviar'); }
+  }
+  sendBtn.onclick = send;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+  const tick = () => load().catch(() => {});
+  tick(); timer = setInterval(tick, 3000);
+  function close() { clearInterval(timer); root.remove(); }
+  return root;
+}
+
 // ───────── presencia y toques ─────────
 
-export async function heartbeat() { await commit(write(`presence/${(await live()).uid}`, {}, { serverTime: 'lastSeen' })); }
+/** Latido de presencia: cuándo estuviste por última vez y si ahora mismo estás estudiando. */
+export async function heartbeat() { await commit(write(`presence/${(await live()).uid}`, { studying: boolV(studying()) }, { serverTime: 'lastSeen' })); }
 
 export async function poke(uid) {
   const me = (await live()).uid;
@@ -326,7 +425,7 @@ export function startHost() {
   if (!session) return;
   const visible = () => document.visibilityState === 'visible' && session;
   const beat = () => { if (visible()) heartbeat().catch(() => {}); };
-  const poll = () => { if (visible()) { checkPokes().catch(() => {}); checkShares().catch(() => {}); } };
+  const poll = () => { if (visible()) { checkPokes().catch(() => {}); checkShares().catch(() => {}); checkChats().catch(() => {}); } };
   beat(); poll();
   hostTimers = [setInterval(beat, 30000), setInterval(poll, 12000)];
 }
@@ -334,14 +433,14 @@ export function stopHost() { hostTimers.forEach(clearInterval); hostTimers = [];
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && session && hostTimers.length) { heartbeat().catch(() => {}); checkPokes().catch(() => {}); } });
 
 /** «En línea» o «Desconectado hace 5 min»: el último latido de presencia marca cuándo se fue. */
-function presence(lastSeen) {
-  if (lastSeen > 0 && Date.now() - lastSeen < ONLINE_MS) return { online: true, text: 'En línea' };
+function presence(lastSeen, isStudying = false) {
+  if (lastSeen > 0 && Date.now() - lastSeen < ONLINE_MS) return { online: true, text: isStudying ? 'Estudiando' : 'En línea' };
   if (lastSeen <= 0) return { online: false, text: 'Desconectado' };
   const min = Math.max(1, Math.floor((Date.now() - lastSeen) / 60000));
   const ago = min < 60 ? `${min} min` : min < 1440 ? `${Math.floor(min / 60)} h` : min < 2880 ? '1 día' : `${Math.floor(min / 1440)} días`;
   return { online: false, text: `Desconectado hace ${ago}` };
 }
-const paintPresence = (el, lastSeen) => { const p = presence(lastSeen); el.textContent = p.text; el.style.color = p.online ? 'var(--accent)' : 'var(--on-dim)'; };
+const paintPresence = (el, lastSeen, isStudying) => { const p = presence(lastSeen, isStudying); el.textContent = p.text; el.style.color = p.online ? 'var(--accent)' : 'var(--on-dim)'; };
 
 // ───────── pantalla ─────────
 
@@ -529,8 +628,9 @@ export function openSocial(onClose) {
         const wait = f.lastPokeAt + COOLDOWN_MS + 2000 - Date.now();
         const mm = Math.max(0, Math.ceil(wait / 1000));
         return h('div', { class: 'person', 'data-uid': f.profile.uid }, avatar(f.profile.username, f.profile.photo, 46, online, f.profile.uid),
-          h('div', { class: 'grow' }, h('div', {}, f.profile.username), h('div', { class: 'small seen', 'data-ts': f.lastSeen, style: { color: online ? 'var(--accent)' : 'var(--on-dim)' } }, presence(f.lastSeen).text)),
+          h('div', { class: 'grow' }, h('div', {}, f.profile.username), h('div', { class: 'small seen', 'data-ts': f.lastSeen, 'data-st': f.studying ? 1 : 0, style: { color: online ? 'var(--accent)' : 'var(--on-dim)' } }, presence(f.lastSeen, f.studying).text)),
           h('span', { class: 'dim small cd', 'data-until': f.lastPokeAt + COOLDOWN_MS + 2000 }, wait > 0 ? `${Math.floor(mm / 60)}:${String(mm % 60).padStart(2, '0')}` : ''),
+          h('button', { class: 'icon-btn chat-btn', 'aria-label': 'Chat', onclick: (e) => { e.currentTarget.querySelector('.badge')?.remove(); root.append(openChat(f.profile)); } }, icon('chat'), unread.get(f.profile.uid) ? h('i', { class: 'badge' }) : null),
           h('button', { class: 'icon-btn heart', disabled: wait > 0, 'aria-label': 'Mandar un corazón', onclick: act(async () => { await poke(f.profile.uid); toast('❤ enviado a ' + f.profile.username); }) }, icon('heart')),
           h('button', { class: 'icon-btn', 'aria-label': 'Eliminar amigo', onclick: async () => { if (await confirmDialog('Eliminar amigo', `¿Dejar de ser amigo de ${f.profile.username}? Dejaréis de veros en línea y de mandaros corazones.`, 'Eliminar')) act(() => removeFriend(f.profile.uid))(); } }, icon('userMinus')));
       }) : [h('p', { class: 'dim' }, 'Todavía no tienes amigos. Búscalos arriba por su nombre de usuario.')]));
@@ -545,7 +645,7 @@ export function openSocial(onClose) {
     paintLists(); refresh();
     timers.push(setInterval(refresh, 15000));
     // cuenta atrás de los corazones
-    timers.push(setInterval(() => root.querySelectorAll('.seen').forEach((el) => paintPresence(el, Number(el.dataset.ts))), 5000));
+    timers.push(setInterval(() => root.querySelectorAll('.seen').forEach((el) => paintPresence(el, Number(el.dataset.ts), el.dataset.st === '1')), 5000));
     timers.push(setInterval(() => root.querySelectorAll('.cd').forEach((el) => {
       const left = Math.ceil((Number(el.dataset.until) - Date.now()) / 1000);
       el.textContent = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : '';

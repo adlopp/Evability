@@ -70,6 +70,18 @@ object Prefs {
         get() = sp.getString("social_session", "") ?: ""
         set(v) = sp.edit().putString("social_session", v).apply()
 
+    /** Hasta qué mensaje (hora del servidor, en ms) has leído cada chat. */
+    fun chatRead(pair: String): Long = sp.getLong("chat_read_$pair", 0L)
+    fun setChatRead(pair: String, at: Long) = sp.edit().putLong("chat_read_$pair", at).apply()
+
+    /** Contador simple: hora de inicio (0 = parado) y hasta cuándo está guardado su tiempo en las estadísticas. */
+    var simpleStart: Long
+        get() = sp.getLong("simple_start", 0L)
+        set(v) = sp.edit().putLong("simple_start", v).apply()
+    var simpleMark: Long
+        get() = sp.getLong("simple_mark", 0L)
+        set(v) = sp.edit().putLong("simple_mark", v).apply()
+
     /** «Avisos al momento» de documentos de amigos (servicio con notificación fija). Activado por defecto. */
     var quickAlerts: Boolean
         get() = sp.getBoolean("quick_alerts", true)

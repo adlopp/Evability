@@ -4,9 +4,9 @@ import { h, icon, fill, toast, snackbar, modal, confirmDialog, promptDialog, men
 import * as store from './store.js';
 import { TEMPLATE_KINDS, templateCanvas } from './templates.js';
 import { openSettings, VERSION } from './settings.js';
-import { openPomodoro, running as pomoRunning } from './pomodoro.js';
+import { openTime, timeRunning } from './pomodoro.js';
 import { openAnalyze } from './analyze.js';
-import { openSocial, openSend, setReceiver } from './social.js';
+import { openSocial, openSend, setReceiver, anyUnread } from './social.js';
 import { openPdf, pageSizes } from './pdfdoc.js';
 import { exportPdf } from './export.js';
 import { shareOrDownload } from './editor.js';
@@ -306,14 +306,14 @@ export function createHome({ openDoc, onTheme }) {
     fill(root,
       h('div', { class: 'top-row' }, logo,
         h('div', { class: 'grow' }, h('div', { class: 'app-title' }, 'Evability'), h('div', { class: 'dim small' }, 'v' + VERSION)),
-        h('button', { class: 'round', 'aria-label': 'Amigos', title: 'Amigos', onclick: () => { document.getElementById('app').append(openSocial(() => render())); } }, icon('people')),
+        h('button', { class: 'round' + (anyUnread() ? ' badge' : ''), 'aria-label': 'Amigos', title: 'Amigos', onclick: () => { document.getElementById('app').append(openSocial(() => render())); } }, icon('people')),
         h('button', { class: 'round', 'aria-label': 'Analizar', title: 'Analizar', onclick: analyze }, icon('bot')),
         h('button', { class: 'round', 'aria-label': 'Papelera', title: 'Papelera', onclick: trashDialog }, icon('trash')),
         h('button', { class: 'round', 'aria-label': 'Ajustes', title: 'Ajustes', onclick: () => openSettings(() => { onTheme?.(); refresh(); }) }, icon('settings'))),
       h('div', { class: 'actions' },
         h('button', { class: 'btn', onclick: pickFiles }, icon('upload', 20), 'Importar PDF'),
         h('button', { class: 'btn outline', onclick: templatesDialog }, icon('grid', 20), 'Plantillas'),
-        h('button', { class: 'btn outline' + (pomoRunning() ? ' live' : ''), onclick: () => { const p = openPomodoro(() => render()); document.getElementById('app').append(p); } }, icon('timer', 20), 'Tiempo')),
+        h('button', { class: 'btn outline' + (timeRunning() ? ' live' : ''), onclick: () => openTime({ mount: (el) => document.getElementById('app').append(el), onClose: () => render() }) }, icon('timer', 20), 'Tiempo')),
       last && !S.query.trim() && S.filter.kind === 'all' && !selecting ? continueCard(last) : null,
       S.docs.length ? h('div', { class: 'row search-row' }, h('div', { class: 'grow search-wrap' }, icon('search', 18), search),
         h('button', { class: 'text-btn', onclick: (e) => menu(e.currentTarget, Object.entries(SORTS).map(([k, label]) => [label, () => { S.sort = k; render(); }, S.sort === k ? 'bold' : ''])) }, icon('sort', 18), ' ' + SORTS[S.sort])) : null,

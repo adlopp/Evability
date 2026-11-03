@@ -49,11 +49,15 @@ class FriendsWatchService : Service() {
                 s.launch {
                     Prefs.init(ctx)
                     Social.load()
+                    SimpleCounter.load()
                     val store = Store(ctx)
                     while (isActive) {
                         if (Social.session == null || !Prefs.quickAlerts) {
                             stopSelf()
                             break
+                        }
+                        if (!AppVisibility.foreground && (Pomodoro.phase == PomoPhase.STUDY || SimpleCounter.running)) {
+                            try { Social.heartbeat(true) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
                         }
                         if (!AppVisibility.foreground) {
                             try {

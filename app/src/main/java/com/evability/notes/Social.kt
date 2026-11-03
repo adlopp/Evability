@@ -37,9 +37,15 @@ object Social {
 
     class Session(val uid: String, val username: String, var idToken: String, var refreshToken: String, var expiresAt: Long)
     class Profile(val uid: String, val username: String, val photo: String)
-    class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long)
+    class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long, val studying: Boolean = false)
     class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>)
     class Heart(val id: Long, val x: Float, val y: Float)
+    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long)
+
+    /** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
+    val unread = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
+    private var friendUidsCache: List<String> = emptyList()
+    private var friendsFetchedAt = 0L
 
     var session by mutableStateOf<Session?>(null)
         private set
@@ -148,6 +154,7 @@ object Social {
     private fun JSONObject.list(key: String) =
         optJSONObject("fields")?.optJSONObject(key)?.optJSONObject("arrayValue")?.optJSONArray("values")
             ?.let { a -> (0 until a.length()).map { a.getJSONObject(it).optString("stringValue") } } ?: emptyList()
+    private fun JSONObject.bool(key: String) = optJSONObject("fields")?.optJSONObject(key)?.optBoolean("booleanValue", false) ?: false
     private fun JSONObject.time(key: String): Long =
         optJSONObject("fields")?.optJSONObject(key)?.optString("timestampValue")?.takeIf { it.isNotEmpty() }
             ?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
@@ -232,6 +239,8 @@ object Social {
     }
 
     fun signOut() {
+        unread.clear()
+        friendUidsCache = emptyList()
         save(null)
         hearts.clear()
         lastShownPoke = -1L
@@ -296,7 +305,7 @@ object Social {
         val presence = runCatching { getAll("presence", friendUids) }.getOrDefault(emptyMap())
         val pokes = runCatching { getAll("pokes", friendUids.map { "${it}_$me" }) }.getOrDefault(emptyMap())
         Overview(
-            friendUids.map { FriendRow(profile(it, profiles[it]), presence[it]?.time("lastSeen") ?: 0L, pokes["${it}_$me"]?.time("at") ?: 0L) }
+            friendUids.map { FriendRow(profile(it, profiles[it]), presence[it]?.time("lastSeen") ?: 0L, pokes["${it}_$me"]?.time("at") ?: 0L, presence[it]?.bool("studying") ?: false) }
                 .sortedBy { it.profile.username },
             incomingUids.map { profile(it, profiles[it]) },
             outgoing,
@@ -330,8 +339,9 @@ object Social {
 
     // ───────── presencia y toques ─────────
 
-    suspend fun heartbeat() = withContext(Dispatchers.IO) {
-        commit(write("presence/${live().uid}", JSONObject(), serverTime = "lastSeen"))
+    /** Latido de presencia: cuándo estuviste por última vez y si ahora mismo estás estudiando. */
+    suspend fun heartbeat(studying: Boolean = false) = withContext(Dispatchers.IO) {
+        commit(write("presence/${live().uid}", JSONObject().put("studying", JSONObject().put("booleanValue", studying)), serverTime = "lastSeen"))
     }
 
     suspend fun poke(uid: String) = withContext(Dispatchers.IO) {
@@ -443,6 +453,73 @@ object Social {
                 receiving.remove(id)
             }
         }
+    }
+
+    // ───────── chat ─────────
+
+    private fun pairId(a: String, b: String) = if (a < b) "${a}_$b" else "${b}_$a"
+
+    private fun queryUnder(parent: String, structured: JSONObject): List<JSONObject> {
+        val arr = JSONArray(postText("$DOCS/$parent:runQuery", JSONObject().put("structuredQuery", structured).toString(), token = live().idToken))
+        return (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optJSONObject("document") }
+    }
+
+    private fun orderByAt(direction: String) =
+        JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "at")).put("direction", direction))
+
+    /** Mira si algún amigo te ha escrito algo que no has leído (una lectura por amigo). */
+    suspend fun checkChats() = withContext(Dispatchers.IO) {
+        val me = live().uid
+        if (friendUidsCache.isEmpty() || System.currentTimeMillis() - friendsFetchedAt > 60_000) {
+            friendUidsCache = query("friends", filter("members", "ARRAY_CONTAINS", str(me))).map { d -> d.list("members").first { it != me } }
+            friendsFetchedAt = System.currentTimeMillis()
+        }
+        if (friendUidsCache.isEmpty()) return@withContext
+        val metas = getAll("chats", friendUidsCache.map { pairId(me, it) })
+        for (u in friendUidsCache) {
+            val pair = pairId(me, u)
+            val meta = metas[pair]
+            unread[u] = meta != null && meta.text("lastFrom") != me && meta.time("lastAt") > Prefs.chatRead(pair)
+        }
+    }
+
+    /** Mensajes del chat: los 50 últimos si `after` es 0, o solo los posteriores a `after` (ms). */
+    suspend fun chatMessages(friendUid: String, after: Long): List<ChatMessage> = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val base = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
+        val q = if (after <= 0) base.put("orderBy", orderByAt("DESCENDING")).put("limit", 50)
+        else base.put("where", filter("at", "GREATER_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(after).toString())))
+            .put("orderBy", orderByAt("ASCENDING")).put("limit", 100)
+        val list = queryUnder("chats/$pair", q).map { d -> ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at")) }
+        if (after > 0) return@withContext list
+        // Al abrir el chat se borran los mensajes más antiguos: solo se conservan los últimos 200.
+        runCatching {
+            val old = queryUnder(
+                "chats/$pair",
+                JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
+                    .put("orderBy", orderByAt("DESCENDING")).put("offset", 200).put("limit", 50),
+            )
+            if (old.isNotEmpty()) commit(*old.map { delete("chats/$pair/messages/${idOf(it.getString("name"))}") }.toTypedArray())
+        }
+        list.reversed()
+    }
+
+    suspend fun sendMessage(friendUid: String, text: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val t = text.trim().take(500)
+        if (t.isEmpty()) return@withContext
+        commit(
+            write("chats/$pair/messages/${UUID.randomUUID()}", JSONObject().put("from", str(me)).put("text", str(t)), serverTime = "at"),
+            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+        )
+    }
+
+    fun markRead(friendUid: String, at: Long) {
+        val me = session?.uid ?: return
+        Prefs.setChatRead(pairId(me, friendUid), at)
+        unread[friendUid] = false
     }
 
     private fun showHeart() {

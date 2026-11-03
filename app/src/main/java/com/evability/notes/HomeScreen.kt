@@ -205,6 +205,8 @@ fun HomeScreen(
     var showAnalyze by remember { mutableStateOf(false) }
     var showTrash by remember { mutableStateOf(false) }
     var showPomodoro by remember { mutableStateOf(false) }
+    var showSimple by remember { mutableStateOf(false) }
+    var showTimeChooser by remember { mutableStateOf(false) }
     var showSocial by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<DocInfo?>(null) }
@@ -296,7 +298,13 @@ fun HomeScreen(
                         Text("Plantillas", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     }
                     OutlinedButton(
-                        onClick = { showPomodoro = true },
+                        onClick = {
+                            when {
+                                Pomodoro.phase != PomoPhase.IDLE -> showPomodoro = true
+                                SimpleCounter.running -> showSimple = true
+                                else -> showTimeChooser = true
+                            }
+                        },
                         shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(1.5.dp, Accent),
                         contentPadding = PaddingValues(horizontal = 26.dp, vertical = 14.dp),
@@ -438,7 +446,16 @@ fun HomeScreen(
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp))
 
         if (showPomodoro) PomodoroScreen { showPomodoro = false }
+        if (showSimple) SimpleCounterScreen { showSimple = false }
         if (showSocial) SocialScreen { showSocial = false }
+    }
+
+    if (showTimeChooser) {
+        TimeChooserDialog(
+            onTernurin = { showTimeChooser = false; showPomodoro = true },
+            onSimple = { showTimeChooser = false; showSimple = true },
+            onDismiss = { showTimeChooser = false },
+        )
     }
 
     if (showTemplates) {
@@ -686,7 +703,7 @@ private fun TopRow(version: String, onAnalyze: () -> Unit, onSocial: () -> Unit,
             Text("Evability", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.4.sp)
             Text("v$version", fontSize = 12.sp, color = OnSurfaceDim)
         }
-        RoundIconButton(Icons.Default.People, "Amigos", onSocial)
+        RoundIconButton(Icons.Default.People, "Amigos", onSocial, badge = Social.unread.values.any { it })
         Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.SmartToy, "Analizar", onAnalyze)
         Spacer(Modifier.width(10.dp))
@@ -697,11 +714,14 @@ private fun TopRow(version: String, onAnalyze: () -> Unit, onSocial: () -> Unit,
 }
 
 @Composable
-private fun RoundIconButton(icon: ImageVector, description: String, onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier.size(46.dp).clip(CircleShape).background(Surface1).border(1.dp, Outline, CircleShape),
-    ) { Icon(icon, contentDescription = description, tint = Accent) }
+private fun RoundIconButton(icon: ImageVector, description: String, onClick: () -> Unit, badge: Boolean = false) {
+    Box {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.size(46.dp).clip(CircleShape).background(Surface1).border(1.dp, Outline, CircleShape),
+        ) { Icon(icon, contentDescription = description, tint = Accent) }
+        if (badge) Box(Modifier.align(Alignment.TopEnd).size(12.dp).background(Accent, CircleShape).border(2.dp, Bg, CircleShape))
+    }
 }
 
 @Composable

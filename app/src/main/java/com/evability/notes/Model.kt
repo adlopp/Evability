@@ -90,6 +90,7 @@ data class DocInfo(
     val extraKinds: List<String> = emptyList(), // por cada página extra: "" = en blanco, o el nombre de una plantilla
     val hidden: List<Int> = emptyList(), // páginas eliminadas (el PDF original no se toca, solo se ocultan)
     val from: String = "", // nombre del amigo que te lo envió ("" = no recibido)
+    val bookmarks: List<Int> = emptyList(), // páginas marcadas (índice real de página)
 ) {
     /** Plantilla mensual/semanal de este documento (los creados antes de guardar el tipo se reconocen por el nombre). */
     val templateKind: TemplateKind?

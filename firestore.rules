@@ -8,6 +8,7 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function pair(a, b) { return a < b ? a + '_' + b : b + '_' + a; }
     function areFriends(a, b) { return exists(/databases/$(database)/documents/friends/$(pair(a, b))); }
+    function inChat(pairId) { return signedIn() && request.auth.uid in pairId.split('_') && exists(/databases/$(database)/documents/friends/$(pairId)); }
     function otherOf(m) { return m[0] == request.auth.uid ? m[1] : m[0]; }
 
     // nombre de usuario -> uid (el nombre solo se puede reservar una vez)
@@ -75,8 +76,9 @@ service cloud.firestore {
     match /presence/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || areFriends(request.auth.uid, uid));
       allow create, update: if request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['lastSeen'])
-        && request.resource.data.lastSeen == request.time;
+        && request.resource.data.keys().hasOnly(['lastSeen', 'studying'])
+        && request.resource.data.lastSeen == request.time
+        && (!('studying' in request.resource.data) || request.resource.data.studying is bool);
     }
 
     // solicitudes de amistad: id = origen_destino
@@ -100,6 +102,26 @@ service cloud.firestore {
         && id == pair(request.resource.data.members[0], request.resource.data.members[1])
         && exists(/databases/$(database)/documents/requests/$(otherOf(request.resource.data.members) + '_' + request.auth.uid));
       allow delete: if signedIn() && request.auth.uid in resource.data.members;
+    }
+
+    // chat entre amigos: chats/{id de los dos uid ordenados}. El documento del chat guarda quién escribió el último y cuándo
+    // (para el punto de «mensajes sin leer») y los mensajes van en la subcolección messages.
+    match /chats/{pairId} {
+      allow read, delete: if inChat(pairId);
+      allow create, update: if inChat(pairId)
+        && request.resource.data.keys().hasOnly(['lastAt', 'lastFrom'])
+        && request.resource.data.lastFrom == request.auth.uid
+        && request.resource.data.lastAt == request.time;
+
+      match /messages/{msgId} {
+        allow read, delete: if inChat(pairId);
+        allow create: if inChat(pairId)
+          && request.resource.data.keys().hasOnly(['from', 'text', 'at'])
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 500
+          && request.resource.data.at == request.time;
+      }
     }
 
     // toques (corazones): id = destino_origen; como mucho uno cada 15 minutos por amigo (lo comprueba el servidor)

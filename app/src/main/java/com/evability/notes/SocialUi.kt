@@ -64,6 +64,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PersonAdd
@@ -139,7 +140,7 @@ fun SocialHost() {
         if (s == null || !foreground) return@LaunchedEffect
         launch {
             while (true) {
-                try { Social.heartbeat() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
+                try { Social.heartbeat(Pomodoro.phase == PomoPhase.STUDY || SimpleCounter.running) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
                 delay(30_000)
             }
         }
@@ -147,6 +148,7 @@ fun SocialHost() {
             while (true) {
                 try { Social.checkPokes() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
                 try { Social.checkShares() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
+                try { Social.checkChats() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
                 delay(12_000)
             }
         }
@@ -215,7 +217,7 @@ private fun decodePhoto(photo: String): Bitmap? =
 
 /** Foto de perfil redonda. `onTap` = toque; `onHold(true/false)` = empieza/termina una pulsación larga (para ampliarla). */
 @Composable
-private fun Avatar(
+internal fun Avatar(
     name: String, photo: String, size: Int = 46, online: Boolean? = null,
     onTap: (() -> Unit)? = null, onHold: ((Boolean) -> Unit)? = null,
 ) {
@@ -480,6 +482,7 @@ private fun FriendsPanel() {
     var removing by remember { mutableStateOf<Social.Profile?>(null) }
     var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
     var zoomed by remember { mutableStateOf<ZoomTarget?>(null) }
+    var chatWith by remember { mutableStateOf<Social.Profile?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var refresh by remember { mutableLongStateOf(0L) }
 
@@ -641,11 +644,17 @@ private fun FriendsPanel() {
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(f.profile.username, fontSize = 17.sp, color = OnSurface, fontWeight = FontWeight.Medium)
-                        Text(if (online) "En línea" else offlineText(f.lastSeen, now), fontSize = 12.sp, color = if (online) Accent else OnSurfaceDim)
+                        Text(if (online) (if (f.studying) "Estudiando" else "En línea") else offlineText(f.lastSeen, now), fontSize = 12.sp, color = if (online) Accent else OnSurfaceDim)
                     }
                     if (wait > 0) {
                         val secs = (wait / 1000).toInt()
                         Text("%d:%02d".format(secs / 60, secs % 60), color = OnSurfaceDim, fontSize = 13.sp)
+                    }
+                    Box {
+                        IconButton(onClick = { chatWith = f.profile }) { Icon(Icons.Default.ChatBubbleOutline, "Chat", tint = OnSurface) }
+                        if (Social.unread[f.profile.uid] == true) {
+                            Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(10.dp).background(Accent, CircleShape))
+                        }
                     }
                     IconButton(
                         enabled = wait <= 0,
@@ -658,6 +667,7 @@ private fun FriendsPanel() {
         Spacer(Modifier.height(24.dp))
     }
     zoomed?.let { PhotoZoom(it) }
+    chatWith?.let { ChatScreen(it) { chatWith = null } }
     }
 }
 

@@ -145,6 +145,23 @@ class EditorState(
     /** Índices reales de las páginas que se ven, en orden. La posición en esta lista es la que cuenta el visor. */
     fun visiblePages(): List<Int> = (0 until totalPages).filter { it !in hidden }
 
+    // ───── Marcadores de página ─────
+
+    var bookmarks by mutableStateOf(info.bookmarks)
+        private set
+
+    /** Marca o desmarca la página que se está viendo. */
+    fun toggleBookmark() {
+        val real = visiblePages().getOrNull(currentPage) ?: return
+        bookmarks = if (real in bookmarks) bookmarks - real else (bookmarks + real).sorted()
+        store.setBookmarks(info.id, bookmarks)
+    }
+
+    fun removeBookmark(real: Int) {
+        bookmarks = bookmarks - real
+        store.setBookmarks(info.id, bookmarks)
+    }
+
     val visibleCount get() = totalPages - hidden.count { it < totalPages }
 
     /** Elimina la página que está en la posición `position` del visor. Siempre queda al menos una. */

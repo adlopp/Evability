@@ -25,6 +25,7 @@ export const touch = (id) => update(id, (d) => ({ ...d, lastOpened: Date.now() }
 export const setLastPage = (id, p) => update(id, (d) => ({ ...d, lastPage: p }));
 export const setExtra = (id, extra, kinds) => update(id, (d) => ({ ...d, extra, extraKinds: kinds }));
 export const setHidden = (id, hidden) => update(id, (d) => ({ ...d, hidden }));
+export const setBookmarks = (id, bookmarks) => update(id, (d) => ({ ...d, bookmarks }));
 export const rename = (id, name) => update(id, (d) => ({ ...d, name }));
 
 export async function setFavorite(ids, favorite) { for (const id of ids) await update(id, (d) => ({ ...d, favorite })); }

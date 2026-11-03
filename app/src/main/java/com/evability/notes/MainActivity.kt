@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
         handle(intent)
         Prefs.init(applicationContext)
         Social.load()
+        SimpleCounter.load()
         if (Social.session != null) runCatching {
             ShareJob.schedule(applicationContext)
             if (Prefs.quickAlerts) FriendsWatch.start(applicationContext)
@@ -68,6 +70,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        SimpleCounter.flush(this) // se guarda el tiempo hasta que la app pasa a segundo plano
         AppVisibility.foreground = false
         super.onStop()
     }
@@ -239,6 +242,14 @@ private fun App(store: Store, incoming: MutableState<Uri?>) {
     }
 
     LaunchedEffect(Unit) { checkUpdate(false) }
+
+    // Mientras el contador simple cuenta y la app se está usando (en cualquier pantalla), se va guardando su tiempo.
+    LaunchedEffect(SimpleCounter.running) {
+        while (SimpleCounter.running) {
+            SimpleCounter.flush(ctx)
+            delay(30_000)
+        }
+    }
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {

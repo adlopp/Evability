@@ -1,7 +1,7 @@
 // Ternurín (método pomodoro): estudio y descanso se alternan con una alarma hasta que se pulsa Detener.
 // En el iPad una web no puede sonar con la app cerrada: el aviso funciona con la app abierta (se mantiene la pantalla encendida).
 
-import { h, icon, toast } from './ui.js';
+import { h, icon, toast, modal } from './ui.js';
 
 const KEY = 'ev.pomo';
 const S = Object.assign({ phase: 'IDLE', endAt: 0, phaseMs: 0, completed: 0, study: 25, rest: 5, muted: false }, JSON.parse(localStorage.getItem(KEY) || '{}'));
@@ -46,6 +46,7 @@ function accrue(force) {
 export function studyMs(key) {
   let ms = studyLog()[key] || 0;
   if (key === dayKey(new Date()) && S.phase === 'STUDY' && S.mark) ms += Math.max(0, Math.min(Date.now(), S.endAt) - S.mark);
+  if (key === dayKey(new Date()) && SS.start) ms += Math.max(0, Date.now() - SS.mark);
   return ms;
 }
 const emit = () => listeners.forEach((f) => f());
@@ -110,11 +111,12 @@ async function keepAwake(on) {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) accrue(true); // por si el sistema suspende la web
-  else if (S.phase !== 'IDLE') { keepAwake(true); tick(); }
+  if (document.hidden) { accrue(true); flushSimple(true); } // por si el sistema suspende la web
+  else if (S.phase !== 'IDLE' || SS.start) { keepAwake(true); if (S.phase !== 'IDLE') tick(); }
 });
 
 export function start(study, rest) {
+  if (SS.start) return; // con el contador simple en marcha no se puede empezar el Ternurín
   accrue(true);
   S.study = study; S.rest = rest; S.completed = 0;
   ensureAudio(); // el navegador solo permite sonido tras un toque del usuario
@@ -139,6 +141,91 @@ export function stop() {
 if (S.phase !== 'IDLE') { timer = setInterval(tick, 250); }
 
 export const running = () => S.phase !== 'IDLE';
+
+// ───────── contador simple ─────────
+// Cuenta hacia arriba hasta que se detiene. A las 0:00 vuelve a cero (sigue en marcha) y el tiempo de cada día se apunta en su día.
+// Se guarda la hora de inicio, así que sigue bien aunque se salga de la pantalla o se cierre la app.
+
+const SKEY = 'ev.simple';
+const SS = Object.assign({ start: 0, mark: 0 }, JSON.parse(localStorage.getItem(SKEY) || '{}'));
+const saveSimple = () => localStorage.setItem(SKEY, JSON.stringify(SS));
+export const simpleRunning = () => SS.start > 0;
+/** Se está estudiando ahora mismo (fase de estudio del Ternurín o contador simple en marcha). */
+export const studying = () => S.phase === 'STUDY' || SS.start > 0;
+/** Hay algún método de tiempo en marcha (Ternurín o contador simple). */
+export const timeRunning = () => running() || simpleRunning();
+const startOfDay = (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+const simpleElapsed = (now = Date.now()) => (SS.start ? Math.max(0, now - Math.max(SS.start, startOfDay(now))) : 0);
+
+function flushSimple(force) {
+  if (!SS.start) return;
+  const now = Date.now();
+  if (now - SS.mark < (force ? 1 : 5000)) return;
+  addStudy(SS.mark, Math.min(now, SS.mark + 2 * 3600000)); // si pasaron más de 2 h sin tocar la app (contador olvidado), solo se apuntan 2 h
+  SS.mark = now;
+  saveSimple();
+}
+// Mientras la app está visible (en cualquier pantalla) se va guardando el tiempo del contador.
+setInterval(() => { if (!document.hidden) flushSimple(false); }, 30000);
+
+function simpleStart() { SS.start = SS.mark = Date.now(); saveSimple(); keepAwake(true); }
+function simpleStop() { flushSimple(true); SS.start = SS.mark = 0; saveSimple(); keepAwake(false); }
+
+/**
+ * Botón «Tiempo»: si hay un método en marcha entra directamente en él (hasta que se detenga no se puede elegir otro);
+ * si no, pregunta entre el método Ternurín y el contador simple. `mount(el)` coloca la pantalla elegida.
+ */
+export function openTime({ mount, onClose }) {
+  if (S.phase !== 'IDLE') return mount(openPomodoro(onClose));
+  if (SS.start) return mount(openSimple(onClose));
+  const option = (title, sub, fn) => h('button', { class: 'time-option', onclick: () => { m.close(); fn(); } }, h('b', {}, title), h('span', { class: 'dim small' }, sub));
+  const m = modal({
+    title: 'Tiempo',
+    content: h('div', { class: 'stack' }, h('p', { class: 'dim' }, '¿Cómo quieres medir tu tiempo?'),
+      option('Método Ternurín', 'Estudio y descanso con alarma', () => mount(openPomodoro(onClose))),
+      option('Contador Simple', 'Cuenta hacia arriba hasta que lo detengas', () => mount(openSimple(onClose))),
+      h('p', { class: 'dim small' }, 'Mientras uno esté en marcha no se puede abrir el otro.')),
+    actions: [{ label: 'Cancelar' }],
+  });
+}
+
+export function openSimple(onClose) {
+  const R = 134, C = 2 * Math.PI * R;
+  const arc = (cls) => { const e = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); e.setAttribute('class', cls); e.setAttribute('cx', 150); e.setAttribute('cy', 150); e.setAttribute('r', R); return e; };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 300 300');
+  const track = arc('ring-track'), prog = arc('ring-prog');
+  prog.setAttribute('stroke-dasharray', C);
+  prog.style.stroke = 'var(--accent)';
+  svg.append(track, prog);
+  const time = h('div', { class: 'ring-time simple' }), label = h('div', { class: 'ring-label' });
+  const body = h('div', { class: 'pomo-body' });
+  const root = h('div', { class: 'pomo' },
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Contador simple'),
+      h('button', { class: 'round', 'aria-label': 'Tu estudio', title: 'Tu estudio', onclick: () => root.append(openStudyStats()) }, icon('chart'))),
+    h('div', { class: 'pomo-main' }, h('div', { class: 'ring' }, svg, h('div', { class: 'ring-center' }, time, label)), body));
+
+  function update() {
+    flushSimple(false);
+    const run = SS.start > 0, el = simpleElapsed(), secs = Math.floor(el / 1000);
+    time.textContent = [Math.floor(secs / 3600), Math.floor(secs / 60) % 60, secs % 60].map((n) => String(n).padStart(2, '0')).join(':');
+    label.textContent = run ? 'Contando' : 'Listo';
+    prog.setAttribute('stroke-dashoffset', C * (1 - (run ? (el % 3600000) / 3600000 : 0))); // una vuelta al anillo por hora
+    const sig = run ? 'run' : 'idle';
+    if (body.dataset.sig !== sig) {
+      body.dataset.sig = sig;
+      body.replaceChildren(
+        h('button', { class: 'btn big', onclick: () => { run ? simpleStop() : simpleStart(); update(); } }, icon(run ? 'stop' : 'play', 22), run ? ' Detener' : ' Iniciar'),
+        h('p', { class: 'dim small' }, run ? 'Sigue contando aunque salgas de esta pantalla. Hasta que no lo detengas no puedes abrir el método Ternurín.'
+          : 'Cuenta hacia arriba hasta que lo detengas. A las 0:00 vuelve a cero y el tiempo cuenta en tus estadísticas de estudio.'));
+    }
+  }
+  const raf = setInterval(update, 250);
+  if (SS.start) keepAwake(true);
+  update();
+  function close() { clearInterval(raf); flushSimple(true); root.remove(); onClose?.(); }
+  return root;
+}
 
 // ───────── pantalla ─────────
 

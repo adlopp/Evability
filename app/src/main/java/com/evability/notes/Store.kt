@@ -33,13 +33,14 @@ class Store(context: Context) {
         extraKinds = o.optJSONArray("extraKinds")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
         hidden = o.optJSONArray("hidden")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList(),
         from = o.optString("from", ""),
+        bookmarks = o.optJSONArray("bookmarks")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList(),
     )
 
     private fun infoJson(it: DocInfo) =
         JSONObject().put("id", it.id).put("name", it.name).put("pages", it.pages)
             .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra)
             .put("favorite", it.favorite).put("folder", it.folder).put("template", it.template)
-            .put("extraKinds", JSONArray(it.extraKinds)).put("hidden", JSONArray(it.hidden)).put("from", it.from)
+            .put("extraKinds", JSONArray(it.extraKinds)).put("hidden", JSONArray(it.hidden)).put("from", it.from).put("bookmarks", JSONArray(it.bookmarks))
 
     @Synchronized
     fun loadIndex(): List<DocInfo> {
@@ -68,6 +69,8 @@ class Store(context: Context) {
     fun setLastPage(id: String, page: Int) = update(id) { it.copy(lastPage = page) }
 
     fun setHidden(id: String, hidden: List<Int>) = update(id) { it.copy(hidden = hidden) }
+
+    fun setBookmarks(id: String, bookmarks: List<Int>) = update(id) { it.copy(bookmarks = bookmarks) }
 
     fun setExtra(id: String, extra: Int, kinds: List<String>) = update(id) { it.copy(extra = extra, extraKinds = kinds) }
 

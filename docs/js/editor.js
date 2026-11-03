@@ -38,6 +38,7 @@ export class Editor {
     this.anns = await store.anns(this.info.id);
     this.extraKinds = Array.from({ length: this.info.extra }, (_, i) => this.info.extraKinds?.[i] || '');
     this.hidden = [...(this.info.hidden || [])];
+    this.bookmarks = [...(this.info.bookmarks || [])];
     this.templateKind = this.detectTemplate();
 
     this.root = h('div', { class: 'editor' });
@@ -90,7 +91,8 @@ export class Editor {
     this.pagesEl.replaceChildren();
     this.views = this.visiblePages().map((index) => {
       const v = { index, el: h('div', { class: 'page' }), main: h('canvas', { class: 'main' }), text: h('div', { class: 'textLayer' }), base: null, key: '', busy: false, live: null };
-      v.el.append(v.main, v.text);
+      v.mark = h('div', { class: 'mark' }, icon('bookmark', 30));
+      v.el.append(v.main, v.text, v.mark);
       v.el.addEventListener('pointerdown', (e) => this.onPointerDown(e, v));
       this.pagesEl.append(v.el);
       return v;
@@ -99,6 +101,7 @@ export class Editor {
     this.pagesEl.append(this.addBtn);
     this.layout();
     this.renderToolbar(); // el botón de eliminar página depende de cuántas páginas hay
+    this.paintMarks();
   }
 
   layout() {
@@ -634,6 +637,36 @@ export class Editor {
     this.views.forEach((v, i) => { if (v.el.getBoundingClientRect().top <= line) pos = i; });
     this.position = pos;
     this.counter.textContent = `${pos + 1} / ${this.views.length}`;
+    this.paintBookmarkBtn();
+  }
+
+  // ───────── marcadores de página ─────────
+
+  isMarked() { const v = this.views[this.position]; return !!v && this.bookmarks.includes(v.index); }
+  paintMarks() { for (const v of this.views) v.mark.style.display = this.bookmarks.includes(v.index) ? 'block' : 'none'; this.paintBookmarkBtn(); }
+  paintBookmarkBtn() { this.bmBtn?.classList.toggle('marked', this.isMarked()); }
+
+  /** Marca o desmarca la página que se está viendo. */
+  async toggleBookmark() {
+    const v = this.views[this.position];
+    if (!v) return;
+    this.bookmarks = this.bookmarks.includes(v.index) ? this.bookmarks.filter((i) => i !== v.index) : [...this.bookmarks, v.index].sort((a, b) => a - b);
+    await store.setBookmarks(this.info.id, this.bookmarks);
+    this.paintMarks();
+  }
+
+  /** Lista de páginas marcadas: tocar una lleva a ella; la X quita el marcador. */
+  bookmarksDialog() {
+    const body = h('div', { class: 'stack' });
+    const m = modal({ title: 'Marcadores', content: body, actions: [{ label: 'Cerrar', primary: true }] });
+    const draw = () => {
+      const marks = this.views.map((v, i) => ({ v, i })).filter(({ v }) => this.bookmarks.includes(v.index));
+      body.replaceChildren(...(marks.length ? marks.map(({ v, i }) => h('div', { class: 'row between' },
+        h('button', { class: 'text-btn left grow', onclick: () => { m.close(); this.viewer.scrollTo({ top: v.el.offsetTop - 16, behavior: 'smooth' }); } }, `Página ${i + 1}`),
+        h('button', { class: 'icon-btn', 'aria-label': 'Quitar marcador', onclick: async () => { this.bookmarks = this.bookmarks.filter((x) => x !== v.index); await store.setBookmarks(this.info.id, this.bookmarks); this.paintMarks(); draw(); } }, icon('close', 20))))
+        : [h('p', { class: 'dim' }, 'Sin marcadores')]));
+    };
+    draw();
   }
 
   // ───────── páginas: añadir, duplicar plantilla, eliminar ─────────
@@ -757,6 +790,8 @@ export class Editor {
       this.ibtn('redo', 'Rehacer', () => this.redo(), { disabled: !this.redoStack.length }),
       sep(),
       this.ibtn('search', 'Buscar en el PDF', () => this.toggleSearch(), { on: this.searchOpen }),
+      (this.bmBtn = this.ibtn('bookmark', 'Marcar esta página', () => this.toggleBookmark())),
+      this.ibtn('bookmarks', 'Marcadores', () => this.bookmarksDialog()),
       this.ibtn('zoomOut', 'Alejar', () => this.setZoom(this.zoom - 0.25)),
       h('span', { class: 'zoom-label' }, Math.round(this.zoom * 100) + '%'),
       this.ibtn('zoomIn', 'Acercar', () => this.setZoom(this.zoom + 0.25)),

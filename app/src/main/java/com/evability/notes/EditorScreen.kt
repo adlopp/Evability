@@ -54,6 +54,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -62,6 +63,8 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
@@ -184,6 +187,15 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
     }
 
     var confirmDelete by remember { mutableStateOf(false) }
+    var showBookmarks by remember { mutableStateOf(false) }
+
+    if (showBookmarks) {
+        BookmarksDialog(
+            state,
+            onJump = { index -> showBookmarks = false; scope.launch { listState.animateScrollToItem(index) } },
+            onDismiss = { showBookmarks = false },
+        )
+    }
 
     if (confirmDelete) {
         AlertDialog(
@@ -213,7 +225,7 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
     Box(Modifier.fillMaxSize().background(EditorBg).statusBarsPadding().navigationBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
             if (!barsHidden) {
-                TopBar(state, onClose, onExport, addPage, addTemplate, onDeletePage = { confirmDelete = true }, onHide = { barsHidden = true })
+                TopBar(state, onClose, onExport, addPage, addTemplate, onDeletePage = { confirmDelete = true }, onHide = { barsHidden = true }, onBookmarks = { showBookmarks = true })
                 OptionsBar(state)
                 if (state.searchOpen) SearchBar(state)
             }
@@ -236,7 +248,7 @@ fun EditorScreen(state: EditorState, exporting: Boolean, onClose: () -> Unit, on
 // ───────────────────────────── Barras de herramientas ─────────────────────────────
 
 @Composable
-private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit, onAddPage: () -> Unit, onAddTemplate: () -> Unit, onDeletePage: () -> Unit, onHide: () -> Unit) {
+private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit, onAddPage: () -> Unit, onAddTemplate: () -> Unit, onDeletePage: () -> Unit, onHide: () -> Unit, onBookmarks: () -> Unit) {
     Surface(color = Surface1) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp),
@@ -264,6 +276,8 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             ToolBtn(false, Icons.AutoMirrored.Filled.Redo, "Rehacer", enabled = state.canRedo) { state.redo() }
             VDivider()
             ToolBtn(state.searchOpen, Icons.Default.Search, "Buscar en el PDF") { if (state.searchOpen) state.closeSearch() else state.searchOpen = true }
+            ToolBtn(state.visiblePages().getOrNull(state.currentPage) in state.bookmarks, Icons.Default.Bookmark, "Marcar esta página") { state.toggleBookmark() }
+            ToolBtn(false, Icons.Default.Bookmarks, "Marcadores") { onBookmarks() }
             VDivider()
             ToolBtn(false, Icons.Default.ZoomOut, "Alejar") { state.zoom = (state.zoom - 0.25f).coerceAtLeast(MIN_ZOOM) }
             Text("${(state.zoom * 100).roundToInt()}%", color = OnSurfaceDim, modifier = Modifier.widthIn(min = 46.dp))
@@ -278,6 +292,33 @@ private fun TopBar(state: EditorState, onClose: () -> Unit, onExport: () -> Unit
             ToolBtn(false, Icons.Default.FileDownload, "Exportar PDF con anotaciones") { onExport() }
         }
     }
+}
+
+/** Lista de páginas marcadas: tocar una lleva a ella; la X quita el marcador. */
+@Composable
+private fun BookmarksDialog(state: EditorState, onJump: (Int) -> Unit, onDismiss: () -> Unit) {
+    val pages = state.visiblePages()
+    val marks = state.bookmarks.filter { it in pages }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Marcadores") },
+        text = {
+            if (marks.isEmpty()) Text("Sin marcadores", color = OnSurfaceDim)
+            else Column(Modifier.verticalScroll(rememberScrollState())) {
+                marks.forEach { real ->
+                    val index = pages.indexOf(real)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { onJump(index) }, modifier = Modifier.weight(1f)) {
+                            Text("Página ${index + 1}", fontSize = 16.sp, modifier = Modifier.fillMaxWidth())
+                        }
+                        IconButton(onClick = { state.removeBookmark(real) }) { Icon(Icons.Default.Close, contentDescription = "Quitar marcador", tint = OnSurfaceDim) }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
+    )
 }
 
 /** Barra de búsqueda: escribe y salta entre las coincidencias del PDF (resaltadas en la página). */
@@ -569,7 +610,12 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
             ) {
                 items(count, key = { visible[it] }) { i ->
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        PageItem(state, visible[i], pageW, onTextTap, onStickerTap, onPostitTap)
+                        Box(Modifier.width(pageW)) {
+                            PageItem(state, visible[i], pageW, onTextTap, onStickerTap, onPostitTap)
+                            if (visible[i] in state.bookmarks) {
+                                Icon(Icons.Default.Bookmark, contentDescription = null, tint = Accent, modifier = Modifier.align(Alignment.TopEnd).padding(end = 18.dp).size(36.dp))
+                            }
+                        }
                     }
                 }
                 item(key = "add-page") {

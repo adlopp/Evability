@@ -214,3 +214,19 @@ textarea.field { resize: vertical; }
 .order-row .icon-btn:disabled { opacity: .3; }
 
 .chip.add { padding: 8px; border-radius: 50%; color: var(--accent); }
+
+/* contador simple y selector de método */
+.ring-time.simple { font-size: 46px; }
+.time-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 14px 18px; border-radius: 16px; border: 1.5px solid var(--accent); background: none; color: var(--on-surface); text-align: left; font-size: 17px; }
+
+/* marcadores */
+.page .mark { position: absolute; top: -2px; right: 18px; color: var(--accent); pointer-events: none; z-index: 3; display: none; } .page .mark svg { fill: var(--accent); }
+.icon-btn.marked { color: var(--accent); } .icon-btn.marked svg { fill: var(--accent); }
+/* chat */
+.pomo.chat { z-index: 43; }
+.chat-list { flex: 1; overflow-y: auto; width: 100%; max-width: 720px; margin: 0 auto; padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; }
+.bubble { max-width: 75%; padding: 8px 14px; border-radius: 18px; background: var(--surface2); word-wrap: break-word; white-space: pre-wrap; } .bubble.mine { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
+.bubble small { display: block; text-align: right; font-size: 10px; opacity: .7; }
+.chat-input { display: flex; gap: 8px; align-items: center; width: 100%; max-width: 720px; margin: 0 auto; padding: 8px 12px calc(var(--safe-bottom, 0px) + 8px); } .chat-input .field { flex: 1; border-radius: 22px; }
+.chat-btn { position: relative; } .chat-btn .badge, .round.badge::after { content: ''; position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.round.badge { position: relative; } .round.badge::after { top: 0; right: 0; width: 12px; height: 12px; border: 2px solid var(--bg); box-sizing: border-box; }

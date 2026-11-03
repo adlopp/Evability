@@ -89,7 +89,8 @@ fun StudyStatsScreen(onClose: () -> Unit) {
     /** Lo guardado más el tramo que se está estudiando ahora mismo y aún no se ha guardado. */
     fun msOf(d: LocalDate): Long {
         val live = if (d == today && Pomodoro.phase == PomoPhase.STUDY) (tick - Pomodoro.studyMark).coerceAtLeast(0L) else 0L
-        return (data[d] ?: 0L) + live
+        val counter = if (d == today) SimpleCounter.unflushed(System.currentTimeMillis()) else 0L
+        return (data[d] ?: 0L) + live + counter
     }
 
     var weekOffset by remember { mutableIntStateOf(0) }
