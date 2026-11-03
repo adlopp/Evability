@@ -204,3 +204,10 @@ export function darkToggle() {
   try { localStorage.setItem('ev.gameDark', on ? '1' : '0'); } catch { /* sin almacenamiento */ }
   return on;
 }
+/** Barras del sistema (arriba y abajo) en negro mientras el fondo oscuro está puesto; al quitarlo vuelven al color del tema. */
+export function darkBars(on) {
+  const meta = document.querySelector('meta[name=theme-color]');
+  if (!meta) return;
+  if (on) { meta.dataset.prev ??= meta.content; meta.content = '#000000'; }
+  else if (meta.dataset.prev) { meta.content = meta.dataset.prev; delete meta.dataset.prev; }
+}

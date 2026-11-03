@@ -380,6 +380,12 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     val mine = if (myColor == 'b') 'b' else 'w'
 
     var dark by remember { mutableStateOf(Prefs.gameDark) }
+    // Fondo oscuro: mientras está activo todo el tema pasa a negro (también los iconos de las barras del sistema, que dependen de él).
+    DisposableEffect(dark) {
+        val prev = Bg
+        if (dark) Bg = Color.Black
+        onDispose { Bg = prev }
+    }
 
     @Composable
     fun Header() {
@@ -387,16 +393,25 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
             Text("Evadrez", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
             IconButton(onClick = { dark = !dark; Prefs.gameDark = dark }) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
-            IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = OnSurface) }
+            IconButton(
+                onClick = { fullScreen = true },
+                modifier = Modifier.background(if (dark) Color.White else Color.Transparent, CircleShape),
+            ) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = if (dark) Color.Black else OnSurface) }
         }
     }
 
     @Composable
     fun ExitFullScreen() {
-        IconButton(
-            onClick = { fullScreen = false },
-            modifier = Modifier.size(44.dp).background(Surface2, CircleShape),
-        ) { Icon(Icons.Default.FullscreenExit, "Salir de pantalla completa", tint = OnSurface) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(
+                onClick = { dark = !dark; Prefs.gameDark = dark },
+                modifier = Modifier.size(44.dp).background(if (dark) Color.White else Surface2, CircleShape),
+            ) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Color.Black else OnSurface) }
+            IconButton(
+                onClick = { fullScreen = false },
+                modifier = Modifier.size(44.dp).background(if (dark) Color.White else Surface2, CircleShape),
+            ) { Icon(Icons.Default.FullscreenExit, "Salir de pantalla completa", tint = if (dark) Color.Black else OnSurface) }
+        }
     }
 
     @Composable

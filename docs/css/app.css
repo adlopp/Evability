@@ -306,7 +306,7 @@ textarea.field { resize: vertical; }
 .photo-view img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
 /* fondo oscuro de los minijuegos */
-.pomo.dark-bg { background: #000; }
+.pomo.dark-bg { --bg: #000; --surface1: #0b0b0d; --surface2: #1a1a1e; --outline: #2c2c32; --on-surface: #E8E8EC; --on-dim: #9A9CA6; background: #000; color: var(--on-surface); }
 
 /* responder a un mensaje */
 .reply-btn { flex: none; align-self: center; width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--text-dim, inherit); opacity: .35; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
@@ -315,3 +315,8 @@ textarea.field { resize: vertical; }
 .quote b { font-size: 11px; opacity: .85; } .quote span { opacity: .85; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .reply-bar { display: flex; align-items: center; gap: 8px; width: calc(100% - 24px); max-width: 696px; margin: 0 auto; padding: 4px 4px 4px 12px; border-radius: 12px; background: var(--surface2); border-left: 3px solid var(--accent); }
 .reply-bar b { display: block; font-size: 12px; color: var(--accent); } .reply-bar small { display: block; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.pomo.chess.full .cplayer .cfull-dark { right: 60px; }
+
+/* en modo oscuro los botones de agrandar, oscuro y salir son blancos para que no se pierdan en el fondo */
+.pomo.chess.dark-bg .cfull, .pomo.chess.dark-bg.full .cplayer .cfull-exit { background: #fff; color: #000; }

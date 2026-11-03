@@ -1,5 +1,6 @@
 package com.evability.notes
 
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material.icons.filled.DarkMode
 import android.content.Context
 import androidx.activity.compose.BackHandler
@@ -235,6 +236,12 @@ fun WordleScreen(friend: Social.Profile?, onClose: () -> Unit) {
     if (ready) for (g in guesses) WordleGame.evaluate(g, answer).forEachIndexed { i, s -> keyState[g[i]] = maxOf(keyState[g[i]] ?: -1, s) }
 
     var dark by remember { mutableStateOf(Prefs.gameDark) }
+    // Fondo oscuro: mientras está activo todo el tema pasa a negro (también los iconos de las barras del sistema, que dependen de él).
+    DisposableEffect(dark) {
+        val prev = Bg
+        if (dark) Bg = Color.Black
+        onDispose { Bg = prev }
+    }
     Column(Modifier.fillMaxSize().background(if (dark) Color.Black else Bg).statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
