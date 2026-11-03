@@ -392,10 +392,10 @@ const polyApi = (id) => ({
       write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(''), kind: str('poly'), game: str(room.id) }, { serverTime: 'at' }),
       write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
   },
-  join: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs([...room.players, me]), tok: { mapValue: { fields: { [me]: intV(tok) } } } }, ['players', `tok.${me}`])); },
+  join: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs([...room.players, me]), tok: { mapValue: { fields: { [me]: intV(tok) } } } }, ['players', `tok.\`${me}\``])); },
   leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
   setCfg: async (room, c) => { await commit(writeMask(`rooms/${room.id}`, { money: intV(c.money), goBonus: boolV(c.goBonus), auction: boolV(c.auction) }, ['money', 'goBonus', 'auction'])); },
-  setTok: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { tok: { mapValue: { fields: { [me]: intV(tok) } } } }, [`tok.${me}`])); },
+  setTok: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { tok: { mapValue: { fields: { [me]: intV(tok) } } } }, [`tok.\`${me}\``])); },
   start: async (room, seed) => { await commit(writeMask(`rooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
   act: async (room, acts, over) => { await commit(writeMask(`rooms/${room.id}`, { acts: strs(acts), ...(over ? { status: str('finished') } : {}) }, over ? ['acts', 'status'] : ['acts'])); },
   remove: async (room) => { await commit(del(`rooms/${room.id}`)); },

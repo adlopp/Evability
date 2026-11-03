@@ -697,7 +697,7 @@ object Social {
 
     suspend fun polyJoin(room: PolyRoom, tok: Int) = withContext(Dispatchers.IO) {
         val me = live().uid
-        commit(writeMask("rooms/${room.id}", JSONObject().put("players", strs(room.players + me)).put("tok", tokMap(me, tok)), listOf("players", "tok.$me")))
+        commit(writeMask("rooms/${room.id}", JSONObject().put("players", strs(room.players + me)).put("tok", tokMap(me, tok)), listOf("players", "tok.`$me`")))
     }
 
     suspend fun polyLeave(room: PolyRoom) = withContext(Dispatchers.IO) {
@@ -716,7 +716,7 @@ object Social {
 
     suspend fun polyTok(room: PolyRoom, tok: Int) = withContext(Dispatchers.IO) {
         val me = live().uid
-        commit(writeMask("rooms/${room.id}", JSONObject().put("tok", tokMap(me, tok)), listOf("tok.$me")))
+        commit(writeMask("rooms/${room.id}", JSONObject().put("tok", tokMap(me, tok)), listOf("tok.`$me`")))
     }
 
     suspend fun polyStart(room: PolyRoom, seed: Int) = withContext(Dispatchers.IO) {
