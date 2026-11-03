@@ -4,6 +4,7 @@
 import { h, icon, toast, confirmDialog, modal, uid } from './ui.js';
 import { studying } from './pomodoro.js';
 import { openWordle } from './wordle.js';
+import { openChess } from './chess.js';
 
 const PROJECT = 'evability-a4c4d';
 const API_KEY = 'AIzaSyD1LmNMAePR63FPvCldLWPXQl4JvmnFars';
@@ -77,9 +78,12 @@ const text = (d, k) => d?.fields?.[k]?.stringValue || '';
 const list = (d, k) => (d?.fields?.[k]?.arrayValue?.values || []).map((v) => v.stringValue);
 const time = (d, k) => { const t = d?.fields?.[k]?.timestampValue; return t ? Date.parse(t) : 0; };
 
+let serverSkew = 0; // milisegundos de diferencia entre el reloj del servidor y el de este dispositivo
+const serverNow = () => Date.now() + serverSkew;
 async function getAll(collection, ids) {
   if (!ids.length) return {};
   const arr = JSON.parse(await postText(`${DOCS}:batchGet`, JSON.stringify({ documents: ids.map((i) => `${DB}/${collection}/${i}`) }), { token: (await live()).idToken }));
+  if (arr[0]?.readTime) serverSkew = Date.parse(arr[0].readTime) - Date.now();
   const out = {};
   for (const r of arr) if (r.found) out[idOf(r.found.name)] = r.found;
   return out;
@@ -206,7 +210,7 @@ const unread = new Map();
 let friendUidsCache = [], friendsFetchedAt = 0;
 export const anyUnread = () => [...unread.values()].some(Boolean);
 
-const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime') });
+const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0) });
 
 async function queryUnder(parent, structured) {
   const arr = JSON.parse(await postText(`${DOCS}/${parent}:runQuery`, JSON.stringify({ structuredQuery: structured }), { token: (await live()).idToken }));
@@ -261,6 +265,84 @@ function markRead(friendUid, at) {
   document.querySelector('.top-row .round[aria-label=Amigos]')?.classList.toggle('badge', anyUnread());
 }
 
+// ───── ajedrez: partidas en la nube ─────
+
+const writeMask = (path, fields, mask, serverTime) => ({
+  update: { name: `${DB}/${path}`, fields }, updateMask: { fieldPaths: mask }, currentDocument: { exists: true },
+  ...(serverTime ? { updateTransforms: [{ fieldPath: serverTime, setToServerValue: 'REQUEST_TIME' }] } : {}),
+});
+const gameOf = (d, id) => (d ? {
+  id, creator: text(d, 'creator'), joiner: text(d, 'joiner'), white: text(d, 'white'), black: text(d, 'black'), status: text(d, 'status'),
+  mins: Number(d.fields?.mins?.integerValue || 0), moves: list(d, 'moves'), wms: Number(d.fields?.wms?.integerValue || 0), bms: Number(d.fields?.bms?.integerValue || 0),
+  lastAt: time(d, 'lastAt'), result: text(d, 'result'), reason: text(d, 'reason'), drawOffer: text(d, 'drawOffer'),
+} : null);
+
+async function getGame(friendUid, id) {
+  const pair = pairId((await live()).uid, friendUid);
+  return gameOf((await getAll(`chats/${pair}/games`, [id]))[id], id);
+}
+
+/** Crea la partida y manda al chat la invitación (el id de la partida es el del mensaje). `mins` = minutos por jugador, 0 = sin tiempo. */
+async function createGame(friendUid, mins) {
+  const me = (await live()).uid, pair = pairId(me, friendUid), id = uid();
+  await commit(
+    write(`chats/${pair}/games/${id}`, { creator: str(me), joiner: str(''), white: str(''), black: str(''), status: str('waiting'), mins: intV(mins), moves: strs([]), wms: intV(0), bms: intV(0), result: str(''), reason: str(''), drawOffer: str('') }, { serverTime: 'lastAt' }),
+    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('chess'), game: str(id), mins: intV(mins) }, { serverTime: 'at' }),
+    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+  return id;
+}
+
+/** Unirse a una partida: los colores se reparten al azar entre los dos. */
+async function joinGame(friendUid, g) {
+  const me = (await live()).uid, pair = pairId(me, friendUid), iAmWhite = Math.random() < 0.5, ms = g.mins * 60000;
+  await commit(writeMask(`chats/${pair}/games/${g.id}`,
+    { status: str('playing'), joiner: str(me), white: str(iAmWhite ? me : g.creator), black: str(iAmWhite ? g.creator : me), wms: intV(ms), bms: intV(ms) },
+    ['status', 'joiner', 'white', 'black', 'wms', 'bms'], 'lastAt'));
+}
+
+/** Manda una jugada: la lista completa de jugadas, los relojes y, si la partida acaba con ella, el resultado. */
+async function sendMove(friendUid, id, moves, wms, bms, end) {
+  const pair = pairId((await live()).uid, friendUid);
+  const fields = { moves: strs(moves), wms: intV(wms), bms: intV(bms), drawOffer: str('') }, mask = ['moves', 'wms', 'bms', 'drawOffer'];
+  if (end) { Object.assign(fields, { status: str('finished'), result: str(end.result), reason: str(end.reason) }); mask.push('status', 'result', 'reason'); }
+  await commit(writeMask(`chats/${pair}/games/${id}`, fields, mask, 'lastAt'));
+}
+
+async function endGame(friendUid, id, result, reason) {
+  const pair = pairId((await live()).uid, friendUid);
+  await commit(writeMask(`chats/${pair}/games/${id}`, { status: str('finished'), result: str(result), reason: str(reason), drawOffer: str('') }, ['status', 'result', 'reason', 'drawOffer']));
+}
+
+async function offerDraw(friendUid, id, uidOrEmpty) {
+  const pair = pairId((await live()).uid, friendUid);
+  await commit(writeMask(`chats/${pair}/games/${id}`, { drawOffer: str(uidOrEmpty) }, ['drawOffer']));
+}
+
+const chessApi = (friend, id) => ({
+  me: () => session.uid,
+  get: () => getGame(friend.uid, id),
+  join: (g) => joinGame(friend.uid, g),
+  move: (moves, wms, bms, end) => sendMove(friend.uid, id, moves, wms, bms, end),
+  end: (result, reason) => endGame(friend.uid, id, result, reason),
+  offer: (u) => offerDraw(friend.uid, id, u),
+  serverNow,
+  meInfo: async () => ({ username: session.username, photo: (await myProfile().catch(() => ({ photo: '' }))).photo }),
+});
+
+/** Elegir cuánto tiempo tiene cada jugador. Devuelve los minutos (0 = sin tiempo) o null si se cancela. */
+function pickTime() {
+  return new Promise((resolve) => {
+    let chosen = null;
+    const opt = (label, mins) => h('button', { class: 'time-option', onclick: () => { chosen = mins; m.close(); } }, h('b', {}, label));
+    const m = modal({
+      title: 'Tiempo por jugador',
+      content: h('div', { class: 'stack' }, opt('Sin tiempo', 0), opt('3 minutos', 3), opt('5 minutos', 5), opt('10 minutos', 10), opt('15 minutos', 15), opt('30 minutos', 30)),
+      actions: [{ label: 'Cancelar' }],
+      onClose: () => resolve(chosen),
+    });
+  });
+}
+
 // ───── audios ─────
 
 const MAX_AUDIO_MS = 120000;
@@ -305,13 +387,13 @@ const stopRecording = (r) => new Promise((resolve) => {
 let playing = null; // { id, audio, stop() }: solo suena un audio a la vez
 function stopPlaying() { playing?.stop(); playing = null; }
 
-/** Lista de minijuegos del clip del chat: solo Wordle está disponible, los demás salen bloqueados. */
-function openGames(onWordle) {
-  const row = (name, sub, enabled) => h('button', { class: 'game-row' + (enabled ? '' : ' locked'), disabled: !enabled, onclick: enabled ? () => { m.close(); onWordle(); } : null },
-    icon(enabled ? 'grid' : 'lock', 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
+/** Lista de minijuegos del clip del chat: Wordle y Evadrez (ajedrez) disponibles; los demás salen bloqueados. */
+function openGames(onWordle, onChess) {
+  const row = (name, sub, fn) => h('button', { class: 'game-row' + (fn ? '' : ' locked'), disabled: !fn, onclick: fn ? () => { m.close(); fn(); } : null },
+    icon(fn ? 'grid' : 'lock', 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
   const m = modal({
     title: 'Minijuegos',
-    content: h('div', { class: 'stack' }, row('Wordle', null, true), row('Evadrez', 'Próximamente', false), row('Evapoly', 'Próximamente', false), row('???', 'Próximamente', false)),
+    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess), row('Evapoly', 'Próximamente', null), row('???', 'Próximamente', null)),
     actions: [{ label: 'Cerrar' }],
   });
 }
@@ -320,7 +402,14 @@ function openGames(onWordle) {
 function openChat(friend) {
   const listEl = h('div', { class: 'chat-list' });
   const input = h('input', { class: 'field', placeholder: 'Mensaje', maxlength: 5000, autocomplete: 'off' });
-  const clipBtn = h('button', { class: 'icon-btn', 'aria-label': 'Minijuegos', onclick: () => openGames(() => root.append(openWordle({ friendUid: friend.uid, post: (t) => sendMessage(friend.uid, t), onClose: () => tick() }))) }, icon('clip'));
+  const clipBtn = h('button', { class: 'icon-btn', 'aria-label': 'Minijuegos', onclick: () => openGames(
+    () => root.append(openWordle({ friendUid: friend.uid, post: (t) => sendMessage(friend.uid, t), onClose: () => tick() })),
+    async () => {
+      const mins = await pickTime();
+      if (mins === null) return;
+      try { const id = await createGame(friend.uid, mins); await load(); root.append(openChess({ friend, gameId: id, api: chessApi(friend, id), onClose: () => tick() })); }
+      catch (e) { toast(e.message || 'No se pudo crear la partida'); }
+    }) }, icon('clip'));
   const actionBtn = h('button', { class: 'icon-btn accent' });
   const normalRow = h('div', { class: 'rec-row' }, clipBtn, input, actionBtn);
   const recDot = h('i', { class: 'rec-dot' }), recTime = h('span', {}, '0:00');
@@ -332,6 +421,7 @@ function openChat(friend) {
       avatar(friend.username, friend.photo, 38), h('h1', {}, friend.username)),
     listEl, h('div', { class: 'chat-input' }, normalRow, recRow));
   const seen = new Set(); let lastAt = 0, firstAt = 0, timer, hasMore = true, loadingOlder = false, recording = null, recTimer = null;
+  const cardTimers = [];
   const rows = []; // filas en orden: { mine, av, el }
   const myself = myProfile().catch(() => ({ photo: '' }));
   const fmt = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
@@ -358,10 +448,27 @@ function openChat(friend) {
     return h('div', { class: 'audio' }, btn, h('div', { class: 'abar' }, fill), dur);
   }
 
+  /** Invitación a una partida de ajedrez: muestra cómo va y deja unirse o abrirla. */
+  function chessCard(m) {
+    const status = h('small', {}, ''), btn = h('button', { class: 'btn small-btn' }, 'Abrir');
+    const mins = m.mins ? `${m.mins} min` : 'Sin tiempo';
+    const paint = (g) => {
+      if (!g) { status.textContent = ''; return; }
+      const mine = g.creator === session?.uid;
+      status.textContent = g.status === 'waiting' ? (mine ? 'Esperando rival' : 'Te invitan a jugar') : g.status === 'playing' ? 'En juego'
+        : g.result === 'd' ? 'Tablas' : `Ganan ${g.result === 'w' ? 'blancas' : 'negras'}`;
+      btn.textContent = g.status === 'waiting' && !mine ? 'Unirse' : 'Abrir';
+    };
+    const refresh = () => getGame(friend.uid, m.id).then(paint).catch(() => {});
+    btn.onclick = () => root.append(openChess({ friend, gameId: m.id, api: chessApi(friend, m.id), onClose: refresh }));
+    refresh(); cardTimers.push(setInterval(refresh, 6000));
+    return h('div', { class: 'chess-card' }, h('img', { src: 'pieces/wN.svg', alt: '' }), h('div', { class: 'grow' }, h('b', {}, 'Ajedrez'), h('small', {}, mins), status), btn);
+  }
+
   const makeRow = (m, me) => {
     seen.add(m.id);
     const av = m.mine ? avatar(session?.username || '', me.photo, 32, null, session?.uid) : avatar(friend.username, friend.photo, 32, null, friend.uid);
-    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, m.kind === 'audio' ? audioBubble(m) : m.text, h('small', {}, fmt(m.at)));
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, m.kind === 'audio' ? audioBubble(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
     return { mine: m.mine, av, el: h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [bubble, av] : [av, bubble])) };
   };
   async function load() {
@@ -431,7 +538,7 @@ function openChat(friend) {
   paintAction();
   const tick = () => load().catch(() => {});
   tick(); timer = setInterval(tick, 3000);
-  function close() { clearInterval(timer); stopPlaying(); if (recording) finishRec(false); root.remove(); }
+  function close() { clearInterval(timer); cardTimers.forEach(clearInterval); stopPlaying(); if (recording) finishRec(false); root.remove(); }
   return root;
 }
 

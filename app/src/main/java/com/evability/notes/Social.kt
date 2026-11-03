@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+import kotlin.random.Random
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -40,7 +41,7 @@ object Social {
     class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long, val studying: Boolean = false)
     class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>)
     class Heart(val id: Long, val x: Float, val y: Float)
-    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L)
+    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0)
 
     /** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
     val unread = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
@@ -160,10 +161,15 @@ object Social {
             ?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
 
     /** Documentos que existen, por id. */
+    /** Milisegundos de diferencia entre el reloj del servidor y el de este dispositivo (se ajusta en cada lectura). */
+    @Volatile var serverSkew = 0L
+    fun serverNow() = System.currentTimeMillis() + serverSkew
+
     private fun getAll(collection: String, ids: List<String>): Map<String, JSONObject> {
         if (ids.isEmpty()) return emptyMap()
         val body = JSONObject().put("documents", JSONArray(ids.map { "$DB/$collection/$it" }))
         val arr = JSONArray(postText("$DOCS:batchGet", body.toString(), token = live().idToken))
+        arr.optJSONObject(0)?.optString("readTime")?.takeIf { it.isNotEmpty() }?.let { serverSkew = Instant.parse(it).toEpochMilli() - System.currentTimeMillis() }
         val out = HashMap<String, JSONObject>()
         for (i in 0 until arr.length()) arr.getJSONObject(i).optJSONObject("found")?.let { out[idOf(it.getString("name"))] = it }
         return out
@@ -465,7 +471,7 @@ object Social {
     }
 
     private fun messageOf(d: JSONObject, me: String) =
-        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong())
+        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"))
 
     private fun orderByAt(direction: String) =
         JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "at")).put("direction", direction))
@@ -546,6 +552,101 @@ object Social {
         if (data.isEmpty()) throw SocialError("No se pudo cargar el audio")
         f.writeBytes(Base64.decode(data, Base64.DEFAULT))
         f
+    }
+
+    // ───────── ajedrez: partidas en la nube ─────────
+
+    /** `white`/`black` = uid de quien lleva cada color; `moves` = jugadas («e2e4»); `wms`/`bms` = tiempo que le queda a cada uno en `lastAt`. */
+    data class ChessGame(
+        val id: String, val creator: String, val joiner: String, val white: String, val black: String, val status: String, val mins: Int,
+        val moves: List<String>, val wms: Long, val bms: Long, val lastAt: Long, val result: String, val reason: String, val drawOffer: String,
+    )
+
+    private fun gameOf(d: JSONObject?, id: String) = d?.let {
+        ChessGame(
+            id, it.text("creator"), it.text("joiner"), it.text("white"), it.text("black"), it.text("status"), it.int("mins"),
+            it.list("moves"), it.int("wms").toLong(), it.int("bms").toLong(), it.time("lastAt"), it.text("result"), it.text("reason"), it.text("drawOffer"),
+        )
+    }
+
+    private fun writeMask(path: String, fields: JSONObject, mask: List<String>, serverTime: String? = null): JSONObject {
+        val w = JSONObject().put("update", JSONObject().put("name", "$DB/$path").put("fields", fields))
+            .put("updateMask", JSONObject().put("fieldPaths", JSONArray(mask)))
+            .put("currentDocument", JSONObject().put("exists", true))
+        if (serverTime != null) w.put("updateTransforms", JSONArray().put(JSONObject().put("fieldPath", serverTime).put("setToServerValue", "REQUEST_TIME")))
+        return w
+    }
+
+    suspend fun chessGame(friendUid: String, id: String): ChessGame? = withContext(Dispatchers.IO) {
+        val pair = pairId(live().uid, friendUid)
+        gameOf(getAll("chats/$pair/games", listOf(id))[id], id)
+    }
+
+    /** Crea la partida y manda al chat la invitación (el id de la partida es el del mensaje). `mins` = minutos por jugador, 0 = sin tiempo. */
+    suspend fun createChess(friendUid: String, mins: Int): String = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val id = UUID.randomUUID().toString()
+        commit(
+            write(
+                "chats/$pair/games/$id",
+                JSONObject().put("creator", str(me)).put("joiner", str("")).put("white", str("")).put("black", str("")).put("status", str("waiting"))
+                    .put("mins", int(mins.toLong())).put("moves", strs(emptyList())).put("wms", int(0)).put("bms", int(0))
+                    .put("result", str("")).put("reason", str("")).put("drawOffer", str("")),
+                serverTime = "lastAt",
+            ),
+            write(
+                "chats/$pair/messages/$id",
+                JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("chess")).put("game", str(id)).put("mins", int(mins.toLong())),
+                serverTime = "at",
+            ),
+            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+        )
+        id
+    }
+
+    /** Unirse a una partida: los colores se reparten al azar entre los dos. */
+    suspend fun joinChess(friendUid: String, g: ChessGame) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val iAmWhite = Random.nextBoolean()
+        val ms = g.mins * 60_000L
+        commit(
+            writeMask(
+                "chats/$pair/games/${g.id}",
+                JSONObject().put("status", str("playing")).put("joiner", str(me)).put("white", str(if (iAmWhite) me else g.creator))
+                    .put("black", str(if (iAmWhite) g.creator else me)).put("wms", int(ms)).put("bms", int(ms)),
+                listOf("status", "joiner", "white", "black", "wms", "bms"), "lastAt",
+            ),
+        )
+    }
+
+    /** Manda una jugada: la lista completa de jugadas, los relojes y, si la partida acaba con ella, el resultado. */
+    suspend fun chessMove(friendUid: String, id: String, moves: List<String>, wms: Long, bms: Long, endResult: String?, endReason: String?) = withContext(Dispatchers.IO) {
+        val pair = pairId(live().uid, friendUid)
+        val fields = JSONObject().put("moves", strs(moves)).put("wms", int(wms)).put("bms", int(bms)).put("drawOffer", str(""))
+        val mask = arrayListOf("moves", "wms", "bms", "drawOffer")
+        if (endResult != null && endReason != null) {
+            fields.put("status", str("finished")).put("result", str(endResult)).put("reason", str(endReason))
+            mask.addAll(listOf("status", "result", "reason"))
+        }
+        commit(writeMask("chats/$pair/games/$id", fields, mask, "lastAt"))
+    }
+
+    suspend fun chessEnd(friendUid: String, id: String, result: String, reason: String) = withContext(Dispatchers.IO) {
+        val pair = pairId(live().uid, friendUid)
+        commit(
+            writeMask(
+                "chats/$pair/games/$id",
+                JSONObject().put("status", str("finished")).put("result", str(result)).put("reason", str(reason)).put("drawOffer", str("")),
+                listOf("status", "result", "reason", "drawOffer"),
+            ),
+        )
+    }
+
+    suspend fun chessOffer(friendUid: String, id: String, uidOrEmpty: String) = withContext(Dispatchers.IO) {
+        val pair = pairId(live().uid, friendUid)
+        commit(writeMask("chats/$pair/games/$id", JSONObject().put("drawOffer", str(uidOrEmpty)), listOf("drawOffer")))
     }
 
     fun markRead(friendUid: String, at: Long) {

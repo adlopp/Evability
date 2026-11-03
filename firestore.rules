@@ -117,7 +117,7 @@ service cloud.firestore {
         allow read, delete: if inChat(pairId);
         // Mensaje de texto, o de audio (kind = 'audio': solo guarda la duración; el audio va aparte, en audio/{mismo id}).
         allow create: if inChat(pairId)
-          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime'])
+          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime', 'game', 'mins'])
           && request.resource.data.from == request.auth.uid
           && request.resource.data.at == request.time
           && request.resource.data.text is string && request.resource.data.text.size() <= 5000
@@ -126,7 +126,42 @@ service cloud.firestore {
             || (request.resource.data.kind == 'audio' && request.resource.data.text.size() == 0
                 && request.resource.data.dur is int && request.resource.data.dur <= 125000
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
+            || (request.resource.data.kind == 'chess' && request.resource.data.text.size() == 0
+                && request.resource.data.game is string && request.resource.data.game.size() < 64
+                && request.resource.data.mins is int && request.resource.data.mins >= 0 && request.resource.data.mins <= 60)
           );
+      }
+
+      // partidas de ajedrez: chats/{pareja}/games/{id del mensaje de invitación}. `moves` = jugadas («e2e4», «e7e8q»);
+      // blancas mueven cuando hay un número par de jugadas. wms/bms = milisegundos que le quedan a blancas/negras en `lastAt`.
+      match /games/{gid} {
+        allow read: if inChat(pairId);
+        allow create: if inChat(pairId)
+          && request.resource.data.keys().hasOnly(['creator', 'joiner', 'white', 'black', 'status', 'mins', 'moves', 'wms', 'bms', 'lastAt', 'result', 'reason', 'drawOffer'])
+          && request.resource.data.creator == request.auth.uid
+          && request.resource.data.status == 'waiting'
+          && request.resource.data.moves.size() == 0
+          && request.resource.data.joiner == '' && request.resource.data.white == '' && request.resource.data.black == ''
+          && request.resource.data.mins is int && request.resource.data.mins >= 0 && request.resource.data.mins <= 60
+          && request.resource.data.result == '' && request.resource.data.drawOffer == '';
+        allow update: if inChat(pairId) && (
+          // unirse: el otro amigo; los colores se reparten al azar entre los dos
+          (resource.data.status == 'waiting' && resource.data.creator != request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'joiner', 'white', 'black', 'wms', 'bms', 'lastAt'])
+            && request.resource.data.status == 'playing' && request.resource.data.joiner == request.auth.uid
+            && ((request.resource.data.white == resource.data.creator && request.resource.data.black == request.auth.uid)
+                || (request.resource.data.white == request.auth.uid && request.resource.data.black == resource.data.creator)))
+          // jugada: solo la persona a la que le toca, y exactamente una jugada más
+          || (resource.data.status == 'playing'
+            && (request.auth.uid == resource.data.white || request.auth.uid == resource.data.black)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['moves', 'wms', 'bms', 'lastAt', 'status', 'result', 'reason', 'drawOffer'])
+            && request.resource.data.moves.size() == resource.data.moves.size() + 1
+            && request.auth.uid == (resource.data.moves.size() % 2 == 0 ? resource.data.white : resource.data.black))
+          // rendirse, tablas, tiempo agotado u oferta de tablas: cualquiera de los dos jugadores
+          || (resource.data.status == 'playing'
+            && (request.auth.uid == resource.data.white || request.auth.uid == resource.data.black)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'result', 'reason', 'drawOffer']))
+        );
       }
 
       // el contenido de los audios (base64, unos 3 KB por segundo): solo se descarga al darle a reproducir
@@ -141,7 +176,8 @@ service cloud.firestore {
 
     // toques (corazones): id = destino_origen; como mucho uno cada 15 minutos por amigo (lo comprueba el servidor)
     match /pokes/{id} {
-      allow read: if signedIn() && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+      // (si el documento todavía no existe, se puede leer: así la lista de amigos puede preguntar por todos a la vez)
+      allow read: if signedIn() && (resource == null || resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
       allow create, update: if signedIn()
         && request.resource.data.keys().hasOnly(['from', 'to', 'at'])
         && request.resource.data.from == request.auth.uid

@@ -78,6 +78,8 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     var loadingOlder by remember { mutableStateOf(false) }
     var showGames by remember { mutableStateOf(false) }
     var playingWordle by remember { mutableStateOf(false) }
+    var chessId by remember { mutableStateOf<String?>(null) }
+    var pickingTime by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var recMs by remember { mutableLongStateOf(0L) }
     var myPhoto by remember { mutableStateOf("") }
@@ -193,7 +195,30 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         WordleScreen(friend) { playingWordle = false; scope.launch { runCatching { load() } } }
         return
     }
-    if (showGames) MiniGamesDialog(onWordle = { showGames = false; playingWordle = true }, onDismiss = { showGames = false })
+    chessId?.let { id ->
+        ChessScreen(friend, id) { chessId = null; scope.launch { runCatching { load() } } }
+        return
+    }
+    if (showGames) MiniGamesDialog(onWordle = { showGames = false; playingWordle = true }, onChess = { showGames = false; pickingTime = true }, onDismiss = { showGames = false })
+    if (pickingTime) {
+        ChessTimeDialog(
+            onPick = { mins ->
+                pickingTime = false
+                scope.launch {
+                    try {
+                        val id = Social.createChess(friend.uid, mins)
+                        load()
+                        chessId = id
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Toast.makeText(ctx, e.message ?: "No se pudo crear la partida", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onDismiss = { pickingTime = false },
+        )
+    }
 
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -229,6 +254,7 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                         ) {
                             if (m.kind == "audio") AudioRow(m, friend.uid, if (m.mine) OnAccent else OnSurface)
+                            else if (m.kind == "chess") ChessCard(m, friend, if (m.mine) OnAccent else OnSurface) { chessId = m.id }
                             else Text(m.text, fontSize = 16.sp, color = if (m.mine) OnAccent else OnSurface)
                             Text(
                                 hour.format(Date(m.at)), fontSize = 10.sp, modifier = Modifier.align(Alignment.End),
