@@ -29,6 +29,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowCompat
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -152,7 +159,8 @@ fun ChessCard(m: Social.ChatMessage, friend: Social.Profile, fg: Color, onOpen: 
 /** La partida: tablero, piezas, reloj, jaque, tablas y rendición. Las reglas están en [Chess]; la partida vive en la nube y se consulta cada poco. */
 @Composable
 fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
-    BackHandler(onBack = onClose)
+    var fullScreen by remember { mutableStateOf(false) }
+    BackHandler(onBack = { if (fullScreen) fullScreen = false else onClose() })
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -175,6 +183,17 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     var showResign by remember { mutableStateOf(false) }
     var myPhoto by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
+    val view = LocalView.current
+    // Pantalla completa: se ocultan las barras del sistema (se vuelven a ver deslizando desde el borde) y el tablero se agranda.
+    DisposableEffect(fullScreen) {
+        val window = (ctx as? android.app.Activity)?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        if (fullScreen) {
+            controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
     var now by remember { mutableLongStateOf(Social.serverNow()) }
     val anim = remember { Animatable(1f) }
     var animFrom by remember { mutableIntStateOf(-1) }
@@ -363,8 +382,17 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     fun Header() {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
-            Text("Evadrez", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            Text("Evadrez", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
+            IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = OnSurface) }
         }
+    }
+
+    @Composable
+    fun ExitFullScreen() {
+        IconButton(
+            onClick = { fullScreen = false },
+            modifier = Modifier.size(44.dp).background(Surface2, CircleShape),
+        ) { Icon(Icons.Default.FullscreenExit, "Salir de pantalla completa", tint = OnSurface) }
     }
 
     @Composable
@@ -561,35 +589,46 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     }
 
     // El tablero ocupa casi toda la pantalla. En horizontal (tablet) va a la izquierda a toda altura y los jugadores, el estado y
-    // los botones quedan a su derecha; en vertical, jugadores arriba y abajo y los botones debajo.
-    BoxWithConstraints(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding()) {
+    // los botones quedan a su derecha; en vertical, jugadores arriba y abajo y los botones debajo. En pantalla completa se quitan
+    // la cabecera, el estado y los botones, y el tablero ocupa todo lo que puede.
+    BoxWithConstraints(
+        Modifier.fillMaxSize().background(Bg).then(if (fullScreen) Modifier else Modifier.statusBarsPadding().navigationBarsPadding()),
+    ) {
         if (maxWidth > maxHeight * 1.2f) {
-            val side = minOf(maxHeight - 16.dp, maxWidth * 0.64f).coerceAtLeast(200.dp)
-            Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            val side = (if (fullScreen) maxHeight - 8.dp else minOf(maxHeight - 16.dp, maxWidth * 0.64f)).coerceAtLeast(200.dp)
+            Row(Modifier.fillMaxSize().padding(if (fullScreen) 4.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Board(side)
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = Alignment.CenterHorizontally) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Header()
+                        if (fullScreen) Box(Modifier.fillMaxWidth().padding(4.dp), contentAlignment = Alignment.CenterEnd) { ExitFullScreen() } else Header()
                         Bar(opp, friend.username, friend.photo, Modifier.fillMaxWidth())
                     }
-                    StatusPanel()
+                    if (!fullScreen) StatusPanel()
                     Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.fillMaxWidth())
                 }
             }
         } else {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Header()
+                if (!fullScreen) Header()
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val side = minOf(maxWidth - 8.dp, maxHeight - 104.dp, 900.dp).coerceAtLeast(200.dp)
+                    val side = (if (fullScreen) minOf(maxWidth, maxHeight - 100.dp) else minOf(maxWidth - 8.dp, maxHeight - 104.dp, 900.dp)).coerceAtLeast(200.dp)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Bar(opp, friend.username, friend.photo, Modifier.width(side))
+                        if (fullScreen) {
+                            Row(Modifier.width(side), verticalAlignment = Alignment.CenterVertically) {
+                                Bar(opp, friend.username, friend.photo, Modifier.weight(1f))
+                                Spacer(Modifier.width(6.dp))
+                                ExitFullScreen()
+                            }
+                        } else {
+                            Bar(opp, friend.username, friend.photo, Modifier.width(side))
+                        }
                         Spacer(Modifier.height(4.dp))
                         Board(side)
                         Spacer(Modifier.height(4.dp))
                         Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.width(side))
                     }
                 }
-                StatusPanel()
+                if (!fullScreen) StatusPanel()
             }
         }
     }

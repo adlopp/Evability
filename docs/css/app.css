@@ -284,3 +284,13 @@ textarea.field { resize: vertical; }
   .cside .cplayer { width: 100%; box-sizing: border-box; } .cside > * { order: initial !important; } .cside .cbanner { flex-direction: column; } .cside .cactions { justify-content: center; }
   .cside .cplayer:first-child { order: 1 !important; } .cside .cbanner { order: 2 !important; } .cside .cactions { order: 3 !important; } .cside .cplayer:last-child { order: 4 !important; }
 }
+
+/* Evadrez a pantalla completa */
+.cplayer .cfull-exit { display: none; }
+.pomo.chess.full .pomo-top, .pomo.chess.full .cbanner, .pomo.chess.full .cactions { display: none; }
+.pomo.chess.full .chess-main { --bs: min(100vw, calc(100vh - 100px)); padding: 2px; justify-content: center; }
+.pomo.chess.full .cplayer .cfull-exit { display: inline-flex; }
+.pomo.chess.full .cboard { border-radius: 6px; }
+@media (orientation: landscape) and (min-width: 900px) {
+  .pomo.chess.full .chess-main { --bs: min(calc(100vh - 12px), 74vw); }
+}

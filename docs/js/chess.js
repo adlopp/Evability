@@ -56,8 +56,9 @@ export function openChess({ friend, gameId, api, onClose }) {
   const topBar = h('div', { class: 'cplayer' }), botBar = h('div', { class: 'cplayer' });
   const banner = h('div', { class: 'cbanner' });
   const actions = h('div', { class: 'cactions' });
+  const fullBtn = () => h('button', { class: 'icon-btn cfull', 'aria-label': 'Pantalla completa', title: 'Pantalla completa', onclick: () => setFull(!root.classList.contains('full')) }, icon('expand'));
   const root = h('div', { class: 'pomo chess' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', {}, 'Evadrez')),
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Evadrez'), fullBtn()),
     h('div', { class: 'chess-main' }, board, h('div', { class: 'cside' }, topBar, banner, actions, botBar)));
 
   const flip = () => myColor === 'b';
@@ -138,6 +139,7 @@ export function openChess({ friend, gameId, api, onClose }) {
         clk ? h('span', { class: 'cclock' + (turn ? ' on' : '') + (clk[color] < 10000 ? ' low' : '') }, mmss(clk[color])) : null);
     };
     bar(topBar, theirs, friend.username, friend.photo);
+    topBar.append(h('button', { class: 'icon-btn cfull-exit', 'aria-label': 'Salir de pantalla completa', onclick: () => setFull(false) }, icon('shrink')));
     bar(botBar, mine, myInfo.username || 'Tú', myInfo.photo);
   }
 
@@ -312,7 +314,17 @@ export function openChess({ friend, gameId, api, onClose }) {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   }
 
-  function close() { closed = true; clearInterval(timer); clearInterval(ticker); root.remove(); onClose?.(); }
+  /** Pantalla completa: se quitan la cabecera, el estado y los botones y el tablero se agranda (y, si el navegador lo permite, se oculta todo lo demás). */
+  function setFull(on) {
+    root.classList.toggle('full', on);
+    if (on) root.requestFullscreen?.().catch(() => {});
+    else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  }
+  const onFsChange = () => { if (!document.fullscreenElement && root.classList.contains('full') && root.dataset.nativeFs) root.classList.remove('full'); };
+  document.addEventListener('fullscreenchange', onFsChange);
+  root.addEventListener('fullscreenchange', () => { if (document.fullscreenElement === root) root.dataset.nativeFs = '1'; });
+
+  function close() { closed = true; document.removeEventListener('fullscreenchange', onFsChange); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); clearInterval(timer); clearInterval(ticker); root.remove(); onClose?.(); }
 
   api.meInfo().then((i) => { myInfo = i; paintBars(); }).catch(() => {});
   render();
