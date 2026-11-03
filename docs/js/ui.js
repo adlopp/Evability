@@ -211,3 +211,24 @@ export function darkBars(on) {
   if (on) { meta.dataset.prev ??= meta.content; meta.content = '#000000'; }
   else if (meta.dataset.prev) { meta.content = meta.dataset.prev; delete meta.dataset.prev; }
 }
+
+/**
+ * Consulta periódica que gasta poco: no hace nada con la pestaña oculta, y si no hay novedades va espaciando las consultas
+ * (hasta 2,5 veces la pausa normal, nunca más de `max`). `fn()` devuelve true/false (¿hubo novedades?) o { changed, delay } para
+ * pedir otra pausa. Al volver a la pestaña consulta enseguida.
+ */
+export function poller(fn, base, max = base * 3) {
+  let stopped = false, idle = 0, t = null;
+  const loop = async () => {
+    if (stopped) return;
+    if (document.hidden) { t = setTimeout(loop, 2500); return; }
+    let r; try { r = await fn(); } catch { r = false; }
+    const o = r && typeof r === 'object' ? r : { changed: !!r };
+    idle = o.changed ? 0 : idle + 1;
+    t = setTimeout(loop, Math.min(max, (o.delay || base) * (1 + Math.min(3, Math.floor(idle / 12)) * 0.5)));
+  };
+  const onVis = () => { if (!document.hidden && !stopped) { clearTimeout(t); t = setTimeout(loop, 0); } };
+  document.addEventListener('visibilitychange', onVis);
+  t = setTimeout(loop, 0);
+  return { stop() { stopped = true; clearTimeout(t); document.removeEventListener('visibilitychange', onVis); }, reset() { idle = 0; } };
+}

@@ -126,8 +126,10 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     var delSince by remember { mutableLongStateOf(Social.serverNow()) }
     var menuMsg by remember { mutableStateOf<Social.ChatMessage?>(null) }
 
-    suspend fun load() {
-        runCatching {
+    val loads = remember { IntArray(1) }
+
+    suspend fun load(): Boolean {
+        if (loads[0]++ % 3 == 0) runCatching {
             val (ids, newest) = Social.chatDeletions(friend.uid, delSince)
             for (id in ids) {
                 val ix = messages.indexOfFirst { it.id == id }
@@ -139,16 +141,21 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         val raw = Social.chatMessages(friend.uid, lastAt)
         if (lastAt == 0L && raw.size < 50) hasMore = false
         val fresh = raw.filter { m -> messages.none { it.id == m.id } }
-        if (fresh.isEmpty()) return
+        if (fresh.isEmpty()) return false
         messages.addAll(fresh)
         lastAt = maxOf(lastAt, fresh.maxOf { it.at })
         Social.markRead(friend.uid, lastAt)
+        return true
     }
 
     LaunchedEffect(Unit) {
+        var idle = 0
         while (true) {
-            try { load() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
-            delay(3_000)
+            if (!AppVisibility.foreground) { delay(3_000); continue } // con la app en segundo plano no se consulta nada
+            var changed = false
+            try { changed = load() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
+            idle = if (changed) 0 else idle + 1
+            delay((3_500L * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(12_000L)) // sin novedades se va espaciando
         }
     }
     LaunchedEffect(Unit) { runCatching { myPhoto = Social.myProfile().photo } }

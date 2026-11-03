@@ -2,7 +2,7 @@
 // Las reglas viven en chess-engine.js. La partida está en la nube (Firestore) y se consulta cada poco: `api` la lee y la escribe.
 
 import { darkPref, darkToggle, darkBars } from './ui.js';
-import { h, icon, toast, confirmDialog } from './ui.js';
+import { h, icon, toast, confirmDialog, poller } from './ui.js';
 import { replay, applyMove, legalMoves, moveString, outcome, positionKey, colorOf, sqName } from './chess-engine.js';
 
 // ───────── sonidos (sintetizados, sin archivos) ─────────
@@ -329,10 +329,12 @@ export function openChess({ friend, gameId, api, onClose }) {
   document.addEventListener('fullscreenchange', onFsChange);
   root.addEventListener('fullscreenchange', () => { if (document.fullscreenElement === root) root.dataset.nativeFs = '1'; });
 
-  function close() { darkBars(false); closed = true; document.removeEventListener('fullscreenchange', onFsChange); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); clearInterval(timer); clearInterval(ticker); root.remove(); onClose?.(); }
+  function close() { darkBars(false); closed = true; document.removeEventListener('fullscreenchange', onFsChange); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); timer?.stop(); clearInterval(ticker); root.remove(); onClose?.(); }
 
   api.meInfo().then((i) => { myInfo = i; paintBars(); }).catch(() => {});
   render();
-  poll(); timer = setInterval(poll, 1200); ticker = setInterval(tickClock, 250);
+  // consulta la partida: cada 2,5 s mientras mueve el rival y cada 6 s cuando te toca a ti (nadie va a mover antes)
+  timer = poller(async () => { const n = moves.length; await poll(); return { changed: moves.length !== n, delay: playing() && pos && pos.turn === myColor ? 6000 : 2500 }; }, 2500, 12000);
+  ticker = setInterval(tickClock, 250);
   return root;
 }

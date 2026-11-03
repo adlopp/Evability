@@ -73,7 +73,7 @@ class FriendsWatchService : Service() {
                                 // sin red: se reintenta en el siguiente ciclo
                             }
                         }
-                        delay(30_000)
+                        delay(60_000)
                     }
                 }
             }

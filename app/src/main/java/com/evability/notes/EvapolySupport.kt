@@ -127,7 +127,7 @@ object PolySound {
     }
 
     fun play(kind: String) {
-        if (kind == "dice") { clip("evapoly-dados.mp3", 0.9f); return }
+        if (kind == "dice") { clip("evapoly-dados.mp3", 0.55f); return }
         if (kind == "siren") { clip("evapoly-policia.mp3", 0.8f); return }
         runCatching {
             val data = synth(kind).map { (it.coerceIn(-1f, 1f) * 32000).toInt().toShort() }.toShortArray()

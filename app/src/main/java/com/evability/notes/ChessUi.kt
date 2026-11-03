@@ -129,8 +129,10 @@ fun ChessCard(m: Social.ChatMessage, friend: Social.Profile, fg: Color, onOpen: 
     var game by remember(m.id) { mutableStateOf<Social.ChessGame?>(null) }
     LaunchedEffect(m.id) {
         while (true) {
-            try { game = Social.chessGame(friend.uid, m.id) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
-            delay(6_000)
+            if (AppVisibility.foreground) {
+                try { game = Social.chessGame(friend.uid, m.id); if (game?.status == "finished") break } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
+            }
+            delay(20_000)
         }
     }
     val g = game
@@ -332,9 +334,15 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     // ───── sincronización con la nube y relojes ─────
     LaunchedEffect(Unit) { runCatching { myPhoto = Social.myProfile().photo } }
     LaunchedEffect(Unit) {
+        var idle = 0
         while (true) {
+            if (!AppVisibility.foreground) { delay(2_500); continue }
+            val before = moves.size
             try { poll() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
-            delay(1_200)
+            idle = if (moves.size != before) 0 else idle + 1
+            // cada 2,5 s mientras mueve el rival y cada 6 s cuando te toca a ti (nadie va a mover antes)
+            val base = if (myTurn()) 6_000L else 2_500L
+            delay((base * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(12_000L))
         }
     }
     LaunchedEffect(animTick) {

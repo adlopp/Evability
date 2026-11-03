@@ -1,7 +1,7 @@
 // Parte social: perfil, amigos, presencia (punto verde) y «toques» (corazones). Misma lógica que la app de Android:
 // habla con Firebase por su API REST (sin SDK). Las claves no son secretas; la seguridad la ponen las reglas de `firestore.rules`.
 
-import { h, icon, toast, confirmDialog, modal, uid } from './ui.js';
+import { h, icon, toast, confirmDialog, modal, uid, poller } from './ui.js';
 import { studying } from './pomodoro.js';
 import { openWordle } from './wordle.js';
 import { openChess } from './chess.js';
@@ -586,7 +586,8 @@ function openChat(friend) {
     };
     const refresh = () => getGame(friend.uid, m.id).then(paint).catch(() => {});
     btn.onclick = () => root.append(openChess({ friend, gameId: m.id, api: chessApi(friend, m.id), onClose: refresh }));
-    refresh(); cardTimers.push(setInterval(refresh, 6000));
+    const pl = poller(async () => { const g = await getGame(friend.uid, m.id); paint(g); if (!g || g.status === 'finished') pl.stop(); return false; }, 20000, 60000);
+    cardTimers.push(() => pl.stop());
     return h('div', { class: 'chess-card' }, h('img', { src: 'pieces/wN.svg', alt: '' }), h('div', { class: 'grow' }, h('b', {}, 'Evadrez'), h('small', {}, mins), status), btn);
   }
 
@@ -601,7 +602,8 @@ function openChat(friend) {
     };
     const refresh = () => getRoom(m.game).then(paint).catch(() => {});
     btn.onclick = () => root.append(openEvapoly({ roomId: m.game, api: polyApi(m.game), onClose: refresh }));
-    refresh(); cardTimers.push(setInterval(refresh, 6000));
+    const pl = poller(async () => { const r = await getRoom(m.game); paint(r); if (!r || r.status === 'finished') pl.stop(); return false; }, 20000, 60000);
+    cardTimers.push(() => pl.stop());
     const ico = h('span', { class: 'poly-ico' }); polyIcon('dice').then((e) => ico.append(e)).catch(() => {});
     return h('div', { class: 'chess-card' }, ico, h('div', { class: 'grow' }, h('b', {}, 'Evapoly'), status), btn);
   }
@@ -657,12 +659,15 @@ function openChat(friend) {
     if (m.del) { rowsById.get(m.id).gone = true; goneContent(bubble, m); delBtn.remove(); replyBtn.remove(); }
     return { mine: m.mine, av, el };
   };
+  let loads = 0;
   async function load() {
-    await applyDeletions().catch(() => {});
+    let changed = false;
+    if (loads++ % 3 === 0) await applyDeletions().catch(() => {});
     const raw = await chatMessages(friend.uid, lastAt);
     if (lastAt === 0 && raw.length < 50) hasMore = false;
     const fresh = raw.filter((m) => !seen.has(m.id));
-    if (!fresh.length) return;
+    if (!fresh.length) return false;
+    changed = true;
     const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80 || !seen.size;
     const me = await myself;
     for (const m of fresh) { const r = makeRow(m, me); rows.push(r); listEl.append(r.el); }
@@ -671,6 +676,7 @@ function openChat(friend) {
     refreshAvatars();
     markRead(friend.uid, lastAt);
     if (atBottom) listEl.scrollTop = listEl.scrollHeight;
+    return changed;
   }
   /** Al llegar arriba del todo se cargan los 50 mensajes anteriores: el historial no tiene límite. */
   async function loadOlder() {
@@ -739,9 +745,9 @@ function openChat(friend) {
   input.addEventListener('input', paintAction);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
   paintAction();
-  const tick = () => load().catch(() => {});
-  tick(); timer = setInterval(tick, 3000);
-  function close() { clearInterval(timer); cardTimers.forEach(clearInterval); stopPlaying(); if (recording) finishRec(false); root.remove(); }
+  const chatPoll = poller(() => load(), 3500, 12000);
+  const tick = () => { chatPoll.reset(); return load().catch(() => {}); };
+  function close() { chatPoll.stop(); cardTimers.forEach((f) => f()); stopPlaying(); if (recording) finishRec(false); root.remove(); }
   return root;
 }
 
@@ -880,7 +886,7 @@ export function startHost() {
   const beat = () => { if (visible()) heartbeat().catch(() => {}); };
   const poll = () => { if (visible()) { checkPokes().catch(() => {}); checkShares().catch(() => {}); checkChats().catch(() => {}); } };
   beat(); poll();
-  hostTimers = [setInterval(beat, 30000), setInterval(poll, 12000)];
+  hostTimers = [setInterval(beat, 30000), setInterval(poll, 30000)];
 }
 export function stopHost() { hostTimers.forEach(clearInterval); hostTimers = []; }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && session && hostTimers.length) { heartbeat().catch(() => {}); checkPokes().catch(() => {}); } });
@@ -1096,7 +1102,7 @@ export function openSocial(onClose) {
       search_, resultsEl, incomingEl, friendsEl);
     myProfile().then((p) => { myPhoto = p.photo; paintMe(); }).catch(() => {});
     paintLists(); refresh();
-    timers.push(setInterval(refresh, 15000));
+    timers.push(setInterval(() => { if (!document.hidden) refresh(); }, 45000));
     // cuenta atrás de los corazones
     timers.push(setInterval(() => root.querySelectorAll('.seen').forEach((el) => paintPresence(el, Number(el.dataset.ts), el.dataset.st === '1')), 5000));
     timers.push(setInterval(() => root.querySelectorAll('.cd').forEach((el) => {

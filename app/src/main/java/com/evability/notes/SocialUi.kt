@@ -149,7 +149,7 @@ fun SocialHost() {
                 try { Social.checkPokes() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
                 try { Social.checkShares() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
                 try { Social.checkChats() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
-                delay(12_000)
+                delay(30_000)
             }
         }
     }
@@ -508,8 +508,8 @@ private fun FriendsPanel() {
     }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(15_000)
-            refresh++
+            delay(45_000)
+            if (AppVisibility.foreground) refresh++
         }
     }
     LaunchedEffect(query) {

@@ -1,5 +1,6 @@
 package com.evability.notes
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
@@ -240,6 +241,9 @@ private fun SquareView(
     val sideways = where == "left" || where == "right"
     val iw = if (sideways) ch else cw
     val ih = if (sideways) cw else ch
+    val upright = zoomed && sideways // al ampliarla se ve recta, como las de abajo
+    val ow = if (upright) iw else cw
+    val oh = if (upright) ih else ch
     val wEm = iw.value / uu.value
     val hEm = ih.value / uu.value
     val band = q.g?.let { hex(data.groups[it] ?: "#888888") }
@@ -250,15 +254,15 @@ private fun SquareView(
     val bandEm = if (band != null) 2.9f else 0f
     val ownEm = if (where == "corner") 0f else 1.5f
     val icoEm = if (q.i == null) 0f else if (where == "corner") 4.2f else if (special) 2.9f else 2.0f
-    val prEm = if (q.p > 0 && band == null) 1.1f else 0f
+    val prEm = if (q.p > 0 && band == null && (q.t != "station" || zoomed)) 1.1f else 0f
     val nameEm = if (where == "corner") 1.35f else if (special) 1f else fitName(q.n, wEm - 0.7f, maxOf(1f, hEm - bandEm - ownEm - icoEm - prEm - 0.3f))
     Box(
-        (if (zoomed) Modifier.offset((gside - cw) / 2f, (gside - ch) / 2f) else Modifier.offset(gside * (c[0] / 100f), gside * (c[1] / 100f)))
-            .size(cw, ch)
+        (if (zoomed) Modifier.offset((gside - ow) / 2f, (gside - oh) / 2f) else Modifier.offset(gside * (c[0] / 100f), gside * (c[1] / 100f)))
+            .size(ow, oh)
             .background(bg).border(if (zoomed) 2.dp else 0.7.dp, Ink.copy(alpha = 0.75f))
             .then(if (zoomed) Modifier else Modifier.pointerInput(i) { detectTapGestures(onPress = { tryAwaitRelease(); onHold(false) }, onLongPress = { onHold(true) }, onTap = { onClick() }) }),
     ) {
-        Box(Modifier.align(Alignment.Center).requiredSize(iw, ih).alpha(if (st.mort[i]) 0.55f else 1f).rotate(if (where == "left") 90f else if (where == "right") -90f else 0f)) {
+        Box(Modifier.align(Alignment.Center).requiredSize(iw, ih).alpha(if (st.mort[i]) 0.55f else 1f).rotate(if (upright) 0f else if (where == "left") 90f else if (where == "right") -90f else 0f)) {
             val bandPart: @Composable ColumnScope.() -> Unit = {
                 if (band != null) {
                     Box(
@@ -451,8 +455,10 @@ fun PolyCard(m: Social.ChatMessage, fg: Color, onOpen: (String) -> Unit) {
     var room by remember(roomId) { mutableStateOf<Social.PolyRoom?>(null) }
     LaunchedEffect(roomId) {
         while (true) {
-            try { room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red o sin acceso */ }
-            delay(6_000)
+            if (AppVisibility.foreground) {
+                try { room = Social.polyRoom(roomId); if (room?.status == "finished") break } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red o sin acceso */ }
+            }
+            delay(20_000)
         }
     }
     val r = room
@@ -508,6 +514,8 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var police by remember { mutableStateOf(false) }
     val deltas = remember { mutableStateListOf<Delta>() }
     var lastCash by remember { mutableStateOf<IntArray?>(null) }
+    var shownCash by remember { mutableStateOf<IntArray?>(null) }
+    var shownTurn by remember { mutableIntStateOf(0) }
     val view = LocalView.current
     var squareSel by remember { mutableStateOf<Int?>(null) }
     var showTrade by remember { mutableStateOf(false) }
@@ -539,7 +547,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         queue.clear()
         for (i in 0 until s.n) viewPos[i] = s.pos[i]
         lastTurn = s.turn
-        lastCash = s.cash.copyOf()
+        lastCash = s.cash.copyOf(); shownCash = s.cash.copyOf(); shownTurn = s.turn
         pathSet = emptySet(); slowSeat = -1; police = false; cardFx = null
         ver++
     }
@@ -605,7 +613,6 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 "build" -> PolySound.play("build")
                 "card" -> {
                     PolySound.play(if (e.sq == 1) "chest" else "card")
-                    log.add(say(e.m))
                     val fx = CardFx(if (e.sq == 1) "chest" else if (e.sq == 0) "chance" else "peza", if (e.sq == 1) "Caja de comunidad" else if (e.sq == 0) "Suerte" else "La Peza", seatName(e.seat), e.text)
                     cardFx = fx
                     ver++
@@ -615,11 +622,12 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 }
                 "win" -> PolySound.play("win")
             }
-            if (e.m.isNotEmpty() && e.k != "card") { log.add(say(e.m)); if (log.size > 40) log.removeAt(0) }
+            if (e.m.isNotEmpty()) { log.add(say(e.m)); if (log.size > 40) log.removeAt(0) }
             ver++
         }
         for (i in 0 until s.n) viewPos[i] = s.pos[i]
         running = false
+        noteCash(s); shownCash = s.cash.copyOf(); shownTurn = s.turn
         if (s.turn != lastTurn) {
             lastTurn = s.turn
             if (s.turn == mySeat() && s.phase != "over" && s.phase != "order") {
@@ -640,7 +648,6 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
             Poly.applyText(s, r.acts[i]); acts.add(r.acts[i])
             queue.addAll(s.ev)
         }
-        noteCash(s)
         ver++
         scope.launch { play() }
     }
@@ -656,7 +663,6 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         Poly.applyText(s, text)
         acts.add(text)
         queue.addAll(s.ev)
-        noteCash(s)
         busy = true
         ver++
         scope.launch { play() }
@@ -678,7 +684,10 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
 
     LaunchedEffect(Unit) { PolySound.init(ctx); PolyMusic.start(ctx) }
     LaunchedEffect(Unit) {
+        var idle = 0
+        var lastSig = ""
         while (true) {
+            if (!AppVisibility.foreground) { delay(2_500); continue } // con la app en segundo plano no se consulta nada
             try {
                 val r = Social.polyRoom(roomId)
                 if (r == null) { toast("La sala se ha cerrado"); onClose(); return@LaunchedEffect }
@@ -687,12 +696,20 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 loadError = ""
                 loadNames(r)
                 if (r.status != "lobby") { if (st == null || wasLobby) buildState(r) else syncActs(r) }
+                val sig = "${r.status}${r.acts.size}${r.players.size}${r.tok}${r.invited.size}${r.money}"
+                idle = if (sig != lastSig) 0 else idle + 1
+                lastSig = sig
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 loadError = e.message ?: e.javaClass.simpleName // sin red o sin permiso: se reintenta y se enseña el motivo
+                idle++
             }
-            delay(1_500)
+            // sala de espera: cada 3 s; en la partida, cada 6 s cuando te toca a ti (nadie más va a actuar) y cada 2,2 s si esperas a otro
+            val s2 = st
+            val myTurn = s2 != null && s2.phase != "over" && s2.turn == mySeat() && s2.trade == null && s2.phase !in listOf("debt", "auction", "order")
+            val base = if (room?.status == "lobby" || s2 == null) 3_000L else if (myTurn) 6_000L else 2_200L
+            delay((base * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(14_000L))
         }
     }
     DisposableEffect(Unit) { onDispose { PolyMusic.stop() } }
@@ -744,14 +761,14 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val land = maxWidth > maxHeight * 1.15f
                 val side = when {
-                    fullScreen && land -> minOf(maxHeight - 8.dp, maxWidth - 250.dp)
+                    fullScreen && land -> minOf(maxHeight - 8.dp, maxWidth - 296.dp)
                     fullScreen -> minOf(maxWidth, maxHeight - 190.dp)
                     land -> minOf(maxHeight - 8.dp, maxWidth * 0.6f) // 60 % tablero, 40 % información
                     else -> minOf(maxWidth, maxHeight - 290.dp)
                 }.coerceAtLeast(260.dp)
                 val panel: @Composable (Modifier) -> Unit = { mod ->
                     GamePanel(
-                        s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen,
+                        s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen, running, shownCash, shownTurn,
                         onSend = ::send, onTrade = { showTrade = true }, mod,
                     )
                 }
@@ -766,8 +783,8 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                     ) {
                         board()
                         if (fullScreen) {
-                            Spacer(Modifier.width(8.dp))
-                            panel(Modifier.width(230.dp).fillMaxHeight().verticalScroll(rememberScrollState()))
+                            Spacer(Modifier.width(4.dp))
+                            panel(Modifier.width(270.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(top = 44.dp, bottom = 8.dp))
                         } else panel(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()))
                     }
                 } else {
@@ -948,9 +965,9 @@ private fun PolyButton(label: String, primary: Boolean, enabled: Boolean, modifi
     val shape = RoundedCornerShape(16.dp)
     val hgt = if (compact) 40.dp else if (cta) 58.dp else 50.dp
     if (primary) {
-        Button(onClick, modifier.height(hgt), enabled = enabled, shape = shape, colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text(label, fontWeight = FontWeight.ExtraBold, fontSize = if (cta) 17.sp else 15.sp) }
+        Button(onClick, modifier.height(hgt), enabled = enabled, shape = shape, contentPadding = PaddingValues(horizontal = 6.dp), colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text(label, fontWeight = FontWeight.ExtraBold, fontSize = if (cta) 17.sp else if (compact) 13.sp else 14.sp, maxLines = 1, softWrap = false) }
     } else {
-        OutlinedButton(onClick, modifier.height(hgt), enabled = enabled, shape = shape, border = BorderStroke(1.5.dp, if (enabled) Accent else Outline), colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)) { Text(label, fontWeight = FontWeight.SemiBold) }
+        OutlinedButton(onClick, modifier.height(hgt), enabled = enabled, shape = shape, contentPadding = PaddingValues(horizontal = 6.dp), border = BorderStroke(1.5.dp, if (enabled) Accent else Outline), colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)) { Text(label, fontWeight = FontWeight.SemiBold, fontSize = if (compact) 13.sp else 14.sp, maxLines = 1, softWrap = false) }
     }
 }
 
@@ -970,13 +987,13 @@ private fun DeltaText(d: Delta, modifier: Modifier) {
 @Composable
 private fun GamePanel(
     s: Poly.State, r: Social.PolyRoom, my: Int, data: Poly.Data, seatName: (Int) -> String, tokenOf: (Int) -> Int,
-    log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, onSend: (String) -> Unit, onTrade: () -> Unit, modifier: Modifier,
+    log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, frozen: Boolean, shownCash: IntArray?, shownTurn: Int, onSend: (String) -> Unit, onTrade: () -> Unit, modifier: Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)) {
         for (i in r.players.indices) {
             val shape = RoundedCornerShape(if (compact) 12.dp else 18.dp)
             val col = PolyData.colors[i]
-            val turn = if (s.phase == "order") s.ordCand[i] && s.ordRolls[i] == 0 else s.turn == i && s.phase != "over"
+            val turn = if (s.phase == "order") s.ordCand[i] && s.ordRolls[i] == 0 else (if (frozen) shownTurn else s.turn) == i && s.phase != "over"
             val owned = (0 until 40).count { s.own[it] == i }
             Box(Modifier.fillMaxWidth()) {
                 Row(
@@ -993,6 +1010,13 @@ private fun GamePanel(
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(seatName(i) + if (i == my) " (tú)" else "", color = OnSurface, fontWeight = FontWeight.ExtraBold, fontSize = if (compact) 13.sp else 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val mine = (0 until 40).filter { s.own[it] == i }
+                        if (mine.isNotEmpty()) Row(Modifier.padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            for (sq in mine) Box(
+                                Modifier.size(if (compact) 7.dp else 9.dp).alpha(if (s.mort[sq]) 0.35f else 1f)
+                                    .background(data.squares[sq].g?.let { hex(data.groups[it] ?: "#888888") } ?: Color(0xFF8A929B), RoundedCornerShape(2.dp)).border(0.7.dp, Color.Black.copy(alpha = 0.45f), RoundedCornerShape(2.dp)),
+                            )
+                        }
                         if (!compact) {
                             val extra = if (s.bk[i]) "Quiebra"
                             else if (s.phase == "order") (if (s.ordRolls[i] > 0) "Sacó ${s.ordRolls[i]}" else "")
@@ -1000,7 +1024,7 @@ private fun GamePanel(
                             Text(extra, color = OnSurfaceDim, fontSize = 12.sp)
                         }
                     }
-                    Text(Poly.eur(s.cash[i]), color = OnSurface, fontWeight = FontWeight.Black, fontSize = if (compact) 14.sp else 17.sp)
+                    Text(Poly.eur(if (frozen && shownCash != null) shownCash[i] else s.cash[i]), color = OnSurface, fontWeight = FontWeight.Black, fontSize = if (compact) 14.sp else 17.sp)
                 }
                 if (turn && s.phase != "over") {
                     Text(
@@ -1023,7 +1047,8 @@ private fun GamePanel(
             PolyButton(label, primary, enabled && !locked, Modifier.weight(1f), cta, compact) { onSend(code) }
 
         val t = s.trade
-        if (my < 0) Status("Espectador")
+        if (frozen) Spacer(Modifier.height(if (compact) 40.dp else 58.dp))
+        else if (my < 0) Status("Espectador")
         else if (t != null && t.to == my) {
             Status("${seatName(t.from)} propone")
             fun names(list: List<Int>) = list.joinToString(", ") { data.squares[it].n }
@@ -1057,10 +1082,11 @@ private fun GamePanel(
         } else if (s.phase == "buy") {
             val q = data.squares[s.buy]
             Status("${q.n} · ${Poly.eur(q.p)}")
-            Btns { B("Comprar", "b", true, s.cash[my] >= q.p, cta = true); if (s.cfg.auction) B("Subastar", "a", false); B("No comprar", "n", false) }
+            Btns { B("Comprar", "b", true, s.cash[my] >= q.p, cta = true) }
+            Btns { if (s.cfg.auction) B("Subastar", "a", false); B("No comprar", "n", false) }
         } else if (s.phase == "end") Btns { B("Terminar turno", "e", cta = true) }
 
-        if (my >= 0 && cur == my && (s.phase == "roll" || s.phase == "end") && t == null) {
+        if (!frozen && my >= 0 && cur == my && (s.phase == "roll" || s.phase == "end") && t == null) {
             var confirmQuit by remember { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 TextButton(onClick = onTrade, enabled = !locked) { Text("Negociar", color = Accent, fontWeight = FontWeight.Bold) }

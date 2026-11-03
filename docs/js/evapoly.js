@@ -1,7 +1,7 @@
 // Evapoly: Monopoly para 2 a 4 amigos. La sala vive en la nube (Firestore) y se consulta cada poco; las reglas las aplica
 // evapoly-engine.js en cada dispositivo con la misma semilla, así todos ven lo mismo. `api` lo pone social.js.
 
-import { h, icon, toast, confirmDialog, modal, fill } from './ui.js';
+import { h, icon, toast, confirmDialog, modal, fill, poller } from './ui.js';
 import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE } from './evapoly-engine.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
@@ -36,7 +36,7 @@ function playClip(file, vol) {
   try { const a = (clips[file] ||= new Audio(file)); a.volume = vol; a.currentTime = 0; a.play().catch(() => {}); } catch { /* sin audio */ }
 }
 const SFX = {
-  dice() { playClip('music/evapoly-dados.mp3', 0.9); },
+  dice() { playClip('music/evapoly-dados.mp3', 0.55); },
   siren() { playClip('music/evapoly-policia.mp3', 0.8); },
   step() { tone(520, 0, 0.04, { type: 'triangle', vol: 0.1 }); },
   coin() { tone(988, 0, 0.09, { type: 'triangle' }); tone(1319, 0.09, 0.22, { type: 'triangle' }); },
@@ -131,12 +131,13 @@ export function openEvapoly({ roomId, api, onClose }) {
     photos[uid] ? h('img', { src: 'data:image/jpeg;base64,' + photos[uid], alt: '' }) : nameOf(uid).slice(0, 1).toUpperCase());
 
   // ───── consulta periódica ─────
+  let lastSig = '';
   async function poll() {
-    if (closed) return;
+    if (closed) return false;
     try {
       const r = await api.get();
-      if (closed) return;
-      if (!r) { toast('La sala se ha cerrado'); close(); return; }
+      if (closed) return false;
+      if (!r) { toast('La sala se ha cerrado'); close(); return false; }
       const wasLobby = !room || room.status === 'lobby';
       room = r;
       await loadNames();
@@ -146,8 +147,13 @@ export function openEvapoly({ roomId, api, onClose }) {
         else if (wasLobby) { startState(); renderGame(); }
         else syncActs(room.acts);
       }
+      // sala de espera: cada 3 s; en la partida, cada 6 s cuando te toca a ti (nadie más va a actuar) y cada 2,2 s si esperas a otro
+      const sig = room.status + room.acts.length + room.players.length + JSON.stringify(room.tok) + room.invited.length + room.money;
+      const changed = sig !== lastSig; lastSig = sig;
+      const myTurn = state && state.phase !== 'over' && state.turn === mySeat() && !state.trade && !['debt', 'auction', 'order'].includes(state.phase);
+      return { changed, delay: room.status === 'lobby' ? 3000 : myTurn ? 6000 : 2200 };
     } catch (e) { /* sin red: se reintenta */ }
-    if (!closed) timer = setTimeout(poll, 1500);
+    return false;
   }
 
   // ───── sala de espera ─────
@@ -251,6 +257,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     acts.push(text);
     q.push(...state.ev);
     busy = true;
+    timer?.reset();
     play();
     try { await api.act(room, acts.slice(), state.phase === 'over'); }
     catch (e) {
@@ -264,7 +271,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   async function play() {
     if (running) return;
     running = true;
-    renderGame();
+    actEl?.classList.add('locked'); // los botones se bloquean mientras se ve la animación; el resto se actualiza al acabar
     while (q.length && !closed) {
       const e = q.shift();
       if (e.k === 'dice') {
@@ -295,9 +302,9 @@ export function openEvapoly({ roomId, api, onClose }) {
       else if (e.k === 'buy') SFX.buy();
       else if (e.k === 'build') SFX.build();
       else if (e.k === 'win') SFX.win();
-      if (e.m && e.k !== 'card') { log.push(say(e.m)); if (log.length > 40) log.shift(); paintLog(); }
       if (e.k === 'buy' || e.k === 'build' || e.k === 'mort') paintBoard();
-      if (e.k === 'card') { log.push(say(e.m)); paintLog(); await showCard(e); }
+      if (e.k === 'card') await showCard(e);
+      if (e.m) { log.push(say(e.m)); if (log.length > 40) log.shift(); paintLog(); }
     }
     running = false;
     view.pos = state.pos.slice();
@@ -362,14 +369,14 @@ export function openEvapoly({ roomId, api, onClose }) {
       // dentro de la casilla todo se dibuja como en las de abajo; las de los lados se giran (como en el tablero de verdad)
       const cw = c.w * GS * 0.62, ch = c.h * GS * 0.62, sideways = side === 'left' || side === 'right';
       const W = sideways ? ch : cw, H = sideways ? cw : ch;
-      const body = H - (g ? 2.9 : 0) - (side === 'corner' ? 0 : 1.5) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g ? 1.1 : 0) - 0.3;
+      const body = H - (g ? 2.9 : 0) - (side === 'corner' ? 0 : 1.5) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
       const fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
       const pin = h('div', { class: 'pin', style: sideways ? { width: W + 'em', height: H + 'em' } : {} },
         g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'bld' }), h('span', { class: 'pr' }, eur(q2.p))) : null,
         h('div', { class: 'pbody' },
           q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
           h('span', { class: 'nm', style: { fontSize: fs + 'em' } }, q2.n),
-          q2.p && !g ? h('span', { class: 'pr2' }, eur(q2.p)) : null),
+          q2.p && !g ? h('span', { class: 'pr2' + (q2.t === 'station' ? ' zoomonly' : '') }, eur(q2.p)) : null),
         side === 'corner' ? null : h('div', { class: 'pown' }));
       const el = h('div', { class: `psq t-${q2.t} s-${side}`, 'data-i': i, style: { left: c.l + '%', top: c.t + '%', width: c.w + '%', height: c.h + '%' } }, pin);
       // mantener pulsado: la casilla se agranda mientras se sigue pulsando; un toque corto abre su ficha
@@ -405,7 +412,12 @@ export function openEvapoly({ roomId, api, onClose }) {
     const F = Math.min(30, Math.max(18, window.innerWidth / 13)), z = el.cloneNode(true);
     z.classList.add('pzoom');
     z.removeAttribute('data-i');
-    Object.assign(z.style, { position: 'fixed', left: '50%', top: '42%', transform: 'translate(-50%, -50%)', width: (c.w * GS * 0.62 * F) + 'px', height: (c.h * GS * 0.62 * F) + 'px', fontSize: F + 'px' });
+    let w = c.w * GS * 0.62 * F, hh = c.h * GS * 0.62 * F;
+    if (z.classList.contains('s-left') || z.classList.contains('s-right')) {
+      // las de los lados se enderezan: se ven de pie, con la banda arriba
+      z.classList.remove('s-left', 's-right'); z.classList.add('s-bot'); const pin = z.querySelector('.pin'); pin.style.width = ''; pin.style.height = ''; [w, hh] = [hh, w];
+    }
+    Object.assign(z.style, { position: 'fixed', left: '50%', top: '42%', transform: 'translate(-50%, -50%)', width: w + 'px', height: hh + 'px', fontSize: F + 'px' });
     return z;
   }
 
@@ -442,6 +454,8 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (!state || !sideEl) return;
     const s = state, my = mySeat();
     paintBoard(); paintTokens(); paintCenter();
+    if (running) return; // durante la animación el panel no se adelanta: se redibuja al terminar
+    actEl.classList.remove('locked');
     // variación de dinero de cada jugador (+50, −200…) que sube y se desvanece junto a su nombre
     if (lastCash) s.cash.forEach((c, i) => { const d = c - lastCash[i]; if (d) deltas.push({ seat: i, at: Date.now(), cls: d > 0 ? 'up' : 'down', text: (d > 0 ? '+' : '−') + eur(Math.abs(d)) }); });
     lastCash = s.cash.slice();
@@ -453,7 +467,8 @@ export function openEvapoly({ roomId, api, onClose }) {
       const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? 'Maricarmen' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
       const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : ''), style: `--c:${COLORS[i]}` },
         turn && s.phase !== 'over' ? h('i', { class: 'pturn' }, s.phase === 'order' ? 'Tira' : i === my ? 'Te toca' : 'Turno') : null,
-        tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info)),
+        tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info),
+          h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: data.squares[sqi].g ? data.groups[data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
         h('span', { class: 'cash' }, eur(s.cash[i])));
       for (const d of deltas) if (d.seat === i && Date.now() - d.at < 1500) row.append(h('span', { class: 'pdelta ' + d.cls, style: `animation-delay:-${Date.now() - d.at}ms` }, d.text));
       return row;
@@ -497,7 +512,8 @@ export function openEvapoly({ roomId, api, onClose }) {
     } else if (s.phase === 'buy') {
       const qd = data.squares[s.buy];
       status(`${qd.n} · ${eur(qd.p)}`);
-      out.push(h('div', { class: 'pbtns' }, btn('Comprar', 'b', { disabled: s.cash[my] < qd.p }), s.cfg.auction ? btn('Subastar', 'a', { primary: false }) : null, btn('No comprar', 'n', { primary: false })));
+      out.push(h('div', { class: 'pbtns' }, btn('Comprar', 'b', { cls: 'cta', disabled: s.cash[my] < qd.p })));
+      out.push(h('div', { class: 'pbtns' }, s.cfg.auction ? btn('Subastar', 'a', { primary: false }) : null, btn('No comprar', 'n', { primary: false })));
     } else if (s.phase === 'end') out.push(h('div', { class: 'pbtns' }, btn('Terminar turno', 'e', { cls: 'cta' })));
     // acciones secundarias en tu turno
     if (my >= 0 && cur === my && (s.phase === 'roll' || s.phase === 'end') && !s.trade) {
@@ -588,10 +604,10 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── salir ─────
   function close() {
-    closed = true; clearTimeout(timer); stopMusic(); document.removeEventListener('fullscreenchange', onFs); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); root.remove(); onClose?.();
+    closed = true; timer?.stop(); stopMusic(); document.removeEventListener('fullscreenchange', onFs); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); root.remove(); onClose?.();
   }
 
   fill(body, h('div', { class: 'dim', style: { padding: '24px', textAlign: 'center' } }, '…'));
-  Promise.all([loadData(), loadToks(), loadIcons()]).then(([d, t, i]) => { data = d; toks = t; icons = i; startMusic(); poll(); }).catch(() => toast('No se pudo cargar el juego'));
+  Promise.all([loadData(), loadToks(), loadIcons()]).then(([d, t, i]) => { data = d; toks = t; icons = i; startMusic(); timer = poller(poll, 2200, 14000); }).catch(() => toast('No se pudo cargar el juego'));
   return root;
 }

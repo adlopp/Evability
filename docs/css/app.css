@@ -536,3 +536,17 @@ textarea.field { resize: vertical; }
 .msg-row { position: relative; touch-action: pan-y; }
 .swipe-ico { position: absolute; left: 6px; top: 50%; transform: translateY(-50%) scale(.5); opacity: 0; color: var(--accent); pointer-events: none; display: inline-flex; }
 .rec-row .wave { flex: 1; min-width: 0; height: 36px; } .rec-row .rtime { font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
+
+/* ajustes: botones que no se cortan, estaciones sin precio hasta ampliar, calles de cada jugador, pantalla completa con menos margen */
+.pbtns .btn { white-space: nowrap; }
+.pbody .pr2.zoomonly { display: none; } .pzoom .pbody .pr2.zoomonly { display: block; }
+.pact.locked { opacity: .5; pointer-events: none; transition: opacity .2s; }
+.pprops { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; } .pprops:empty { display: none; }
+.pprops u { width: 9px; height: 9px; border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.45); } .pprops u.mort { opacity: .35; }
+.pomo.poly.full .poly-main { padding: 4px 12px; gap: 8px; }
+.pomo.poly.full .pside { overflow-y: auto; justify-content: flex-start; align-self: stretch; padding: 44px 12px 0; }
+.pomo.poly.full .pp small { display: block; font-size: 10px; } .pomo.poly.full .pprops u { width: 7px; height: 7px; }
+@media (orientation: landscape) and (min-width: 700px) {
+  .pomo.poly.full .poly-main { --bs: min(calc(100vw - 310px), calc(100vh - 8px)); }
+  .pomo.poly.full .pside { width: 270px; max-height: 100vh; }
+}
