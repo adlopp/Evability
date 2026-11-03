@@ -1,6 +1,7 @@
 // Ajedrez entre amigos: tablero verde y piezas «Fresca» de sadsnake1 (CC BY-NC-SA 4.0, colección de lichess), movimientos legales, jaque, relojes, tablas y sonidos.
 // Las reglas viven en chess-engine.js. La partida está en la nube (Firestore) y se consulta cada poco: `api` la lee y la escribe.
 
+import { darkPref, darkToggle } from './ui.js';
 import { h, icon, toast, confirmDialog } from './ui.js';
 import { replay, applyMove, legalMoves, moveString, outcome, positionKey, colorOf, sqName } from './chess-engine.js';
 
@@ -56,9 +57,10 @@ export function openChess({ friend, gameId, api, onClose }) {
   const topBar = h('div', { class: 'cplayer' }), botBar = h('div', { class: 'cplayer' });
   const banner = h('div', { class: 'cbanner' });
   const actions = h('div', { class: 'cactions' });
+  const darkBtn = () => h('button', { class: 'icon-btn', 'aria-label': 'Fondo oscuro', title: 'Fondo oscuro', onclick: () => root.classList.toggle('dark-bg', darkToggle()) }, icon('moon'));
   const fullBtn = () => h('button', { class: 'icon-btn cfull', 'aria-label': 'Pantalla completa', title: 'Pantalla completa', onclick: () => setFull(!root.classList.contains('full')) }, icon('expand'));
   const root = h('div', { class: 'pomo chess' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Evadrez'), fullBtn()),
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Evadrez'), darkBtn(), fullBtn()),
     h('div', { class: 'chess-main' }, board, h('div', { class: 'cside' }, topBar, banner, actions, botBar)));
 
   const flip = () => myColor === 'b';
@@ -313,6 +315,8 @@ export function openChess({ friend, gameId, api, onClose }) {
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   }
+
+  if (darkPref()) root.classList.add('dark-bg');
 
   /** Pantalla completa: se quitan la cabecera, el estado y los botones y el tablero se agranda (y, si el navegador lo permite, se oculta todo lo demás). */
   function setFull(on) {

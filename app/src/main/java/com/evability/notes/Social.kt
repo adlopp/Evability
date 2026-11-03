@@ -41,7 +41,7 @@ object Social {
     class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long, val studying: Boolean = false)
     class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>)
     class Heart(val id: Long, val x: Float, val y: Float)
-    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0)
+    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "")
 
     /** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
     val unread = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
@@ -471,7 +471,7 @@ object Social {
     }
 
     private fun messageOf(d: JSONObject, me: String) =
-        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"))
+        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"), d.text("rq"), d.text("rf"))
 
     private fun orderByAt(direction: String) =
         JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "at")).put("direction", direction))
@@ -490,6 +490,36 @@ object Social {
             val meta = metas[pair]
             unread[u] = meta != null && meta.text("lastFrom") != me && meta.time("lastAt") > Prefs.chatRead(pair)
         }
+    }
+
+    class ChatAlert(val uid: String, val name: String, val preview: String)
+
+    /**
+     * Chats con mensajes sin leer de los que todavía no se ha avisado. Solo se avisa del primer mensaje (o invitación a jugar) sin leer
+     * de cada chat: hasta que se lee no se vuelve a avisar por los siguientes.
+     */
+    suspend fun newChatAlerts(): List<ChatAlert> = withContext(Dispatchers.IO) {
+        checkChats()
+        val me = live().uid
+        val out = ArrayList<ChatAlert>()
+        for (u in friendUidsCache) {
+            val pair = pairId(me, u)
+            if (unread[u] != true || Prefs.chatNotified(pair)) continue
+            val q = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
+                .put("where", filter("at", "GREATER_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(Prefs.chatRead(pair)).toString())))
+                .put("orderBy", orderByAt("ASCENDING")).put("limit", 5)
+            val first = queryUnder("chats/$pair", q).map { messageOf(it, me) }.firstOrNull { !it.mine } ?: continue
+            val name = getAll("users", listOf(u))[u]?.text("username") ?: "Un amigo"
+            val preview = when (first.kind) {
+                "chess" -> "Te invita a jugar al Evadrez"
+                "audio" -> "Te ha enviado un audio"
+                "image" -> "Te ha enviado una foto"
+                else -> first.text.take(120)
+            }
+            Prefs.setChatNotified(pair, true)
+            out.add(ChatAlert(u, name, preview))
+        }
+        out
     }
 
     /** Mensajes del chat: los 50 últimos si `after` es 0, o solo los posteriores a `after` (ms). */
@@ -514,13 +544,20 @@ object Social {
         queryUnder("chats/$pair", q).map { d -> messageOf(d, me) }.reversed()
     }
 
-    suspend fun sendMessage(friendUid: String, text: String) = withContext(Dispatchers.IO) {
+    /** `replyTo` = mensaje al que se responde: se guarda un extracto y su autor para enseñarlo encima. */
+    suspend fun sendMessage(friendUid: String, text: String, replyTo: ChatMessage? = null, replyPreview: String = "") = withContext(Dispatchers.IO) {
         val me = live().uid
         val pair = pairId(me, friendUid)
         val t = text.trim().take(5000)
         if (t.isEmpty()) return@withContext
         commit(
-            write("chats/$pair/messages/${UUID.randomUUID()}", JSONObject().put("from", str(me)).put("text", str(t)), serverTime = "at"),
+            write(
+                "chats/$pair/messages/${UUID.randomUUID()}",
+                JSONObject().put("from", str(me)).put("text", str(t)).also {
+                    if (replyTo != null) it.put("rid", str(replyTo.id)).put("rq", str(replyPreview.take(120))).put("rf", str(if (replyTo.mine) me else friendUid))
+                },
+                serverTime = "at",
+            ),
             write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
         )
     }
@@ -541,6 +578,35 @@ object Social {
             ),
             write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
         )
+    }
+
+    /** Manda una foto (JPEG ya reducido): el contenido va en el documento `audio/{id}` y el mensaje solo avisa de que es una foto. */
+    suspend fun sendPhoto(friendUid: String, jpeg: ByteArray) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val b64 = Base64.encodeToString(jpeg, Base64.NO_WRAP)
+        if (b64.length > 700_000) throw SocialError("La foto es demasiado grande")
+        val id = UUID.randomUUID().toString()
+        commit(
+            write("chats/$pair/audio/$id", JSONObject().put("from", str(me)).put("data", str(b64))),
+            write(
+                "chats/$pair/messages/$id",
+                JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("image")).put("mime", str("image/jpeg")),
+                serverTime = "at",
+            ),
+            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+        )
+    }
+
+    /** Descarga una foto del chat a un archivo (si ya está descargada, lo reutiliza). */
+    suspend fun photoFile(ctx: android.content.Context, friendUid: String, msgId: String): File = withContext(Dispatchers.IO) {
+        val f = File(ctx.cacheDir, "img-$msgId.jpg")
+        if (f.exists() && f.length() > 0) return@withContext f
+        val pair = pairId(live().uid, friendUid)
+        val data = getAll("chats/$pair/audio", listOf(msgId))[msgId]?.text("data").orEmpty()
+        if (data.isEmpty()) throw SocialError("No se pudo cargar la foto")
+        f.writeBytes(Base64.decode(data, Base64.DEFAULT))
+        f
     }
 
     /** Descarga un audio a un archivo temporal (si ya está descargado, lo reutiliza). */
@@ -652,6 +718,7 @@ object Social {
     fun markRead(friendUid: String, at: Long) {
         val me = session?.uid ?: return
         Prefs.setChatRead(pairId(me, friendUid), at)
+        Prefs.setChatNotified(pairId(me, friendUid), false)
         unread[friendUid] = false
     }
 

@@ -1,5 +1,7 @@
 package com.evability.notes
 
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.combinedClickable
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -64,8 +66,28 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import android.content.pm.PackageManager
 import android.Manifest
 import java.util.Locale
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.activity.result.PickVisualMediaRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import android.net.Uri
+import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Dialog
+import androidx.compose.runtime.produceState
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.material.icons.filled.SportsEsports
 
 /** Chat con un amigo: los mensajes se ven en cuanto llegan (se consultan cada 3 s mientras la pantalla está abierta). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
@@ -73,6 +95,7 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val messages = remember { mutableStateListOf<Social.ChatMessage>() }
     var input by remember { mutableStateOf("") }
+    var replyTo by remember { mutableStateOf<Social.ChatMessage?>(null) }
     var lastAt by remember { mutableLongStateOf(0L) }
     var hasMore by remember { mutableStateOf(true) }
     var loadingOlder by remember { mutableStateOf(false) }
@@ -135,14 +158,32 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         val text = input.trim()
         if (text.isEmpty()) return
         input = ""
+        val quoted = replyTo
+        replyTo = null
         scope.launch {
             try {
-                Social.sendMessage(friend.uid, text)
+                Social.sendMessage(friend.uid, text, quoted, quoted?.let { previewOf(it) }.orEmpty())
                 load()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 input = text
+                Toast.makeText(ctx, e.message ?: "No se pudo enviar", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // ───── fotos ─────
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            try {
+                val jpeg = withContext(Dispatchers.IO) { encodeChatPhoto(ctx, uri) }
+                Social.sendPhoto(friend.uid, jpeg)
+                load()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 Toast.makeText(ctx, e.message ?: "No se pudo enviar", Toast.LENGTH_SHORT).show()
             }
         }
@@ -251,9 +292,18 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                         Column(
                             Modifier.widthIn(max = 440.dp)
                                 .background(if (m.mine) Accent else Surface2, RoundedCornerShape(18.dp))
+                                .combinedClickable(onClick = {}, onLongClick = { replyTo = m })
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                         ) {
-                            if (m.kind == "audio") AudioRow(m, friend.uid, if (m.mine) OnAccent else OnSurface)
+                            if (m.replyText.isNotEmpty()) {
+                                val fg = if (m.mine) OnAccent else OnSurface
+                                Column(Modifier.padding(bottom = 6.dp).background(fg.copy(alpha = 0.15f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                    Text(if (m.replyFrom == Social.session?.uid) "Tú" else friend.username, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = fg.copy(alpha = 0.85f))
+                                    Text(m.replyText, fontSize = 13.sp, maxLines = 2, color = fg.copy(alpha = 0.85f))
+                                }
+                            }
+                            if (m.kind == "image") PhotoRow(m, friend.uid)
+                            else if (m.kind == "audio") AudioRow(m, friend.uid, if (m.mine) OnAccent else OnSurface)
                             else if (m.kind == "chess") ChessCard(m, friend, if (m.mine) OnAccent else OnSurface) { chessId = m.id }
                             else Text(m.text, fontSize = 16.sp, color = if (m.mine) OnAccent else OnSurface)
                             Text(
@@ -267,6 +317,19 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
             }
         }
 
+        replyTo?.let { r ->
+            Row(
+                Modifier.widthIn(max = 720.dp).fillMaxWidth().align(Alignment.CenterHorizontally).padding(horizontal = 10.dp)
+                    .background(Surface2, RoundedCornerShape(12.dp)).padding(start = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                    Text(if (r.mine) "Tú" else friend.username, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Accent)
+                    Text(previewOf(r), fontSize = 13.sp, maxLines = 1, color = OnSurfaceDim)
+                }
+                IconButton(onClick = { replyTo = null }) { Icon(Icons.Default.Close, "Cancelar respuesta", tint = OnSurfaceDim) }
+            }
+        }
         Row(
             Modifier.widthIn(max = 720.dp).fillMaxWidth().align(Alignment.CenterHorizontally).padding(horizontal = 6.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -278,7 +341,8 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                 Text(mmss(recMs), color = OnSurface, fontSize = 17.sp, modifier = Modifier.weight(1f))
                 IconButton(onClick = { finishRecording(true) }) { Icon(Icons.AutoMirrored.Filled.Send, "Enviar audio", tint = Accent) }
             } else {
-                IconButton(onClick = { showGames = true }) { Icon(Icons.Default.AttachFile, "Minijuegos", tint = OnSurface) }
+                IconButton(onClick = { showGames = true }) { Icon(Icons.Default.SportsEsports, "Minijuegos", tint = OnSurface) }
+                IconButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.AttachFile, "Foto", tint = OnSurface) }
                 OutlinedTextField(
                     value = input, onValueChange = { input = it.take(5000) }, modifier = Modifier.weight(1f),
                     placeholder = { Text("Mensaje") }, maxLines = 4, shape = RoundedCornerShape(22.dp),
@@ -291,6 +355,14 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
             }
         }
     }
+}
+
+/** Extracto de un mensaje para citarlo en una respuesta. */
+private fun previewOf(m: Social.ChatMessage): String = when (m.kind) {
+    "image" -> "Foto"
+    "audio" -> "Audio"
+    "chess" -> "Evadrez"
+    else -> m.text.take(100)
 }
 
 private fun mmss(ms: Long): String = "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
@@ -325,6 +397,72 @@ private fun AudioRow(m: Social.ChatMessage, friendUid: String, fg: Color) {
                 modifier = Modifier.width(120.dp), color = fg, trackColor = fg.copy(alpha = 0.25f),
             )
             Text(mmss(if (playing) VoicePlayer.position else m.dur), fontSize = 11.sp, color = fg.copy(alpha = 0.8f), modifier = Modifier.padding(top = 3.dp))
+        }
+    }
+}
+
+/** Foto elegida → JPEG con el lado largo de 1280 px como mucho, y comprimido hasta que quepa en un documento (< 700.000 caracteres en base64). */
+private fun encodeChatPhoto(ctx: android.content.Context, uri: Uri): ByteArray {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0) throw Exception("Solo se pueden enviar fotos")
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1280) sample *= 2
+    var bmp = ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+        ?: throw Exception("Solo se pueden enviar fotos")
+    // la orientación de la cámara (EXIF)
+    val rotation = runCatching {
+        ctx.contentResolver.openInputStream(uri)!!.use {
+            when (android.media.ExifInterface(it).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, 1)) {
+                android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+        }
+    }.getOrDefault(0f)
+    if (rotation != 0f) bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, android.graphics.Matrix().apply { postRotate(rotation) }, true)
+    val long = maxOf(bmp.width, bmp.height)
+    if (long > 1280) bmp = Bitmap.createScaledBitmap(bmp, bmp.width * 1280 / long, bmp.height * 1280 / long, true)
+    var quality = 82
+    while (true) {
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        val bytes = out.toByteArray()
+        if (bytes.size * 4 / 3 < 650_000) return bytes
+        if (quality > 50) quality -= 10 else bmp = Bitmap.createScaledBitmap(bmp, bmp.width * 4 / 5, bmp.height * 4 / 5, true)
+    }
+}
+
+/** Una foto dentro de la burbuja: se descarga al aparecer y al tocarla se ve a pantalla completa. */
+@Composable
+private fun PhotoRow(m: Social.ChatMessage, friendUid: String) {
+    val ctx = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    val bmp by produceState<Bitmap?>(null, m.id) {
+        value = try {
+            withContext(Dispatchers.IO) { BitmapFactory.decodeFile(Social.photoFile(ctx, friendUid, m.id).path) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+    val b = bmp
+    if (b == null) {
+        Box(Modifier.size(width = 240.dp, height = 160.dp).background(Color(0x22808080), RoundedCornerShape(14.dp)))
+    } else {
+        val ratio = (b.width.toFloat() / b.height).coerceIn(0.6f, 1.8f)
+        Image(
+            b.asImageBitmap(), "Foto", contentScale = ContentScale.Crop,
+            modifier = Modifier.width(260.dp).aspectRatio(ratio).clip(RoundedCornerShape(14.dp)).clickable { open = true },
+        )
+        if (open) {
+            Dialog(onDismissRequest = { open = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                Box(Modifier.fillMaxSize().background(Color.Black).clickable { open = false }, contentAlignment = Alignment.Center) {
+                    Image(b.asImageBitmap(), "Foto", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                }
+            }
         }
     }
 }

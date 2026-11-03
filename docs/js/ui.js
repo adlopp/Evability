@@ -67,6 +67,10 @@ const P = {
   chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.4A8 8 0 1 1 21 12z"/>',
   send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>',
   clip: '<path d="m21.4 11.6-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+  gamepad: '<path d="M6 11h4M8 9v4"/><circle cx="15" cy="12" r=".6"/><circle cx="18" cy="10" r=".6"/><path d="M17.3 5H6.7a4 4 0 0 0-3.9 3.2l-1.5 7A3 3 0 0 0 4.2 19c1 0 1.9-.5 2.4-1.3L8 16h8l1.4 1.7c.5.8 1.4 1.3 2.4 1.3a3 3 0 0 0 2.9-3.8l-1.5-7A4 4 0 0 0 17.3 5z"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  reply: '<path d="M9 14 4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/>',
   expand: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>',
@@ -191,4 +195,12 @@ export function ago(t) {
   if (hr < 24) return `hace ${hr} h`;
   const d = Math.round(hr / 24);
   return d === 1 ? 'ayer' : `hace ${d} días`;
+}
+
+/** Fondo negro de los minijuegos (Wordle y Evadrez), recordado en este navegador. */
+export const darkPref = () => { try { return localStorage.getItem('ev.gameDark') === '1'; } catch { return false; } };
+export function darkToggle() {
+  const on = !darkPref();
+  try { localStorage.setItem('ev.gameDark', on ? '1' : '0'); } catch { /* sin almacenamiento */ }
+  return on;
 }

@@ -1,5 +1,6 @@
 package com.evability.notes
 
+import androidx.compose.material.icons.filled.DarkMode
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -233,10 +234,12 @@ fun WordleScreen(friend: Social.Profile?, onClose: () -> Unit) {
     val keyState = HashMap<Char, Int>()
     if (ready) for (g in guesses) WordleGame.evaluate(g, answer).forEachIndexed { i, s -> keyState[g[i]] = maxOf(keyState[g[i]] ?: -1, s) }
 
-    Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+    var dark by remember { mutableStateOf(Prefs.gameDark) }
+    Column(Modifier.fillMaxSize().background(if (dark) Color.Black else Bg).statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
-            Text("Wordle", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            Text("Wordle", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
+            IconButton(onClick = { dark = !dark; Prefs.gameDark = dark }) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
         }
 
         Spacer(Modifier.height(8.dp))

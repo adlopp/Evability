@@ -66,6 +66,7 @@ class FriendsWatchService : Service() {
                                     ShareNotifier.show(ctx, name, from, replaced)
                                     replaced
                                 }
+                                for (a in Social.newChatAlerts()) ChatNotifier.show(ctx, a)
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -88,7 +89,7 @@ class FriendsWatchService : Service() {
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("Evability")
-            .setContentText("Pendiente de los documentos de tus amigos")
+            .setContentText("Pendiente de los mensajes y documentos de tus amigos")
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)

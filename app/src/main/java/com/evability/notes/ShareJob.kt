@@ -39,6 +39,7 @@ class ShareCheckService : JobService() {
                         ShareNotifier.show(ctx, name, from, replaced)
                         replaced
                     }
+                    for (a in Social.newChatAlerts()) ChatNotifier.show(ctx, a)
                 }
             } catch (e: Exception) {
                 // sin red o sin sesión: se reintenta en el próximo ciclo
@@ -99,6 +100,33 @@ object ShareNotifier {
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle(if (replaced) "$from te ha enviado una versión nueva" else "$from te ha enviado un documento")
                 .setContentText("«$name» está en la carpeta ${Prefs.friendsName}")
+                .setAutoCancel(true)
+                .setContentIntent(open)
+                .build(),
+        )
+    }
+}
+
+/** Aviso de mensaje o invitación a jugar en el chat: uno por amigo, hasta que se lea. */
+object ChatNotifier {
+    private const val CHANNEL = "chats"
+
+    @SuppressLint("MissingPermission")
+    fun show(ctx: Context, alert: Social.ChatAlert) {
+        val nm = NotificationManagerCompat.from(ctx)
+        if (!nm.areNotificationsEnabled()) return
+        ctx.getSystemService(NotificationManager::class.java)
+            .createNotificationChannel(NotificationChannel(CHANNEL, "Mensajes de amigos", NotificationManager.IMPORTANCE_HIGH))
+        val open = PendingIntent.getActivity(
+            ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        nm.notify(
+            "chat".hashCode() xor alert.uid.hashCode(),
+            NotificationCompat.Builder(ctx, CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_notify_chat)
+                .setContentTitle(alert.name)
+                .setContentText(alert.preview)
                 .setAutoCancel(true)
                 .setContentIntent(open)
                 .build(),

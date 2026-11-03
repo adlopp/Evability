@@ -210,7 +210,7 @@ const unread = new Map();
 let friendUidsCache = [], friendsFetchedAt = 0;
 export const anyUnread = () => [...unread.values()].some(Boolean);
 
-const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0) });
+const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0), rq: text(d, 'rq'), rf: text(d, 'rf') });
 
 async function queryUnder(parent, structured) {
   const arr = JSON.parse(await postText(`${DOCS}/${parent}:runQuery`, JSON.stringify({ structuredQuery: structured }), { token: (await live()).idToken }));
@@ -250,11 +250,12 @@ async function chatOlder(friendUid, before) {
   return (await queryUnder(`chats/${pair}`, q)).map((d) => (msgOf(d, me))).reverse();
 }
 
-async function sendMessage(friendUid, textMsg) {
+/** `reply` = { msg, preview }: mensaje al que se responde; se guarda un extracto y su autor para enseñarlo encima. */
+async function sendMessage(friendUid, textMsg, reply) {
   const me = (await live()).uid, pair = pairId(me, friendUid), t = textMsg.trim().slice(0, 5000);
   if (!t) return;
   await commit(
-    write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(t) }, { serverTime: 'at' }),
+    write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(t), ...(reply ? { rid: str(reply.msg.id), rq: str(reply.preview.slice(0, 120)), rf: str(reply.msg.mine ? me : friendUid) } : {}) }, { serverTime: 'at' }),
     write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
 }
 
@@ -360,6 +361,40 @@ async function sendAudio(friendUid, blob, mime, durMs) {
     write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
 }
 
+/** Reduce la foto (lado largo 1280 px, JPEG) hasta que quepa en un documento (< 700.000 caracteres en base64). */
+async function photoToB64(file) {
+  const bmp = await createImageBitmap(file).catch(() => null);
+  if (!bmp) throw new Error('Solo se pueden enviar fotos');
+  let k = Math.min(1, 1280 / Math.max(bmp.width, bmp.height)), q = 0.82;
+  for (;;) {
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const b64 = c.toDataURL('image/jpeg', q).split(',')[1];
+    if (b64.length < 650000) return b64;
+    if (q > 0.5) q -= 0.1; else k *= 0.8;
+  }
+}
+
+/** Manda una foto: el contenido va en su propio documento y el mensaje solo avisa de que es una foto. */
+async function sendPhoto(friendUid, file) {
+  if (!file.type.startsWith('image/')) throw new Error('Solo se pueden enviar fotos');
+  const me = (await live()).uid, pair = pairId(me, friendUid), b64 = await photoToB64(file), id = uid();
+  await commit(
+    write(`chats/${pair}/audio/${id}`, { from: str(me), data: str(b64) }),
+    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('image'), mime: str('image/jpeg') }, { serverTime: 'at' }),
+    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+}
+
+const photoCache = new Map();
+async function photoUrl(friendUid, msg) {
+  if (photoCache.has(msg.id)) return photoCache.get(msg.id);
+  const pair = pairId((await live()).uid, friendUid), data = text((await getAll(`chats/${pair}/audio`, [msg.id]))[msg.id], 'data');
+  if (!data) throw new Error('No se pudo cargar la foto');
+  const url = `data:image/jpeg;base64,${data}`;
+  photoCache.set(msg.id, url);
+  return url;
+}
+
 const audioCache = new Map();
 async function audioUrl(friendUid, msg) {
   if (audioCache.has(msg.id)) return audioCache.get(msg.id);
@@ -409,9 +444,25 @@ function openChat(friend) {
       if (mins === null) return;
       try { const id = await createGame(friend.uid, mins); await load(); root.append(openChess({ friend, gameId: id, api: chessApi(friend, id), onClose: () => tick() })); }
       catch (e) { toast(e.message || 'No se pudo crear la partida'); }
-    }) }, icon('clip'));
+    }) }, icon('gamepad'));
+  const fileInput = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: async () => {
+    const f = fileInput.files[0]; fileInput.value = '';
+    if (!f) return;
+    try { await sendPhoto(friend.uid, f); await load(); listEl.scrollTop = listEl.scrollHeight; } catch (e) { toast(e.message || 'No se pudo enviar'); }
+  } });
+  const photoBtn = h('button', { class: 'icon-btn', 'aria-label': 'Foto', onclick: () => fileInput.click() }, icon('clip'));
   const actionBtn = h('button', { class: 'icon-btn accent' });
-  const normalRow = h('div', { class: 'rec-row' }, clipBtn, input, actionBtn);
+  const normalRow = h('div', { class: 'rec-row' }, clipBtn, photoBtn, fileInput, input, actionBtn);
+  let replyTo = null;
+  const replyBar = h('div', { class: 'reply-bar', style: { display: 'none' } });
+  const previewOf = (m) => m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? 'Audio' : m.kind === 'chess' ? 'Evadrez' : m.text.slice(0, 100);
+  function setReply(m) {
+    replyTo = m;
+    replyBar.replaceChildren(h('div', { class: 'grow' }, h('b', {}, m ? (m.mine ? 'Tú' : friend.username) : ''), h('small', {}, m ? previewOf(m) : '')),
+      h('button', { class: 'icon-btn', 'aria-label': 'Cancelar respuesta', onclick: () => setReply(null) }, icon('close', 18)));
+    replyBar.style.display = m ? '' : 'none';
+    if (m) input.focus();
+  }
   const recDot = h('i', { class: 'rec-dot' }), recTime = h('span', {}, '0:00');
   const recRow = h('div', { class: 'rec-row', style: { display: 'none' } },
     h('button', { class: 'icon-btn', 'aria-label': 'Cancelar', onclick: () => cancelRec() }, icon('trash')), recDot, h('span', { class: 'grow' }, recTime),
@@ -419,7 +470,7 @@ function openChat(friend) {
   const root = h('div', { class: 'pomo chat' },
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')),
       avatar(friend.username, friend.photo, 38), h('h1', {}, friend.username)),
-    listEl, h('div', { class: 'chat-input' }, normalRow, recRow));
+    listEl, replyBar, h('div', { class: 'chat-input' }, normalRow, recRow));
   const seen = new Set(); let lastAt = 0, firstAt = 0, timer, hasMore = true, loadingOlder = false, recording = null, recTimer = null;
   const cardTimers = [];
   const rows = []; // filas en orden: { mine, av, el }
@@ -448,6 +499,17 @@ function openChat(friend) {
     return h('div', { class: 'audio' }, btn, h('div', { class: 'abar' }, fill), dur);
   }
 
+  /** Una foto dentro de la burbuja: se descarga al aparecer y al tocarla se ve a pantalla completa. */
+  function photoBubble(m) {
+    const img = h('img', { class: 'chat-photo', alt: 'Foto' });
+    photoUrl(friend.uid, m).then((u) => {
+      img.onload = () => { if (listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 400) listEl.scrollTop = listEl.scrollHeight; };
+      img.src = u;
+    }).catch(() => { img.replaceWith(h('small', {}, 'No se pudo cargar la foto')); });
+    img.onclick = () => { const v = h('div', { class: 'photo-view', onclick: () => v.remove() }, h('img', { src: img.src, alt: 'Foto' })); root.append(v); };
+    return img;
+  }
+
   /** Invitación a una partida de ajedrez: muestra cómo va y deja unirse o abrirla. */
   function chessCard(m) {
     const status = h('small', {}, ''), btn = h('button', { class: 'btn small-btn' }, 'Abrir');
@@ -468,8 +530,10 @@ function openChat(friend) {
   const makeRow = (m, me) => {
     seen.add(m.id);
     const av = m.mine ? avatar(session?.username || '', me.photo, 32, null, session?.uid) : avatar(friend.username, friend.photo, 32, null, friend.uid);
-    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, m.kind === 'audio' ? audioBubble(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
-    return { mine: m.mine, av, el: h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [bubble, av] : [av, bubble])) };
+    const quote = m.rq ? h('div', { class: 'quote' }, h('b', {}, m.rf === session?.uid ? 'Tú' : friend.username), h('span', {}, m.rq)) : null;
+    const replyBtn = h('button', { class: 'reply-btn', 'aria-label': 'Responder', onclick: () => setReply(m) }, icon('reply', 16));
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
+    return { mine: m.mine, av, el: h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [replyBtn, bubble, av] : [av, bubble, replyBtn])) };
   };
   async function load() {
     const raw = await chatMessages(friend.uid, lastAt);
@@ -513,7 +577,8 @@ function openChat(friend) {
     const t = input.value.trim();
     if (!t) return;
     input.value = ''; paintAction();
-    try { await sendMessage(friend.uid, t); await load(); listEl.scrollTop = listEl.scrollHeight; }
+    const quoted = replyTo ? { msg: replyTo, preview: previewOf(replyTo) } : null; setReply(null);
+    try { await sendMessage(friend.uid, t, quoted); await load(); listEl.scrollTop = listEl.scrollHeight; }
     catch (e) { input.value = t; paintAction(); toast(e.message || 'No se pudo enviar'); }
   }
   async function beginRec() {

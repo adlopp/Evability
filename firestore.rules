@@ -115,16 +115,23 @@ service cloud.firestore {
 
       match /messages/{msgId} {
         allow read, delete: if inChat(pairId);
-        // Mensaje de texto, o de audio (kind = 'audio': solo guarda la duración; el audio va aparte, en audio/{mismo id}).
+        // Mensaje de texto, de audio (kind = 'audio': solo guarda la duración; el audio va aparte, en audio/{mismo id}) o de foto
+        // (kind = 'image': la foto va en ese mismo documento audio/{mismo id}).
         allow create: if inChat(pairId)
-          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime', 'game', 'mins'])
+          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime', 'game', 'mins', 'rid', 'rq', 'rf'])
           && request.resource.data.from == request.auth.uid
           && request.resource.data.at == request.time
           && request.resource.data.text is string && request.resource.data.text.size() <= 5000
+          // respuesta a un mensaje: id, extracto y autor del mensaje citado
+          && (!('rid' in request.resource.data) || (request.resource.data.rid is string && request.resource.data.rid.size() < 64
+              && request.resource.data.rq is string && request.resource.data.rq.size() <= 120
+              && request.resource.data.rf is string && request.resource.data.rf.size() < 64))
           && (
             (!('kind' in request.resource.data) && request.resource.data.text.size() > 0)
             || (request.resource.data.kind == 'audio' && request.resource.data.text.size() == 0
                 && request.resource.data.dur is int && request.resource.data.dur <= 125000
+                && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
+            || (request.resource.data.kind == 'image' && request.resource.data.text.size() == 0
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
             || (request.resource.data.kind == 'chess' && request.resource.data.text.size() == 0
                 && request.resource.data.game is string && request.resource.data.game.size() < 64
@@ -164,7 +171,7 @@ service cloud.firestore {
         );
       }
 
-      // el contenido de los audios (base64, unos 3 KB por segundo): solo se descarga al darle a reproducir
+      // el contenido de los audios (base64, unos 3 KB por segundo) y de las fotos: solo se descarga al reproducir / abrir
       match /audio/{audioId} {
         allow read, delete: if inChat(pairId);
         allow create: if inChat(pairId)

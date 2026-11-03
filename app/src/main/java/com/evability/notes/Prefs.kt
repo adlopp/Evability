@@ -70,6 +70,15 @@ object Prefs {
         get() = sp.getString("social_session", "") ?: ""
         set(v) = sp.edit().putString("social_session", v).apply()
 
+    /** Fondo negro en los minijuegos (Wordle y Evadrez). */
+    var gameDark: Boolean
+        get() = sp.getBoolean("game_dark", false)
+        set(v) = sp.edit().putBoolean("game_dark", v).apply()
+
+    /** Si ya se avisó con una notificación de que hay mensajes sin leer en ese chat (solo se avisa del primero hasta que se lea). */
+    fun chatNotified(pair: String): Boolean = sp.getBoolean("chat_notified_$pair", false)
+    fun setChatNotified(pair: String, v: Boolean) = sp.edit().putBoolean("chat_notified_$pair", v).apply()
+
     /** Hasta qué mensaje (hora del servidor, en ms) has leído cada chat. */
     fun chatRead(pair: String): Long = sp.getLong("chat_read_$pair", 0L)
     fun setChatRead(pair: String, at: Long) = sp.edit().putLong("chat_read_$pair", at).apply()

@@ -1,6 +1,7 @@
 // Wordle en español. La palabra del día sale de una lista guardada en la app según la fecha, así que es la misma para todos
 // (móvil, tablet y web) y no hace falta conexión. Las tildes no cuentan: «árbol» se escribe «arbol».
 
+import { darkPref, darkToggle } from './ui.js';
 import { h, icon, toast } from './ui.js';
 
 const ROWS = 6;
@@ -60,8 +61,11 @@ export function openWordle({ friendUid, post, onClose }) {
     kb.append(row);
   });
   const root = h('div', { class: 'pomo wordle' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', {}, 'Wordle')),
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Wordle'),
+      h('button', { class: 'icon-btn', 'aria-label': 'Fondo oscuro', title: 'Fondo oscuro', onclick: () => root.classList.toggle('dark-bg', darkToggle()) }, icon('moon'))),
     h('div', { class: 'wordle-main' }, board, msg, kb));
+
+  if (darkPref()) root.classList.add('dark-bg');
 
   const finished = () => ready && (guesses[guesses.length - 1] === answer || guesses.length >= ROWS);
 

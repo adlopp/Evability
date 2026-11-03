@@ -1,5 +1,6 @@
 package com.evability.notes
 
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -378,11 +379,14 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     val opp = if (myColor == 'w') 'b' else 'w'
     val mine = if (myColor == 'b') 'b' else 'w'
 
+    var dark by remember { mutableStateOf(Prefs.gameDark) }
+
     @Composable
     fun Header() {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
             Text("Evadrez", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
+            IconButton(onClick = { dark = !dark; Prefs.gameDark = dark }) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
             IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = OnSurface) }
         }
     }
@@ -593,7 +597,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     // En pantalla completa el tablero va en el centro de la pantalla, el rival arriba a la izquierda, tú abajo a la derecha y el botón
     // de salir arriba a la derecha.
     BoxWithConstraints(
-        Modifier.fillMaxSize().background(Bg).then(if (fullScreen) Modifier else Modifier.statusBarsPadding().navigationBarsPadding()),
+        Modifier.fillMaxSize().background(if (dark) Color.Black else Bg).then(if (fullScreen) Modifier else Modifier.statusBarsPadding().navigationBarsPadding()),
     ) {
         if (fullScreen) {
             val land = maxWidth > maxHeight * 1.2f
