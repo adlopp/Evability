@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -130,13 +131,13 @@ fun ChessCard(m: Social.ChatMessage, friend: Social.Profile, fg: Color, onOpen: 
         g.status == "waiting" -> if (m.mine) "Esperando rival" else "Te invitan a jugar"
         g.status == "playing" -> "En juego"
         g.result == "d" -> "Tablas"
-        else -> "Ganan ${if (g.result == "w") "blancas" else "negras"}"
+        else -> "Gana ${if ((if (g.result == "w") g.white else g.black) == Social.session?.uid) (Social.session?.username ?: "") else friend.username}"
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(44.dp).background(DarkSq, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { PieceIcon('N', 40.dp) }
         Spacer(Modifier.width(12.dp))
         Column {
-            Text("Ajedrez", fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = fg)
+            Text("Evadrez", fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = fg)
             Text(if (m.mins > 0) "${m.mins} min" else "Sin tiempo", fontSize = 12.sp, color = fg.copy(alpha = 0.8f))
             if (status.isNotEmpty()) Text(status, fontSize = 12.sp, color = fg.copy(alpha = 0.8f))
         }
@@ -355,176 +356,175 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     val diff = byWhite.sumOf { PieceValue[it] ?: 0 } - byBlack.sumOf { PieceValue[it] ?: 0 }
     val clk = clocks()
 
-    Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+    val opp = if (myColor == 'w') 'b' else 'w'
+    val mine = if (myColor == 'b') 'b' else 'w'
+
+    @Composable
+    fun Header() {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
-            Text("Ajedrez", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            Text("Evadrez", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface)
         }
+    }
 
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            val side = minOf(maxWidth - 16.dp, maxHeight - 130.dp, 640.dp).coerceAtLeast(200.dp)
-            val sidePx = with(density) { side.toPx() }
-            val cell = sidePx / 8f
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                @Composable
-                fun Bar(color: Char, name: String, photo: String) {
-                    val turn = playing() && pos?.turn == color
-                    val took = if (color == 'w') byWhite else byBlack
-                    val lead = if (color == 'w') diff else -diff
-                    Row(
-                        Modifier.width(side).background(if (turn) Accent.copy(alpha = 0.15f) else Color.Transparent, RoundedCornerShape(12.dp)).padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Avatar(name, photo, 34)
-                        Spacer(Modifier.width(10.dp))
-                        Text(name, fontWeight = FontWeight.SemiBold, color = OnSurface)
-                        Spacer(Modifier.width(6.dp))
-                        Box(Modifier.size(10.dp).background(if (color == 'w') Color.White else Color(0xFF222222), CircleShape).border(1.5.dp, OnSurfaceDim, CircleShape))
-                        Spacer(Modifier.width(8.dp))
-                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                            took.forEach { PieceIcon(if (color == 'w') it else it.uppercaseChar(), 16.dp) }
-                            if (lead > 0) Text(" +$lead", fontSize = 13.sp, color = OnSurfaceDim)
-                        }
-                        if (clk != null) {
-                            val ms = if (color == 'w') clk.first else clk.second
-                            Text(
-                                mmss(ms), fontSize = 18.sp, fontWeight = FontWeight.Bold,
-                                color = if (ms < 10_000) Color.White else if (turn) OnAccent else OnSurface,
-                                modifier = Modifier.background(if (ms < 10_000) Color(0xFFC62828) else if (turn) Accent else Surface2, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 4.dp),
-                            )
-                        }
-                    }
-                }
-                val opp = if (myColor == 'w') 'b' else 'w'
-                val mine = if (myColor == 'b') 'b' else 'w'
-                Bar(opp, friend.username, friend.photo)
-                Spacer(Modifier.height(6.dp))
-
-                // ───── tablero ─────
-                Box(Modifier.size(side).clip(RoundedCornerShape(10.dp))) {
-                    fun colRow(sq: Int): Pair<Int, Int> = if (flip) (7 - (sq and 7)) to (7 - (sq shr 3)) else (sq and 7) to (sq shr 3)
-                    fun origin(sq: Int): Offset = colRow(sq).let { Offset(it.first * cell, it.second * cell) }
-                    fun squareAt(p: Offset): Int {
-                        val c = (p.x / cell).toInt()
-                        val r = (p.y / cell).toInt()
-                        if (p.x < 0 || p.y < 0 || c !in 0..7 || r !in 0..7) return -1
-                        return if (flip) (7 - r) * 8 + (7 - c) else r * 8 + c
-                    }
-
-                    Canvas(
-                        Modifier.size(side).pointerInput(flip, myColor, cell) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val p0 = pos
-                                val sq = squareAt(down.position)
-                                if (promoFor != null || p0 == null || sq < 0 || !myTurn() || pending) return@awaitEachGesture
-                                if (sel >= 0 && targets.any { it.to == sq }) {
-                                    tryMove(sel, sq)
-                                    return@awaitEachGesture
-                                }
-                                val piece = p0.b[sq]
-                                if (piece == ' ' || Chess.colorOf(piece) != myColor) {
-                                    sel = -1
-                                    targets = emptyList()
-                                    return@awaitEachGesture
-                                }
-                                select(sq)
-                                var dragging = false
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val ch = event.changes.firstOrNull { it.id == down.id } ?: break
-                                    if (!ch.pressed) {
-                                        if (dragging) {
-                                            val to = squareAt(ch.position)
-                                            dragFrom = -1
-                                            if (to >= 0 && to != sq && targets.any { it.to == to }) tryMove(sq, to)
-                                        }
-                                        break
-                                    }
-                                    if (!dragging && (ch.position - down.position).getDistance() > viewConfiguration.touchSlop) {
-                                        dragging = true
-                                        dragFrom = sq
-                                    }
-                                    if (dragging) {
-                                        dragPos = ch.position
-                                        ch.consume()
-                                    }
-                                }
-                                dragFrom = -1
-                            }
-                        },
-                    ) {
-                        val kingSq = if (inCheckNow) pos?.let { Chess.kingSquare(it, it.turn) } ?: -1 else -1
-                        // casillas
-                        for (sq in 0 until 64) {
-                            val (c, r) = colRow(sq)
-                            val light = (c + r) % 2 == 0
-                            val marked = sq == sel || (lastMove?.let { sq == it.first || sq == it.second } == true)
-                            drawRect(if (marked) (if (light) LightHi else DarkHi) else if (light) LightSq else DarkSq, Offset(c * cell, r * cell), Size(cell, cell))
-                        }
-                        // brillo rojo del rey en jaque
-                        if (kingSq >= 0) {
-                            val o = origin(kingSq) + Offset(cell / 2, cell / 2)
-                            drawCircle(
-                                Brush.radialGradient(listOf(Color(0xFFFF0000), Color(0xFFE70000), Color(0x00A90000)), center = o, radius = cell * 0.78f),
-                                radius = cell * 0.78f, center = o,
-                            )
-                        }
-                        // coordenadas (números en la columna de la izquierda, letras en la fila de abajo)
-                        for (sq in 0 until 64) {
-                            val (c, r) = colRow(sq)
-                            val light = (c + r) % 2 == 0
-                            val col = if (light) DarkSq else LightSq
-                            val style = TextStyle(color = col, fontSize = (cell * 0.2f).toSp(), fontWeight = FontWeight.Bold)
-                            if (c == 0) drawText(textMeasurer, "${8 - (sq shr 3)}", Offset(c * cell + cell * 0.05f, r * cell + cell * 0.02f), style)
-                            if (r == 7) {
-                                val layout = textMeasurer.measure("abcdefgh"[sq and 7].toString(), style)
-                                drawText(layout, topLeft = Offset(c * cell + cell - layout.size.width - cell * 0.05f, r * cell + cell - layout.size.height - cell * 0.02f))
-                            }
-                        }
-                        // movimientos posibles: punto en casilla vacía, anillo si hay captura
-                        val pp = pos
-                        for (t in targets) {
-                            val o = origin(t.to) + Offset(cell / 2, cell / 2)
-                            if (pp != null && (pp.b[t.to] != ' ' || t.flag == "ep")) drawCircle(Color(0x26000000), radius = cell * 0.46f, center = o, style = Stroke(cell * 0.1f))
-                            else drawCircle(Color(0x26000000), radius = cell * 0.17f, center = o)
-                        }
-                        // piezas (la que se mueve se desliza desde su casilla anterior; la que se arrastra sigue al dedo)
-                        if (pp != null) {
-                            for (sq in 0 until 64) {
-                                val piece = pp.b[sq]
-                                if (piece == ' ' || sq == dragFrom) continue
-                                var tl = origin(sq)
-                                if (sq == animTo && animFrom >= 0 && anim.value < 1f) tl = origin(animFrom) + (tl - origin(animFrom)) * anim.value
-                                with(ChessPieces) { drawPiece(piece, tl, cell) }
-                            }
-                            if (dragFrom >= 0) {
-                                val piece = pp.b[dragFrom]
-                                if (piece != ' ') with(ChessPieces) { drawPiece(piece, dragPos - Offset(cell * 0.575f, cell * 0.65f), cell * 1.15f) }
-                            }
-                        }
-                    }
-
-                    // fin de la partida
-                    val res = result
-                    if (res != null) {
-                        Box(Modifier.size(side).background(Color(0x38000000)), contentAlignment = Alignment.Center) {
-                            Column(
-                                Modifier.background(Surface1, RoundedCornerShape(20.dp)).border(1.dp, Outline, RoundedCornerShape(20.dp)).padding(horizontal = 30.dp, vertical = 22.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Text(if (res.first == 'd') "Tablas" else if (res.first == myColor) "¡Ganaste!" else "Perdiste", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                                Text(Reasons[res.second] ?: "", color = OnSurfaceDim)
-                                Button(onClick = onClose, shape = RoundedCornerShape(14.dp)) { Text("Cerrar", fontWeight = FontWeight.SemiBold) }
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Bar(mine, myName.ifEmpty { "Tú" }, myPhoto)
+    @Composable
+    fun Bar(color: Char, name: String, photo: String, modifier: Modifier) {
+        val turn = playing() && pos?.turn == color
+        val took = if (color == 'w') byWhite else byBlack
+        val lead = if (color == 'w') diff else -diff
+        Row(
+            modifier.background(if (turn) Accent.copy(alpha = 0.15f) else Color.Transparent, RoundedCornerShape(12.dp)).padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(name, photo, 34)
+            Spacer(Modifier.width(10.dp))
+            Text(name, fontWeight = FontWeight.SemiBold, color = OnSurface)
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.size(10.dp).background(if (color == 'w') Color.White else Color(0xFF222222), CircleShape).border(1.5.dp, OnSurfaceDim, CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                took.forEach { PieceIcon(if (color == 'w') it else it.uppercaseChar(), 16.dp) }
+                if (lead > 0) Text(" +$lead", fontSize = 13.sp, color = OnSurfaceDim)
+            }
+            if (clk != null) {
+                val ms = if (color == 'w') clk.first else clk.second
+                Text(
+                    mmss(ms), fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                    color = if (ms < 10_000) Color.White else if (turn) OnAccent else OnSurface,
+                    modifier = Modifier.background(if (ms < 10_000) Color(0xFFC62828) else if (turn) Accent else Surface2, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 4.dp),
+                )
             }
         }
+    }
 
+    @Composable
+    fun Board(side: Dp) {
+        val cell = with(density) { side.toPx() } / 8f
+            // ───── tablero ─────
+            Box(Modifier.size(side).clip(RoundedCornerShape(10.dp))) {
+                fun colRow(sq: Int): Pair<Int, Int> = if (flip) (7 - (sq and 7)) to (7 - (sq shr 3)) else (sq and 7) to (sq shr 3)
+                fun origin(sq: Int): Offset = colRow(sq).let { Offset(it.first * cell, it.second * cell) }
+                fun squareAt(p: Offset): Int {
+                    val c = (p.x / cell).toInt()
+                    val r = (p.y / cell).toInt()
+                    if (p.x < 0 || p.y < 0 || c !in 0..7 || r !in 0..7) return -1
+                    return if (flip) (7 - r) * 8 + (7 - c) else r * 8 + c
+                }
+
+                Canvas(
+                    Modifier.size(side).pointerInput(flip, myColor, cell) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val p0 = pos
+                            val sq = squareAt(down.position)
+                            if (promoFor != null || p0 == null || sq < 0 || !myTurn() || pending) return@awaitEachGesture
+                            if (sel >= 0 && targets.any { it.to == sq }) {
+                                tryMove(sel, sq)
+                                return@awaitEachGesture
+                            }
+                            val piece = p0.b[sq]
+                            if (piece == ' ' || Chess.colorOf(piece) != myColor) {
+                                sel = -1
+                                targets = emptyList()
+                                return@awaitEachGesture
+                            }
+                            select(sq)
+                            var dragging = false
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val ch = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!ch.pressed) {
+                                    if (dragging) {
+                                        val to = squareAt(ch.position)
+                                        dragFrom = -1
+                                        if (to >= 0 && to != sq && targets.any { it.to == to }) tryMove(sq, to)
+                                    }
+                                    break
+                                }
+                                if (!dragging && (ch.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                                    dragging = true
+                                    dragFrom = sq
+                                }
+                                if (dragging) {
+                                    dragPos = ch.position
+                                    ch.consume()
+                                }
+                            }
+                            dragFrom = -1
+                        }
+                    },
+                ) {
+                    val kingSq = if (inCheckNow) pos?.let { Chess.kingSquare(it, it.turn) } ?: -1 else -1
+                    // casillas
+                    for (sq in 0 until 64) {
+                        val (c, r) = colRow(sq)
+                        val light = (c + r) % 2 == 0
+                        val marked = sq == sel || (lastMove?.let { sq == it.first || sq == it.second } == true)
+                        drawRect(if (marked) (if (light) LightHi else DarkHi) else if (light) LightSq else DarkSq, Offset(c * cell, r * cell), Size(cell, cell))
+                    }
+                    // brillo rojo del rey en jaque
+                    if (kingSq >= 0) {
+                        val o = origin(kingSq) + Offset(cell / 2, cell / 2)
+                        drawCircle(
+                            Brush.radialGradient(listOf(Color(0xFFFF0000), Color(0xFFE70000), Color(0x00A90000)), center = o, radius = cell * 0.78f),
+                            radius = cell * 0.78f, center = o,
+                        )
+                    }
+                    // coordenadas (números en la columna de la izquierda, letras en la fila de abajo)
+                    for (sq in 0 until 64) {
+                        val (c, r) = colRow(sq)
+                        val light = (c + r) % 2 == 0
+                        val col = if (light) DarkSq else LightSq
+                        val style = TextStyle(color = col, fontSize = (cell * 0.2f).toSp(), fontWeight = FontWeight.Bold)
+                        if (c == 0) drawText(textMeasurer, "${8 - (sq shr 3)}", Offset(c * cell + cell * 0.05f, r * cell + cell * 0.02f), style)
+                        if (r == 7) {
+                            val layout = textMeasurer.measure("abcdefgh"[sq and 7].toString(), style)
+                            drawText(layout, topLeft = Offset(c * cell + cell - layout.size.width - cell * 0.05f, r * cell + cell - layout.size.height - cell * 0.02f))
+                        }
+                    }
+                    // movimientos posibles: punto en casilla vacía, anillo si hay captura
+                    val pp = pos
+                    for (t in targets) {
+                        val o = origin(t.to) + Offset(cell / 2, cell / 2)
+                        if (pp != null && (pp.b[t.to] != ' ' || t.flag == "ep")) drawCircle(Color(0x26000000), radius = cell * 0.46f, center = o, style = Stroke(cell * 0.1f))
+                        else drawCircle(Color(0x26000000), radius = cell * 0.17f, center = o)
+                    }
+                    // piezas (la que se mueve se desliza desde su casilla anterior; la que se arrastra sigue al dedo)
+                    if (pp != null) {
+                        for (sq in 0 until 64) {
+                            val piece = pp.b[sq]
+                            if (piece == ' ' || sq == dragFrom) continue
+                            var tl = origin(sq)
+                            if (sq == animTo && animFrom >= 0 && anim.value < 1f) tl = origin(animFrom) + (tl - origin(animFrom)) * anim.value
+                            with(ChessPieces) { drawPiece(piece, tl, cell) }
+                        }
+                        if (dragFrom >= 0) {
+                            val piece = pp.b[dragFrom]
+                            if (piece != ' ') with(ChessPieces) { drawPiece(piece, dragPos - Offset(cell * 0.575f, cell * 0.65f), cell * 1.15f) }
+                        }
+                    }
+                }
+
+                // fin de la partida
+                val res = result
+                if (res != null) {
+                    Box(Modifier.size(side).background(Color(0x38000000)), contentAlignment = Alignment.Center) {
+                        Column(
+                            Modifier.background(Surface1, RoundedCornerShape(20.dp)).border(1.dp, Outline, RoundedCornerShape(20.dp)).padding(horizontal = 30.dp, vertical = 22.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(if (res.first == 'd') "Tablas" else "Gana ${if (res.first == myColor) myName.ifEmpty { "Tú" } else friend.username}", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                            Text(Reasons[res.second] ?: "", color = OnSurfaceDim)
+                            Button(onClick = onClose, shape = RoundedCornerShape(14.dp)) { Text("Cerrar", fontWeight = FontWeight.SemiBold) }
+                        }
+                    }
+                }
+            }
+
+    }
+
+    @Composable
+    fun StatusPanel() {
         // estado, tablas y rendición
         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val cur = g
@@ -556,6 +556,41 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
                 }
             }
             if (message.isNotEmpty()) Text(message, color = Color(0xFFFF6B6B), fontSize = 14.sp, textAlign = TextAlign.Center)
+        }
+
+    }
+
+    // El tablero ocupa casi toda la pantalla. En horizontal (tablet) va a la izquierda a toda altura y los jugadores, el estado y
+    // los botones quedan a su derecha; en vertical, jugadores arriba y abajo y los botones debajo.
+    BoxWithConstraints(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding()) {
+        if (maxWidth > maxHeight * 1.2f) {
+            val side = minOf(maxHeight - 16.dp, maxWidth * 0.64f).coerceAtLeast(200.dp)
+            Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Board(side)
+                Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Header()
+                        Bar(opp, friend.username, friend.photo, Modifier.fillMaxWidth())
+                    }
+                    StatusPanel()
+                    Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.fillMaxWidth())
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Header()
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    val side = minOf(maxWidth - 8.dp, maxHeight - 104.dp, 900.dp).coerceAtLeast(200.dp)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Bar(opp, friend.username, friend.photo, Modifier.width(side))
+                        Spacer(Modifier.height(4.dp))
+                        Board(side)
+                        Spacer(Modifier.height(4.dp))
+                        Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.width(side))
+                    }
+                }
+                StatusPanel()
+            }
         }
     }
 

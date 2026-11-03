@@ -253,8 +253,9 @@ textarea.field { resize: vertical; }
 
 /* ajedrez */
 .pomo.chess { z-index: 44; }
-.chess-main { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 8px calc(var(--safe-bottom, 0px) + 10px); overflow-y: auto; }
-.cboard { position: relative; width: min(94vw, calc(100vh - 290px), 640px); aspect-ratio: 1; border-radius: 10px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.45); touch-action: none; user-select: none; -webkit-user-select: none; }
+.chess-main { --bs: min(98vw, calc(100vh - 215px), 920px); flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 4px calc(var(--safe-bottom, 0px) + 6px); overflow-y: auto; }
+.cside { display: contents; } .cside .cplayer:first-child { order: 1; } .cboard { order: 2; } .cside .cplayer:last-child { order: 3; } .cside .cbanner { order: 4; } .cside .cactions { order: 5; }
+.cboard { position: relative; width: var(--bs); aspect-ratio: 1; border-radius: 10px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.45); touch-action: none; user-select: none; -webkit-user-select: none; }
 .csquares, .cpieces, .cover { position: absolute; inset: 0; }
 .csq { position: absolute; width: 12.5%; height: 12.5%; } .csq.l { background: #eeeed2; } .csq.d { background: #769656; }
 .csq.l.last { background: #f5f682; } .csq.d.last { background: #bbcb2b; } .csq.l.sel { background: #f5f682; } .csq.d.sel { background: #bbcb2b; }
@@ -267,7 +268,7 @@ textarea.field { resize: vertical; }
 .cover { display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.22); } .cover.show { display: flex; }
 .cpromo { display: flex; gap: 8px; padding: 12px; background: var(--surface1); border-radius: 16px; } .cpb { width: 64px; height: 64px; border-radius: 12px; border: 1.5px solid var(--accent); background: #eeeed2; padding: 4px; } .cpb img { width: 100%; height: 100%; }
 .cend { text-align: center; background: var(--surface1); border: 1px solid var(--outline); border-radius: 20px; padding: 22px 30px; display: flex; flex-direction: column; gap: 8px; align-items: center; } .cend h2 { margin: 0; font-size: 26px; } .cend p { margin: 0 0 6px; }
-.cplayer { display: flex; align-items: center; gap: 10px; width: min(94vw, calc(100vh - 290px), 640px); padding: 4px 6px; border-radius: 12px; } .cplayer.turn { background: var(--accent-soft); }
+.cplayer { display: flex; align-items: center; gap: 10px; width: var(--bs); padding: 4px 6px; border-radius: 12px; } .cplayer.turn { background: var(--accent-soft); }
 .cav { width: 34px; height: 34px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--outline); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--accent); overflow: hidden; flex: none; } .cav img { width: 100%; height: 100%; object-fit: cover; }
 .cname { font-weight: 600; display: flex; align-items: center; gap: 6px; } .cdot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--on-dim); } .cdot.w { background: #fff; } .cdot.b { background: #222; }
 .ccap { flex: 1; display: flex; align-items: center; flex-wrap: wrap; min-height: 22px; } .ccap img { width: 18px; height: 18px; margin-right: -6px; } .ccap b { margin-left: 10px; font-size: 13px; color: var(--on-dim); }
@@ -275,3 +276,11 @@ textarea.field { resize: vertical; }
 .cbanner { min-height: 34px; display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; } .cstate { font-weight: 600; } .cstate.chk { color: #fff; background: #c62828; padding: 4px 14px; border-radius: 999px; }
 .cactions { display: flex; gap: 10px; } .small-btn { padding: 8px 16px !important; font-size: 15px !important; min-width: 0 !important; }
 .chess-card { display: flex; align-items: center; gap: 12px; min-width: 250px; } .chess-card img { width: 42px; height: 42px; background: #769656; border-radius: 10px; padding: 3px; flex: none; } .chess-card small { display: block; font-size: 12px; opacity: .85; }
+
+/* tablet en horizontal: el tablero ocupa todo el alto y los jugadores, el estado y los botones van a su derecha */
+@media (orientation: landscape) and (min-width: 900px) {
+  .chess-main { --bs: min(calc(100vh - 90px), 64vw); flex-direction: row; justify-content: center; gap: 28px; }
+  .cside { display: flex; flex-direction: column; justify-content: space-between; align-self: stretch; min-width: 240px; max-width: 360px; flex: 1; padding: 6px 0; }
+  .cside .cplayer { width: 100%; box-sizing: border-box; } .cside > * { order: initial !important; } .cside .cbanner { flex-direction: column; } .cside .cactions { justify-content: center; }
+  .cside .cplayer:first-child { order: 1 !important; } .cside .cbanner { order: 2 !important; } .cside .cactions { order: 3 !important; } .cside .cplayer:last-child { order: 4 !important; }
+}

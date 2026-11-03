@@ -57,8 +57,8 @@ export function openChess({ friend, gameId, api, onClose }) {
   const banner = h('div', { class: 'cbanner' });
   const actions = h('div', { class: 'cactions' });
   const root = h('div', { class: 'pomo chess' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', {}, 'Ajedrez')),
-    h('div', { class: 'chess-main' }, topBar, board, botBar, banner, actions));
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', {}, 'Evadrez')),
+    h('div', { class: 'chess-main' }, board, h('div', { class: 'cside' }, topBar, banner, actions, botBar)));
 
   const flip = () => myColor === 'b';
   const colRow = (sq) => { const r = sq >> 3, f = sq & 7; return flip() ? [7 - f, 7 - r] : [f, r]; };
@@ -175,7 +175,7 @@ export function openChess({ friend, gameId, api, onClose }) {
     const won = res.result === myColor, draw = res.result === 'd';
     overlay.classList.add('show');
     overlay.append(h('div', { class: 'cend' },
-      h('h2', {}, draw ? 'Tablas' : won ? '¡Ganaste!' : 'Perdiste'),
+      h('h2', {}, draw ? 'Tablas' : 'Gana ' + (won ? myInfo.username || 'Tú' : friend.username)),
       h('p', { class: 'dim' }, (REASONS[res.reason] || '') + (!draw && res.reason === 'mate' ? '' : '')),
       h('button', { class: 'btn', onclick: () => close() }, 'Cerrar')));
   }

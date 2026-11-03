@@ -64,5 +64,5 @@ una foto de 96×96 y la última conexión; los documentos nunca se suben. Los co
 
 ## Créditos
 
-- Piezas de ajedrez «Fresca»: sadsnake1, licencia [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (colección de [lichess](https://github.com/lichess-org/lila/tree/master/public/piece/fresca)).
+- Piezas de Evadrez (el ajedrez) «Fresca»: sadsnake1, licencia [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (colección de [lichess](https://github.com/lichess-org/lila/tree/master/public/piece/fresca)).
 - Lista de palabras del Wordle: palabras españolas del diccionario de [an-array-of-spanish-words](https://github.com/words/an-array-of-spanish-words) ordenadas por frecuencia según [FrequencyWords](https://github.com/hermitdave/FrequencyWords).

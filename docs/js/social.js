@@ -456,13 +456,13 @@ function openChat(friend) {
       if (!g) { status.textContent = ''; return; }
       const mine = g.creator === session?.uid;
       status.textContent = g.status === 'waiting' ? (mine ? 'Esperando rival' : 'Te invitan a jugar') : g.status === 'playing' ? 'En juego'
-        : g.result === 'd' ? 'Tablas' : `Ganan ${g.result === 'w' ? 'blancas' : 'negras'}`;
+        : g.result === 'd' ? 'Tablas' : `Gana ${(g.result === 'w' ? g.white : g.black) === session?.uid ? session.username : friend.username}`;
       btn.textContent = g.status === 'waiting' && !mine ? 'Unirse' : 'Abrir';
     };
     const refresh = () => getGame(friend.uid, m.id).then(paint).catch(() => {});
     btn.onclick = () => root.append(openChess({ friend, gameId: m.id, api: chessApi(friend, m.id), onClose: refresh }));
     refresh(); cardTimers.push(setInterval(refresh, 6000));
-    return h('div', { class: 'chess-card' }, h('img', { src: 'pieces/wN.svg', alt: '' }), h('div', { class: 'grow' }, h('b', {}, 'Ajedrez'), h('small', {}, mins), status), btn);
+    return h('div', { class: 'chess-card' }, h('img', { src: 'pieces/wN.svg', alt: '' }), h('div', { class: 'grow' }, h('b', {}, 'Evadrez'), h('small', {}, mins), status), btn);
   }
 
   const makeRow = (m, me) => {
