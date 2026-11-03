@@ -34,14 +34,23 @@ object PolyData {
         return d
     }
 
-    private fun parts(ps: JSONArray): List<TokPart> = (0 until ps.length()).map { k ->
-        val p = ps.getJSONObject(k)
-        TokPart(
-            PathParser().parsePathString(p.getString("d")).toPath(),
-            if (p.isNull("f")) null else Color(android.graphics.Color.parseColor(p.getString("f"))),
-            if (p.isNull("s")) null else Color(android.graphics.Color.parseColor(p.getString("s"))),
-            p.optDouble("w", 0.0).toFloat(), p.optDouble("o", 1.0).toFloat(),
-        )
+    /** Acepta «#rgb», «#rrggbb» y «#aarrggbb» (Android no entiende el de 3 dígitos). */
+    private fun color(s: String): Color {
+        var h = s.removePrefix("#")
+        if (h.length == 3) h = h.map { "$it$it" }.joinToString("")
+        return runCatching { Color(android.graphics.Color.parseColor("#$h")) }.getOrDefault(Color.Gray)
+    }
+
+    private fun parts(ps: JSONArray): List<TokPart> = (0 until ps.length()).mapNotNull { k ->
+        runCatching {
+            val p = ps.getJSONObject(k)
+            TokPart(
+                PathParser().parsePathString(p.getString("d")).toPath(),
+                if (p.isNull("f")) null else color(p.getString("f")),
+                if (p.isNull("s")) null else color(p.getString("s")),
+                p.optDouble("w", 0.0).toFloat(), p.optDouble("o", 1.0).toFloat(),
+            )
+        }.getOrNull()
     }
 
     fun tokens(ctx: Context): List<Pair<String, List<TokPart>>> {
