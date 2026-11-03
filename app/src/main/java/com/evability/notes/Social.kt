@@ -40,7 +40,7 @@ object Social {
     class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long, val studying: Boolean = false)
     class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>)
     class Heart(val id: Long, val x: Float, val y: Float)
-    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long)
+    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L)
 
     /** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
     val unread = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
@@ -464,6 +464,9 @@ object Social {
         return (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optJSONObject("document") }
     }
 
+    private fun messageOf(d: JSONObject, me: String) =
+        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong())
+
     private fun orderByAt(direction: String) =
         JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "at")).put("direction", direction))
 
@@ -491,29 +494,58 @@ object Social {
         val q = if (after <= 0) base.put("orderBy", orderByAt("DESCENDING")).put("limit", 50)
         else base.put("where", filter("at", "GREATER_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(after).toString())))
             .put("orderBy", orderByAt("ASCENDING")).put("limit", 100)
-        val list = queryUnder("chats/$pair", q).map { d -> ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at")) }
-        if (after > 0) return@withContext list
-        // Al abrir el chat se borran los mensajes más antiguos: solo se conservan los últimos 200.
-        runCatching {
-            val old = queryUnder(
-                "chats/$pair",
-                JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
-                    .put("orderBy", orderByAt("DESCENDING")).put("offset", 200).put("limit", 50),
-            )
-            if (old.isNotEmpty()) commit(*old.map { delete("chats/$pair/messages/${idOf(it.getString("name"))}") }.toTypedArray())
-        }
-        list.reversed()
+        val list = queryUnder("chats/$pair", q).map { d -> messageOf(d, me) }
+        if (after > 0) list else list.reversed()
+    }
+
+    /** Los 50 mensajes anteriores a `before` (ms): se piden al subir en la conversación, así el historial no tiene límite. */
+    suspend fun chatOlder(friendUid: String, before: Long): List<ChatMessage> = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val q = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
+            .put("where", filter("at", "LESS_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(before).toString())))
+            .put("orderBy", orderByAt("DESCENDING")).put("limit", 50)
+        queryUnder("chats/$pair", q).map { d -> messageOf(d, me) }.reversed()
     }
 
     suspend fun sendMessage(friendUid: String, text: String) = withContext(Dispatchers.IO) {
         val me = live().uid
         val pair = pairId(me, friendUid)
-        val t = text.trim().take(500)
+        val t = text.trim().take(5000)
         if (t.isEmpty()) return@withContext
         commit(
             write("chats/$pair/messages/${UUID.randomUUID()}", JSONObject().put("from", str(me)).put("text", str(t)), serverTime = "at"),
             write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
         )
+    }
+
+    /** Manda un audio: el contenido va en su propio documento y el mensaje solo lleva la duración (así el chat carga ligero). */
+    suspend fun sendAudio(friendUid: String, file: File, durMs: Long) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val b64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+        if (b64.length > 700_000) throw SocialError("El audio es demasiado largo")
+        val id = UUID.randomUUID().toString()
+        commit(
+            write("chats/$pair/audio/$id", JSONObject().put("from", str(me)).put("data", str(b64))),
+            write(
+                "chats/$pair/messages/$id",
+                JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("audio")).put("dur", int(durMs)).put("mime", str("audio/mp4")),
+                serverTime = "at",
+            ),
+            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+        )
+    }
+
+    /** Descarga un audio a un archivo temporal (si ya está descargado, lo reutiliza). */
+    suspend fun audioFile(ctx: android.content.Context, friendUid: String, msgId: String): File = withContext(Dispatchers.IO) {
+        val f = File(ctx.cacheDir, "aud-$msgId.m4a")
+        if (f.exists() && f.length() > 0) return@withContext f
+        val pair = pairId(live().uid, friendUid)
+        val data = getAll("chats/$pair/audio", listOf(msgId))[msgId]?.text("data").orEmpty()
+        if (data.isEmpty()) throw SocialError("No se pudo cargar el audio")
+        f.writeBytes(Base64.decode(data, Base64.DEFAULT))
+        f
     }
 
     fun markRead(friendUid: String, at: Long) {

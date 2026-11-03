@@ -134,7 +134,7 @@ fun TimeChooserDialog(onTernurin: () -> Unit, onSimple: () -> Unit, onDismiss: (
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("¿Cómo quieres medir tu tiempo?", color = OnSurfaceDim)
                 Option("Método Ternurín", "Estudio y descanso con alarma", onTernurin)
-                Option("Contador Simple", "Cuenta hacia arriba hasta que lo detengas", onSimple)
+                Option("Método Pollo", "Cuenta hacia arriba hasta que lo detengas", onSimple)
                 Text("Mientras uno esté en marcha no se puede abrir el otro.", fontSize = 12.sp, color = OnSurfaceDim)
             }
         },
@@ -184,7 +184,7 @@ fun SimpleCounterScreen(onClose: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
-            Text("Contador simple", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
+            Text("Método Pollo", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
             IconButton(
                 onClick = { showStats = true },
                 modifier = Modifier.padding(end = 4.dp).size(46.dp).clip(CircleShape).background(Surface1).border(1.dp, Outline, CircleShape),

@@ -183,7 +183,7 @@ export function openTime({ mount, onClose }) {
     title: 'Tiempo',
     content: h('div', { class: 'stack' }, h('p', { class: 'dim' }, '¿Cómo quieres medir tu tiempo?'),
       option('Método Ternurín', 'Estudio y descanso con alarma', () => mount(openPomodoro(onClose))),
-      option('Contador Simple', 'Cuenta hacia arriba hasta que lo detengas', () => mount(openSimple(onClose))),
+      option('Método Pollo', 'Cuenta hacia arriba hasta que lo detengas', () => mount(openSimple(onClose))),
       h('p', { class: 'dim small' }, 'Mientras uno esté en marcha no se puede abrir el otro.')),
     actions: [{ label: 'Cancelar' }],
   });
@@ -201,7 +201,7 @@ export function openSimple(onClose) {
   const time = h('div', { class: 'ring-time simple' }), label = h('div', { class: 'ring-label' });
   const body = h('div', { class: 'pomo-body' });
   const root = h('div', { class: 'pomo' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Contador simple'),
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Método Pollo'),
       h('button', { class: 'round', 'aria-label': 'Tu estudio', title: 'Tu estudio', onclick: () => root.append(openStudyStats()) }, icon('chart'))),
     h('div', { class: 'pomo-main' }, h('div', { class: 'ring' }, svg, h('div', { class: 'ring-center' }, time, label)), body));
 

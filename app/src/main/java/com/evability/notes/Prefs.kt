@@ -74,6 +74,14 @@ object Prefs {
     fun chatRead(pair: String): Long = sp.getLong("chat_read_$pair", 0L)
     fun setChatRead(pair: String, at: Long) = sp.edit().putLong("chat_read_$pair", at).apply()
 
+    /** Wordle: partida del día («día:intento,intento») y a qué chats ya se mandó el resultado («día|uid,uid»). */
+    var wordleState: String
+        get() = sp.getString("wordle_state", "") ?: ""
+        set(v) = sp.edit().putString("wordle_state", v).apply()
+    var wordlePosted: String
+        get() = sp.getString("wordle_posted", "") ?: ""
+        set(v) = sp.edit().putString("wordle_posted", v).apply()
+
     /** Contador simple: hora de inicio (0 = parado) y hasta cuándo está guardado su tiempo en las estadísticas. */
     var simpleStart: Long
         get() = sp.getLong("simple_start", 0L)

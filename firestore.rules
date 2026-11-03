@@ -115,12 +115,27 @@ service cloud.firestore {
 
       match /messages/{msgId} {
         allow read, delete: if inChat(pairId);
+        // Mensaje de texto, o de audio (kind = 'audio': solo guarda la duración; el audio va aparte, en audio/{mismo id}).
         allow create: if inChat(pairId)
-          && request.resource.data.keys().hasOnly(['from', 'text', 'at'])
+          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime'])
           && request.resource.data.from == request.auth.uid
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 500
-          && request.resource.data.at == request.time;
+          && request.resource.data.at == request.time
+          && request.resource.data.text is string && request.resource.data.text.size() <= 5000
+          && (
+            (!('kind' in request.resource.data) && request.resource.data.text.size() > 0)
+            || (request.resource.data.kind == 'audio' && request.resource.data.text.size() == 0
+                && request.resource.data.dur is int && request.resource.data.dur <= 125000
+                && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
+          );
+      }
+
+      // el contenido de los audios (base64, unos 3 KB por segundo): solo se descarga al darle a reproducir
+      match /audio/{audioId} {
+        allow read, delete: if inChat(pairId);
+        allow create: if inChat(pairId)
+          && request.resource.data.keys().hasOnly(['from', 'data'])
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.data is string && request.resource.data.data.size() <= 700000;
       }
     }
 

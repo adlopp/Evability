@@ -3,6 +3,7 @@
 
 import { h, icon, toast, confirmDialog, modal, uid } from './ui.js';
 import { studying } from './pomodoro.js';
+import { openWordle } from './wordle.js';
 
 const PROJECT = 'evability-a4c4d';
 const API_KEY = 'AIzaSyD1LmNMAePR63FPvCldLWPXQl4JvmnFars';
@@ -205,6 +206,8 @@ const unread = new Map();
 let friendUidsCache = [], friendsFetchedAt = 0;
 export const anyUnread = () => [...unread.values()].some(Boolean);
 
+const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime') });
+
 async function queryUnder(parent, structured) {
   const arr = JSON.parse(await postText(`${DOCS}/${parent}:runQuery`, JSON.stringify({ structuredQuery: structured }), { token: (await live()).idToken }));
   return arr.filter((r) => r.document).map((r) => r.document);
@@ -232,18 +235,19 @@ async function chatMessages(friendUid, after) {
   const me = (await live()).uid, pair = pairId(me, friendUid), base = { from: [{ collectionId: 'messages' }] };
   const q = after <= 0 ? { ...base, orderBy: orderByAt('DESCENDING'), limit: 50 }
     : { ...base, where: filter('at', 'GREATER_THAN', { timestampValue: new Date(after).toISOString() }), orderBy: orderByAt('ASCENDING'), limit: 100 };
-  const msgs = (await queryUnder(`chats/${pair}`, q)).map((d) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at') }));
-  if (after > 0) return msgs;
-  // Al abrir el chat se borran los mensajes más antiguos: solo se conservan los últimos 200.
-  try {
-    const old = await queryUnder(`chats/${pair}`, { ...base, orderBy: orderByAt('DESCENDING'), offset: 200, limit: 50 });
-    if (old.length) await commit(...old.map((d) => del(`chats/${pair}/messages/${idOf(d.name)}`)));
-  } catch { /* se borrarán otro día */ }
-  return msgs.reverse();
+  const msgs = (await queryUnder(`chats/${pair}`, q)).map((d) => (msgOf(d, me)));
+  return after > 0 ? msgs : msgs.reverse();
+}
+
+/** Los 50 mensajes anteriores a `before` (ms): se piden al subir en la conversación, así el historial no tiene límite. */
+async function chatOlder(friendUid, before) {
+  const me = (await live()).uid, pair = pairId(me, friendUid);
+  const q = { from: [{ collectionId: 'messages' }], where: filter('at', 'LESS_THAN', { timestampValue: new Date(before).toISOString() }), orderBy: orderByAt('DESCENDING'), limit: 50 };
+  return (await queryUnder(`chats/${pair}`, q)).map((d) => (msgOf(d, me))).reverse();
 }
 
 async function sendMessage(friendUid, textMsg) {
-  const me = (await live()).uid, pair = pairId(me, friendUid), t = textMsg.trim().slice(0, 500);
+  const me = (await live()).uid, pair = pairId(me, friendUid), t = textMsg.trim().slice(0, 5000);
   if (!t) return;
   await commit(
     write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(t) }, { serverTime: 'at' }),
@@ -257,38 +261,177 @@ function markRead(friendUid, at) {
   document.querySelector('.top-row .round[aria-label=Amigos]')?.classList.toggle('badge', anyUnread());
 }
 
+// ───── audios ─────
+
+const MAX_AUDIO_MS = 120000;
+const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+const blobToB64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+
+/** Manda un audio: el contenido va en su propio documento y el mensaje solo lleva la duración (así el chat carga ligero). */
+async function sendAudio(friendUid, blob, mime, durMs) {
+  const me = (await live()).uid, pair = pairId(me, friendUid), b64 = await blobToB64(blob);
+  if (b64.length > 700000) throw new Error('El audio es demasiado largo');
+  const id = uid();
+  await commit(
+    write(`chats/${pair}/audio/${id}`, { from: str(me), data: str(b64) }),
+    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('audio'), dur: intV(durMs), mime: str(mime.slice(0, 39)) }, { serverTime: 'at' }),
+    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+}
+
+const audioCache = new Map();
+async function audioUrl(friendUid, msg) {
+  if (audioCache.has(msg.id)) return audioCache.get(msg.id);
+  const pair = pairId((await live()).uid, friendUid), data = text((await getAll(`chats/${pair}/audio`, [msg.id]))[msg.id], 'data');
+  if (!data) throw new Error('No se pudo cargar el audio');
+  const url = `data:${(msg.mime || 'audio/mp4').split(';')[0]};base64,${data}`;
+  audioCache.set(msg.id, url);
+  return url;
+}
+
+async function startRecording() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const type = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find((t) => window.MediaRecorder?.isTypeSupported(t));
+  const rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 24000 } : { audioBitsPerSecond: 24000 });
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  rec.start();
+  return { rec, stream, chunks, startedAt: Date.now(), type: rec.mimeType || type || 'audio/webm' };
+}
+const stopRecording = (r) => new Promise((resolve) => {
+  r.rec.onstop = () => { r.stream.getTracks().forEach((t) => t.stop()); resolve({ blob: new Blob(r.chunks, { type: r.type }), mime: r.type, dur: Date.now() - r.startedAt }); };
+  r.rec.stop();
+});
+
+let playing = null; // { id, audio, stop() }: solo suena un audio a la vez
+function stopPlaying() { playing?.stop(); playing = null; }
+
+/** Lista de minijuegos del clip del chat: solo Wordle está disponible, los demás salen bloqueados. */
+function openGames(onWordle) {
+  const row = (name, sub, enabled) => h('button', { class: 'game-row' + (enabled ? '' : ' locked'), disabled: !enabled, onclick: enabled ? () => { m.close(); onWordle(); } : null },
+    icon(enabled ? 'grid' : 'lock', 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
+  const m = modal({
+    title: 'Minijuegos',
+    content: h('div', { class: 'stack' }, row('Wordle', null, true), row('Evadrez', 'Próximamente', false), row('Evapoly', 'Próximamente', false), row('???', 'Próximamente', false)),
+    actions: [{ label: 'Cerrar' }],
+  });
+}
+
 /** Chat con un amigo: los mensajes se ven en cuanto llegan (se consultan cada 3 s mientras la pantalla está abierta). */
 function openChat(friend) {
   const listEl = h('div', { class: 'chat-list' });
-  const input = h('input', { class: 'field', placeholder: 'Mensaje', maxlength: 500, autocomplete: 'off' });
-  const sendBtn = h('button', { class: 'icon-btn accent', 'aria-label': 'Enviar' }, icon('send'));
+  const input = h('input', { class: 'field', placeholder: 'Mensaje', maxlength: 5000, autocomplete: 'off' });
+  const clipBtn = h('button', { class: 'icon-btn', 'aria-label': 'Minijuegos', onclick: () => openGames(() => root.append(openWordle({ friendUid: friend.uid, post: (t) => sendMessage(friend.uid, t), onClose: () => tick() }))) }, icon('clip'));
+  const actionBtn = h('button', { class: 'icon-btn accent' });
+  const normalRow = h('div', { class: 'rec-row' }, clipBtn, input, actionBtn);
+  const recDot = h('i', { class: 'rec-dot' }), recTime = h('span', {}, '0:00');
+  const recRow = h('div', { class: 'rec-row', style: { display: 'none' } },
+    h('button', { class: 'icon-btn', 'aria-label': 'Cancelar', onclick: () => cancelRec() }, icon('trash')), recDot, h('span', { class: 'grow' }, recTime),
+    h('button', { class: 'icon-btn accent', 'aria-label': 'Enviar audio', onclick: () => finishRec(true) }, icon('send')));
   const root = h('div', { class: 'pomo chat' },
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')),
       avatar(friend.username, friend.photo, 38), h('h1', {}, friend.username)),
-    listEl, h('div', { class: 'chat-input' }, input, sendBtn));
-  const seen = new Set(); let lastAt = 0, timer;
+    listEl, h('div', { class: 'chat-input' }, normalRow, recRow));
+  const seen = new Set(); let lastAt = 0, firstAt = 0, timer, hasMore = true, loadingOlder = false, recording = null, recTimer = null;
+  const rows = []; // filas en orden: { mine, av, el }
+  const myself = myProfile().catch(() => ({ photo: '' }));
   const fmt = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  // La foto sale junto al último mensaje de cada racha de la misma persona; en los demás queda el hueco.
+  const refreshAvatars = () => rows.forEach((r, i) => r.av.classList.toggle('hide', rows[i + 1]?.mine === r.mine));
+
+  function audioBubble(m) {
+    const btn = h('button', { class: 'icon-btn', 'aria-label': 'Reproducir', style: { color: 'inherit' } }, icon('play', 20));
+    const fill = h('i', {}), dur = h('span', { class: 'adur' }, mmss(m.dur));
+    const paint = (on) => { btn.replaceChildren(icon(on ? 'pause' : 'play', 20)); btn.setAttribute('aria-label', on ? 'Pausar' : 'Reproducir'); };
+    btn.onclick = async () => {
+      if (playing?.id === m.id) { stopPlaying(); return; }
+      stopPlaying();
+      try {
+        const audio = new Audio(await audioUrl(friend.uid, m));
+        const stop = () => { audio.pause(); paint(false); fill.style.width = '0'; dur.textContent = mmss(m.dur); };
+        audio.ontimeupdate = () => { fill.style.width = (m.dur ? Math.min(100, audio.currentTime * 1000 / m.dur * 100) : 0) + '%'; dur.textContent = mmss(audio.currentTime * 1000); };
+        audio.onended = () => { playing = null; stop(); };
+        playing = { id: m.id, stop };
+        paint(true);
+        await audio.play();
+      } catch (e) { stopPlaying(); toast(e.message || 'No se pudo reproducir'); }
+    };
+    return h('div', { class: 'audio' }, btn, h('div', { class: 'abar' }, fill), dur);
+  }
+
+  const makeRow = (m, me) => {
+    seen.add(m.id);
+    const av = m.mine ? avatar(session?.username || '', me.photo, 32, null, session?.uid) : avatar(friend.username, friend.photo, 32, null, friend.uid);
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, m.kind === 'audio' ? audioBubble(m) : m.text, h('small', {}, fmt(m.at)));
+    return { mine: m.mine, av, el: h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, ...(m.mine ? [bubble, av] : [av, bubble])) };
+  };
   async function load() {
-    const fresh = (await chatMessages(friend.uid, lastAt)).filter((m) => !seen.has(m.id));
+    const raw = await chatMessages(friend.uid, lastAt);
+    if (lastAt === 0 && raw.length < 50) hasMore = false;
+    const fresh = raw.filter((m) => !seen.has(m.id));
     if (!fresh.length) return;
     const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80 || !seen.size;
-    for (const m of fresh) { seen.add(m.id); listEl.append(h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, m.text, h('small', {}, fmt(m.at)))); }
+    const me = await myself;
+    for (const m of fresh) { const r = makeRow(m, me); rows.push(r); listEl.append(r.el); }
+    if (!firstAt) firstAt = Math.min(...fresh.map((m) => m.at));
     lastAt = Math.max(lastAt, ...fresh.map((m) => m.at));
+    refreshAvatars();
     markRead(friend.uid, lastAt);
     if (atBottom) listEl.scrollTop = listEl.scrollHeight;
+  }
+  /** Al llegar arriba del todo se cargan los 50 mensajes anteriores: el historial no tiene límite. */
+  async function loadOlder() {
+    if (!hasMore || loadingOlder || !firstAt) return;
+    loadingOlder = true;
+    try {
+      const raw = await chatOlder(friend.uid, firstAt);
+      hasMore = raw.length >= 50;
+      const older = raw.filter((m) => !seen.has(m.id));
+      if (!older.length) return;
+      const me = await myself, before = listEl.scrollHeight, made = older.map((m) => makeRow(m, me));
+      listEl.prepend(...made.map((r) => r.el)); rows.unshift(...made);
+      firstAt = Math.min(...older.map((m) => m.at));
+      refreshAvatars();
+      listEl.scrollTop += listEl.scrollHeight - before; // se queda donde estabas leyendo
+    } finally { loadingOlder = false; }
+  }
+  listEl.addEventListener('scroll', () => { if (listEl.scrollTop < 60) loadOlder().catch(() => {}); });
+
+  // El botón de la derecha es el micrófono; en cuanto se escribe algo pasa a ser el de enviar.
+  function paintAction() {
+    const has = input.value.trim().length > 0;
+    actionBtn.replaceChildren(icon(has ? 'send' : 'mic'));
+    actionBtn.setAttribute('aria-label', has ? 'Enviar' : 'Grabar audio');
   }
   async function send() {
     const t = input.value.trim();
     if (!t) return;
-    input.value = '';
+    input.value = ''; paintAction();
     try { await sendMessage(friend.uid, t); await load(); listEl.scrollTop = listEl.scrollHeight; }
-    catch (e) { input.value = t; toast(e.message || 'No se pudo enviar'); }
+    catch (e) { input.value = t; paintAction(); toast(e.message || 'No se pudo enviar'); }
   }
-  sendBtn.onclick = send;
+  async function beginRec() {
+    try { recording = await startRecording(); } catch { toast('Sin permiso de micrófono'); return; }
+    normalRow.style.display = 'none'; recRow.style.display = '';
+    recTimer = setInterval(() => { const ms = Date.now() - recording.startedAt; recTime.textContent = mmss(ms); if (ms >= MAX_AUDIO_MS) finishRec(true); }, 200);
+  }
+  function resetRec() { clearInterval(recTimer); recording = null; normalRow.style.display = ''; recRow.style.display = 'none'; recTime.textContent = '0:00'; }
+  async function finishRec(sendIt) {
+    if (!recording) return;
+    const r = recording; resetRec();
+    const out = await stopRecording(r);
+    if (!sendIt || out.dur < 600) return;
+    try { await sendAudio(friend.uid, out.blob, out.mime, out.dur); await load(); listEl.scrollTop = listEl.scrollHeight; }
+    catch (e) { toast(e.message || 'No se pudo enviar'); }
+  }
+  function cancelRec() { finishRec(false); }
+
+  actionBtn.onclick = () => (input.value.trim() ? send() : beginRec());
+  input.addEventListener('input', paintAction);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+  paintAction();
   const tick = () => load().catch(() => {});
   tick(); timer = setInterval(tick, 3000);
-  function close() { clearInterval(timer); root.remove(); }
+  function close() { clearInterval(timer); stopPlaying(); if (recording) finishRec(false); root.remove(); }
   return root;
 }
 
