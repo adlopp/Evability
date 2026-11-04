@@ -18,12 +18,12 @@ object Poly {
     const val MAX_HOUSES = 32 // límite de casas y de hoteles de CADA jugador (no se comparte)
     const val MAX_HOTELS = 12
     /** Tienda de La Peza (regla opcional): objeto → (nombre, precio). No salen en Suerte ni en Caja. */
-    val SHOP = mapOf(1 to ("la carta Maricarmen" to 450), 2 to ("el dado triple" to 100), 3 to ("la doble condena" to 250), 4 to ("el billete de tren" to 50), 5 to ("las obras" to 100), 6 to ("el intercambio" to 250))
+    val SHOP = mapOf(1 to ("la carta Maricarmen" to 450), 2 to ("el dado triple" to 100), 3 to ("la doble condena" to 250), 4 to ("el billete de tren" to 50), 5 to ("las obras" to 100), 6 to ("el intercambio" to 250), 7 to ("el desatascador" to 150))
 
     class Sq(val n: String, val t: String, val g: String?, val p: Int, val r: IntArray, val i: String? = null)
     class Card(val x: String, val e: String)
     class Data(val squares: List<Sq>, val groups: Map<String, String>, val house: Map<String, Int>, val chance: List<Card>, val chest: List<Card>)
-    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false, val rails: Boolean = false, val ownerFree: Boolean = false, val shop: Boolean = false)
+    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false, val rails: Boolean = false, val ownerFree: Boolean = false, val shop: Boolean = false, val events: Boolean = false)
     class Deck(var order: List<Int> = emptyList(), var i: Int = 0, var held: Int = -1, var held2: Int = -1)
     class Auction(val sq: Int, var bid: Int, var bidder: Int, val active: MutableList<Int>, var cur: Int)
     class Debt(val seat: Int, val amt: Int, var to: Int, val why: String, val rent: Boolean = false, val tax: Boolean = false)
@@ -74,6 +74,13 @@ object Poly {
         val sw = IntArray(n) // intercambios
         val sh = IntArray(n) // 1 si ya compró en la tienda en esta visita
         val fence = IntArray(40) { -1 } // vallas de obras: quién la puso
+        val pl = IntArray(n) // desatascadores
+        var evk = "" // evento activo: dog, snow o rain
+        var evl = IntArray(n) // turnos que le quedan a cada jugador con el evento activo
+        var evf = false // el evento se ha activado en este mismo turno
+        var evChk = false // ya se ha comprobado si salía un evento en este turno
+        var dog = -1 // casilla del perro
+        val tc = IntArray(n) // turnos jugados por cada jugador
         val jmax = IntArray(n) { 3 } // turnos máximos en la cárcel de cada jugador (6 con la doble condena)
         var turn = 0
         var phase = "roll"
@@ -120,7 +127,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -202,9 +209,16 @@ object Poly {
         val segs = ArrayList<IntArray>()
         var pos = from; var dir = 1; var seg = from; var pass = false
         for (k in 1..total) {
+            val prev = pos
             pos = (pos + dir + 40) % 40
+            if (s.fence[pos] >= 0) {
+                s.fence[pos] = -1
+                segs.add(intArrayOf(seg, pos, dir))
+                seg = pos; dir = -dir
+                if (k == total) pos = prev
+                continue
+            }
             if (dir == 1 && pos == 0) pass = true
-            if (k < total && s.fence[pos] >= 0) { segs.add(intArrayOf(seg, pos, dir)); seg = pos; dir = -dir }
         }
         if (pass) goPay(s, seat, pos == 0)
         s.pos[seat] = pos
@@ -311,10 +325,10 @@ object Poly {
     private fun bankrupt(s: State, seat: Int, to: Int, why: String) {
         liquidate(s, seat)
         for (i in 0 until 40) if (s.own[i] == seat) { s.own[i] = to; if (to < 0) s.mort[i] = false }
-        if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = minOf(1, s.tri[to] + s.tri[seat]); s.dj[to] = minOf(1, s.dj[to] + s.dj[seat]); s.tk[to] = minOf(1, s.tk[to] + s.tk[seat]); s.ob[to] = minOf(1, s.ob[to] + s.ob[seat]); s.sw[to] = minOf(1, s.sw[to] + s.sw[seat]); if (s.mcBy == seat) s.mcBy = to }
+        if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = minOf(1, s.tri[to] + s.tri[seat]); s.dj[to] = minOf(1, s.dj[to] + s.dj[seat]); s.tk[to] = minOf(1, s.tk[to] + s.tk[seat]); s.ob[to] = minOf(1, s.ob[to] + s.ob[seat]); s.sw[to] = minOf(1, s.sw[to] + s.sw[seat]); s.pl[to] = minOf(1, s.pl[to] + s.pl[seat]); if (s.mcBy == seat) s.mcBy = to }
         else if (s.mcBy == seat) { s.deckC.held2 = -1; s.mcBy = -1 }
         else for (w in 0..1) if (s.deck(w).held >= 0 && s.heldBy[w] == seat) { s.deck(w).held = -1; s.heldBy[w] = -1 }
-        s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.bk[seat] = true; s.jail[seat] = false
+        s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.pl[seat] = 0; s.evl[seat] = 0; s.bk[seat] = true; s.jail[seat] = false
         for (i in 0 until 40) if (s.fence[i] == seat) s.fence[i] = -1
         val rest = ArrayList<Debt>()
         for (d in s.debts) { if (d.seat == seat) continue; if (d.to == seat) d.to = to; rest.add(d) }
@@ -326,7 +340,57 @@ object Poly {
         if (left.size == 1) { s.winner = left[0]; s.phase = "over"; say(s, "@${left[0]} gana la partida", "win", seat = left[0]) }
     }
 
+    // ───── eventos aleatorios (regla opcional) ─────
+    private val EV_NAMES = listOf("dog", "snow", "rain")
+    private const val EV_TURNS = 5
+    private const val DOG_BITE = 150
+    private const val DOG_STEP = 4
+    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien se encuentra", "Evento de nieve: está nevando, así que solo se tira un dado", "Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más")
+    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia")
+
+    private fun dogBites(s: State, squares: List<Int>) {
+        for (i in 0 until s.n) {
+            if (s.bk[i] || s.pos[i] !in squares) continue
+            val v = minOf(DOG_BITE, s.cash[i])
+            s.cash[i] -= v
+            say(s, "El perro muerde a @$i y le quita ${eur(v)}", "bite", seat = i, amt = v, sq = s.pos[i])
+        }
+    }
+
+    /** Una vez por turno, tras tirar: un 10 % de que se active un evento (si no hay otro activo ni son los dos primeros turnos del jugador). */
+    private fun maybeEvent(s: State, seat: Int) {
+        if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase == "over") return
+        s.evChk = true
+        if (s.evk != "" || s.tc[seat] < 2 || rint(s, 10) != 0) return
+        val kind = rint(s, 3)
+        s.evk = EV_NAMES[kind]; s.evf = true
+        for (i in 0 until s.n) s.evl[i] = if (s.bk[i]) 0 else EV_TURNS
+        say(s, EV_TEXT[kind], "evt", seat = seat, amt = 1, sq = kind)
+        if (kind == 0) { s.dog = 0; dogBites(s, listOf(0)) }
+    }
+
     private fun nextTurn(s: State) {
+        val prev = s.turn
+        s.tc[prev]++
+        if (s.evk != "") {
+            if (s.evf) s.evf = false
+            else {
+                if (s.evk == "dog") {
+                    val from = s.dog
+                    val path = List(DOG_STEP) { (from + it + 1) % 40 }
+                    s.dog = path[DOG_STEP - 1]
+                    say(s, "El perro avanza 4 casillas", "dog", from = from, to = s.dog)
+                    dogBites(s, path)
+                }
+                s.evl[prev] = maxOf(0, s.evl[prev] - 1)
+            }
+            if ((0 until s.n).all { s.bk[it] || s.evl[it] <= 0 }) {
+                val kind = EV_NAMES.indexOf(s.evk)
+                say(s, EV_END[kind], "evt", amt = 0, sq = kind)
+                s.evk = ""; s.dog = -1; s.evl = IntArray(s.n)
+            }
+        }
+        s.evChk = false
         s.turn = nextAlive(s, s.turn)
         s.phase = "roll"; s.dbl = 0; s.again = false; s.buy = -1
         if (s.railCd[s.turn] > 0) s.railCd[s.turn]--
@@ -456,9 +520,13 @@ object Poly {
             'r' -> {
                 if (!mine || s.phase != "roll") return "No puedes tirar ahora"
                 if (dry) return null
-                val a = rint(s, 6) + 1; val b = rint(s, 6) + 1
+                // eventos: con nieve solo se tira un dado; con lluvia cada dado saca de 4 a 6
+                val snow = s.evk == "snow" && s.evl[seat] > 0 && !s.jail[seat]
+                val rain = s.evk == "rain" && s.evl[seat] > 0
+                val a = if (rain) rint(s, 3) + 4 else rint(s, 6) + 1
+                val b = if (snow) 0 else if (rain) rint(s, 3) + 4 else rint(s, 6) + 1
                 s.d1 = a; s.d2 = b
-                say(s, "@$seat saca $a y $b", "dice", seat = seat, d1 = a, d2 = b)
+                say(s, if (b != 0) "@$seat saca $a y $b" else "@$seat saca $a", "dice", seat = seat, d1 = a, d2 = b)
                 if (s.jail[seat]) {
                     if (a == b) {
                         s.jail[seat] = false; s.jt[seat] = 0; s.again = false
@@ -478,6 +546,7 @@ object Poly {
                         moveDice(s, seat, a + b)
                     }
                 } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b) }
+                maybeEvent(s, seat)
                 settle(s)
                 return ok()
             }
@@ -595,6 +664,7 @@ object Poly {
                 say(s, "@$seat usa el dado triple y saca $a, $b y $c3", "dice", seat = seat, d1 = a, d2 = b, d3 = c3)
                 s.again = false; s.dbl = 0
                 moveDice(s, seat, a + b + c3)
+                maybeEvent(s, seat)
                 settle(s)
                 return ok()
             }
@@ -612,12 +682,12 @@ object Poly {
                 val k = arg.toIntOrNull() ?: return "Objeto no válido"
                 val item = SHOP[k] ?: return "Objeto no válido"
                 if (s.sh[seat] != 0) return "Solo puedes comprar un objeto por visita"
-                val have = when (k) { 1 -> s.mc[seat]; 2 -> s.tri[seat]; 3 -> s.dj[seat]; 4 -> s.tk[seat]; 5 -> s.ob[seat]; else -> s.sw[seat] }
+                val have = when (k) { 1 -> s.mc[seat]; 2 -> s.tri[seat]; 3 -> s.dj[seat]; 4 -> s.tk[seat]; 5 -> s.ob[seat]; 6 -> s.sw[seat]; else -> s.pl[seat] }
                 if (have > 0) return "Ya tienes ese objeto"
                 if (s.cash[seat] < item.second) return "No tienes dinero"
                 if (dry) return null
                 s.cash[seat] -= item.second; s.sh[seat] = 1
-                when (k) { 1 -> s.mc[seat]++; 2 -> s.tri[seat]++; 3 -> s.dj[seat]++; 4 -> s.tk[seat]++; 5 -> s.ob[seat]++; else -> s.sw[seat]++ }
+                when (k) { 1 -> s.mc[seat]++; 2 -> s.tri[seat]++; 3 -> s.dj[seat]++; 4 -> s.tk[seat]++; 5 -> s.ob[seat]++; 6 -> s.sw[seat]++; else -> s.pl[seat]++ }
                 say(s, "@$seat compra ${item.first} en la tienda por ${eur(item.second)}", "buy", seat = seat, amt = item.second)
                 return ok()
             }
@@ -650,6 +720,21 @@ object Poly {
                 val old = s.fence.indexOf(seat); if (old >= 0) s.fence[old] = -1
                 s.fence[i] = seat
                 say(s, "@$seat pone obras en ${s.sq(i).n}", "fence", seat = seat, sq = i)
+                return ok()
+            }
+            'V' -> {
+                // desatascador (tienda): chupa a otro jugador y lo deja en tu casilla; no sustituye la tirada
+                if (!mine || s.phase != "roll" || s.pl[seat] < 1 || s.jail[seat]) return "Ahora no puedes usar el desatascador"
+                if (arg.isEmpty() || !arg.all { it in '0'..'9' } || arg.length > 2) return "Jugador no válido"
+                val t = arg.toInt()
+                if (t >= s.n || t == seat || s.bk[t]) return "Jugador no válido"
+                if (s.jail[t]) return "Está en la cárcel"
+                if (s.pos[t] == s.pos[seat]) return "Ya está en tu casilla"
+                if (dry) return null
+                s.pl[seat]--
+                val from = s.pos[t]; val a = s.pos[seat]
+                s.pos[t] = a
+                say(s, "@$seat chupa a @$t con el desatascador y lo deja a su lado", "pull", seat = seat, to = t, from = from, sq = a)
                 return ok()
             }
             'X' -> {

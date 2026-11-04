@@ -15,7 +15,7 @@ export const JAIL_FINE = 50;
 export const JAIL = 10;
 export const MAX_HOUSES = 32, MAX_HOTELS = 12; // límite de casas y de hoteles de CADA jugador (no se comparte)
 /** Tienda de La Peza (regla opcional): objetos que no salen en Suerte ni en Caja. */
-export const SHOP = { 1: { n: 'la carta Maricarmen', p: 450 }, 2: { n: 'el dado triple', p: 100 }, 3: { n: 'la doble condena', p: 250 }, 4: { n: 'el billete de tren', p: 50 }, 5: { n: 'las obras', p: 100 }, 6: { n: 'el intercambio', p: 250 } };
+export const SHOP = { 1: { n: 'la carta Maricarmen', p: 450 }, 2: { n: 'el dado triple', p: 100 }, 3: { n: 'la doble condena', p: 250 }, 4: { n: 'el billete de tren', p: 50 }, 5: { n: 'las obras', p: 100 }, 6: { n: 'el intercambio', p: 250 }, 7: { n: 'el desatascador', p: 150 } };
 
 export const eur = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' €';
 
@@ -37,7 +37,7 @@ function shuffled(s, n) {
 // ───── estado inicial ─────
 export function initGame(data, n, cfg, seed) {
   const s = {
-    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails, ownerFree: !!cfg.ownerFree, shop: !!cfg.shop }, r: seed | 0,
+    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails, ownerFree: !!cfg.ownerFree, shop: !!cfg.shop, events: !!cfg.events }, r: seed | 0,
     pos: Array(n).fill(0), cash: Array(n).fill(cfg.money), jail: Array(n).fill(false), jt: Array(n).fill(0), jf: Array(n).fill(0),
     bk: Array(n).fill(false),
     own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false),
@@ -45,6 +45,7 @@ export function initGame(data, n, cfg, seed) {
     turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, trade: null,
     heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0), tri: Array(n).fill(0), dj: Array(n).fill(0), jmax: Array(n).fill(3),
     tk: Array(n).fill(0), ob: Array(n).fill(0), sw: Array(n).fill(0), sh: Array(n).fill(0), fence: Array(40).fill(-1),
+    pl: Array(n).fill(0), evk: '', evl: Array(n).fill(0), evf: false, evChk: false, dog: -1, tc: Array(n).fill(0),
   };
   s.deck.c.order = shuffled(s, data.cards.chance.length);
   s.deck.h.order = shuffled(s, data.cards.chest.length);
@@ -122,9 +123,17 @@ function moveDice(s, seat, total) {
   const from = s.pos[seat], segs = [];
   let pos = from, dir = 1, seg = from, pass = false;
   for (let k = 1; k <= total; k++) {
+    const prev = pos;
     pos = (pos + dir + 40) % 40;
+    if (s.fence[pos] >= 0) {
+      // las obras se levantan al chocar; con pasos por delante se rebota, si era el último paso uno se queda en la casilla anterior
+      s.fence[pos] = -1;
+      segs.push({ from: seg, to: pos, dir });
+      seg = pos; dir = -dir;
+      if (k === total) pos = prev;
+      continue;
+    }
     if (dir === 1 && pos === 0) pass = true;
-    if (k < total && s.fence[pos] >= 0) { segs.push({ from: seg, to: pos, dir }); seg = pos; dir = -dir; }
   }
   if (pass) goPay(s, seat, pos === 0);
   s.pos[seat] = pos;
@@ -229,10 +238,10 @@ function liquidate(s, seat) {
 function bankrupt(s, seat, to, why) {
   liquidate(s, seat);
   for (let i = 0; i < 40; i++) if (s.own[i] === seat) { s.own[i] = to; if (to < 0) s.mort[i] = false; }
-  if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = Math.min(1, s.tri[to] + s.tri[seat]); s.dj[to] = Math.min(1, s.dj[to] + s.dj[seat]); s.tk[to] = Math.min(1, s.tk[to] + s.tk[seat]); s.ob[to] = Math.min(1, s.ob[to] + s.ob[seat]); s.sw[to] = Math.min(1, s.sw[to] + s.sw[seat]); if (s.mcBy === seat) s.mcBy = to; }
+  if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = Math.min(1, s.tri[to] + s.tri[seat]); s.dj[to] = Math.min(1, s.dj[to] + s.dj[seat]); s.tk[to] = Math.min(1, s.tk[to] + s.tk[seat]); s.ob[to] = Math.min(1, s.ob[to] + s.ob[seat]); s.sw[to] = Math.min(1, s.sw[to] + s.sw[seat]); s.pl[to] = Math.min(1, s.pl[to] + s.pl[seat]); if (s.mcBy === seat) s.mcBy = to; }
   else if (s.mcBy === seat) { s.deck.c.held2 = -1; s.mcBy = -1; }
   else for (const w of ['c', 'h']) if (s.deck[w].held >= 0 && s.heldBy[w] === seat) { s.deck[w].held = -1; s.heldBy[w] = -1; }
-  s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.bk[seat] = true; s.jail[seat] = false;
+  s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.pl[seat] = 0; s.evl[seat] = 0; s.bk[seat] = true; s.jail[seat] = false;
   for (let i = 0; i < 40; i++) if (s.fence[i] === seat) s.fence[i] = -1;
   s.debts = s.debts.filter((d) => d.seat !== seat).map((d) => (d.to === seat ? { ...d, to } : d));
   if (s.trade && (s.trade.from === seat || s.trade.to === seat)) s.trade = null;
@@ -241,7 +250,53 @@ function bankrupt(s, seat, to, why) {
   if (left.length === 1) { s.winner = left[0]; s.phase = 'over'; say(s, `@${left[0]} gana la partida`, 'win', { seat: left[0] }); }
 }
 
+// ───── eventos aleatorios (regla opcional) ─────
+const EV_NAMES = ['dog', 'snow', 'rain'], EV_TURNS = 5, DOG_BITE = 150, DOG_STEP = 4;
+const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien se encuentra', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más'];
+const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia'];
+
+function dogBites(s, squares) {
+  for (let i = 0; i < s.n; i++) {
+    if (s.bk[i] || !squares.includes(s.pos[i])) continue;
+    const v = Math.min(DOG_BITE, s.cash[i]);
+    s.cash[i] -= v;
+    say(s, `El perro muerde a @${i} y le quita ${eur(v)}`, 'bite', { seat: i, amt: v, sq: s.pos[i] });
+  }
+}
+
+/** Una vez por turno, tras tirar: un 10 % de que se active un evento (si no hay otro activo ni son los dos primeros turnos del jugador). */
+function maybeEvent(s, seat) {
+  if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase === 'over') return;
+  s.evChk = true;
+  if (s.evk || s.tc[seat] < 2 || rint(s, 10) !== 0) return;
+  const kind = rint(s, 3);
+  s.evk = EV_NAMES[kind]; s.evf = true;
+  for (let i = 0; i < s.n; i++) s.evl[i] = s.bk[i] ? 0 : EV_TURNS;
+  say(s, EV_TEXT[kind], 'evt', { seat, amt: 1, sq: kind });
+  if (kind === 0) { s.dog = 0; dogBites(s, [0]); }
+}
+
 function nextTurn(s) {
+  const prev = s.turn;
+  s.tc[prev]++;
+  if (s.evk) {
+    if (s.evf) s.evf = false;
+    else {
+      if (s.evk === 'dog') {
+        const from = s.dog, path = Array.from({ length: DOG_STEP }, (_, i) => (from + i + 1) % 40);
+        s.dog = path[DOG_STEP - 1];
+        say(s, 'El perro avanza 4 casillas', 'dog', { from, to: s.dog });
+        dogBites(s, path);
+      }
+      s.evl[prev] = Math.max(0, s.evl[prev] - 1);
+    }
+    if (s.evl.every((v, i) => s.bk[i] || v <= 0)) {
+      const kind = EV_NAMES.indexOf(s.evk);
+      say(s, EV_END[kind], 'evt', { amt: 0, sq: kind });
+      s.evk = ''; s.dog = -1; s.evl = Array(s.n).fill(0);
+    }
+  }
+  s.evChk = false;
   s.turn = nextAlive(s, s.turn);
   s.phase = 'roll'; s.dbl = 0; s.again = false; s.buy = -1;
   if (s.railCd[s.turn] > 0) s.railCd[s.turn]--;
@@ -364,9 +419,11 @@ export function act(s, seat, code, dry = false) {
     case 'r': {
       if (!mine || s.phase !== 'roll') return 'No puedes tirar ahora';
       if (dry) return OK;
-      const a = rint(s, 6) + 1, b = rint(s, 6) + 1;
+      // eventos: con nieve solo se tira un dado; con lluvia cada dado saca de 4 a 6
+      const snow = s.evk === 'snow' && s.evl[seat] > 0 && !s.jail[seat], rain = s.evk === 'rain' && s.evl[seat] > 0;
+      const a = rain ? rint(s, 3) + 4 : rint(s, 6) + 1, b = snow ? 0 : rain ? rint(s, 3) + 4 : rint(s, 6) + 1;
       s.d1 = a; s.d2 = b;
-      say(s, `@${seat} saca ${a} y ${b}`, 'dice', { seat, d1: a, d2: b });
+      say(s, b ? `@${seat} saca ${a} y ${b}` : `@${seat} saca ${a}`, 'dice', { seat, d1: a, d2: b });
       if (s.jail[seat]) {
         if (a === b) {
           s.jail[seat] = false; s.jt[seat] = 0; s.again = false;
@@ -386,6 +443,7 @@ export function act(s, seat, code, dry = false) {
           moveDice(s, seat, a + b);
         }
       } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b); }
+      maybeEvent(s, seat);
       settle(s);
       return ok();
     }
@@ -494,6 +552,7 @@ export function act(s, seat, code, dry = false) {
       say(s, `@${seat} usa el dado triple y saca ${a}, ${b} y ${c3}`, 'dice', { seat, d1: a, d2: b, d3: c3 });
       s.again = false; s.dbl = 0;
       moveDice(s, seat, a + b + c3);
+      maybeEvent(s, seat);
       settle(s);
       return ok();
     }
@@ -511,12 +570,12 @@ export function act(s, seat, code, dry = false) {
       const k = Number(arg), item = SHOP[k];
       if (!item) return 'Objeto no válido';
       if (s.sh[seat]) return 'Solo puedes comprar un objeto por visita';
-      const have = [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw][k][seat];
+      const have = [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl][k][seat];
       if (have > 0) return 'Ya tienes ese objeto';
       if (s.cash[seat] < item.p) return 'No tienes dinero';
       if (dry) return OK;
       s.cash[seat] -= item.p; s.sh[seat] = 1;
-      if (k === 1) s.mc[seat]++; else if (k === 2) s.tri[seat]++; else if (k === 3) s.dj[seat]++; else if (k === 4) s.tk[seat]++; else if (k === 5) s.ob[seat]++; else s.sw[seat]++;
+      if (k === 1) s.mc[seat]++; else if (k === 2) s.tri[seat]++; else if (k === 3) s.dj[seat]++; else if (k === 4) s.tk[seat]++; else if (k === 5) s.ob[seat]++; else if (k === 6) s.sw[seat]++; else s.pl[seat]++;
       say(s, `@${seat} compra ${item.n} en la tienda por ${eur(item.p)}`, 'buy', { seat, amt: item.p });
       return ok();
     }
@@ -566,6 +625,21 @@ export function act(s, seat, code, dry = false) {
       s.again = false; s.dbl = 0;
       land(s, seat, b, {});
       settle(s);
+      return ok();
+    }
+    case 'V': {
+      // desatascador (tienda): chupa a otro jugador y lo deja en tu casilla; no sustituye la tirada
+      if (!mine || s.phase !== 'roll' || s.pl[seat] < 1 || s.jail[seat]) return 'Ahora no puedes usar el desatascador';
+      if (!/^\d+$/.test(arg)) return 'Jugador no válido';
+      const t = Number(arg);
+      if (t >= s.n || t === seat || s.bk[t]) return 'Jugador no válido';
+      if (s.jail[t]) return 'Está en la cárcel';
+      if (s.pos[t] === s.pos[seat]) return 'Ya está en tu casilla';
+      if (dry) return OK;
+      s.pl[seat]--;
+      const from = s.pos[t], a = s.pos[seat];
+      s.pos[t] = a;
+      say(s, `@${seat} chupa a @${t} con el desatascador y lo deja a su lado`, 'pull', { seat, to: t, from, sq: a });
       return ok();
     }
     case 'x': {
@@ -679,4 +753,4 @@ export function applyText(s, text) {
 }
 
 /** Resumen del estado, para comparar partidas entre JS y Kotlin. */
-export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.tk, s.ob, s.sw, s.sh, s.fence, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
+export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.tk, s.ob, s.sw, s.sh, s.fence, s.pl, s.evk, s.evl, s.evf, s.evChk, s.dog, s.tc, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);

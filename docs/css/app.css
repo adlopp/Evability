@@ -655,3 +655,34 @@ textarea.field { resize: vertical; }
 .pboard.shake { animation: pshake .5s ease-in-out; }
 @keyframes pshake { 0%, 100% { transform: translate(0); } 15% { transform: translate(-.5%, .3%); } 30% { transform: translate(.5%, -.3%); } 45% { transform: translate(-.4%, -.2%); } 60% { transform: translate(.4%, .2%); } 80% { transform: translate(-.2%, 0); } }
 @media (prefers-reduced-motion: reduce) { .ptk.on-board.turn::after, .ptk.on-board.champ { animation: none; } }
+
+/* eventos aleatorios: carta verde arriba a la derecha, clima y perro */
+.pdeck.e { right: 8%; top: 12%; transform: rotate(35deg); background: linear-gradient(145deg, #3FBF74, #1B7F45); animation: evcard .6s cubic-bezier(.2,1.3,.4,1) both; }
+@keyframes evcard { from { opacity: 0; transform: rotate(35deg) scale(.3) translateY(-30%); } to { opacity: 1; transform: rotate(35deg); } }
+.pwx { position: absolute; inset: 0; z-index: 8; pointer-events: none; overflow: hidden; }
+.pwx i { position: absolute; top: -6%; display: block; }
+.pwx.snow { background: radial-gradient(ellipse at 50% 50%, rgba(255,255,255,.5) 0%, rgba(255,255,255,.18) 38%, transparent 56%), linear-gradient(90deg, rgba(255,255,255,.55), transparent 14%, transparent 86%, rgba(255,255,255,.55)), linear-gradient(180deg, rgba(255,255,255,.5), transparent 12%, transparent 88%, rgba(255,255,255,.5)); animation: wxin 1.6s ease both; }
+.pwx.snow i { width: var(--sz); height: var(--sz); border-radius: 50%; background: #fff; box-shadow: 0 0 .3em rgba(255,255,255,.9); opacity: .9; animation: snowfall linear infinite; }
+@keyframes snowfall { from { transform: translate(0, 0); } 50% { transform: translate(var(--dr), 55vh); } to { transform: translate(calc(var(--dr) * -1), 110vh); } }
+.pwx.rain { background: linear-gradient(115deg, transparent 25%, rgba(255,255,255,.16) 42%, transparent 58%) 0 0 / 220% 100%, rgba(70, 105, 160, .1); animation: wxin 1.6s ease both, wetsheen 6s linear infinite; }
+.pwx.rain i { width: .1em; height: var(--sz); background: linear-gradient(180deg, transparent, rgba(170,205,245,.85)); transform: rotate(12deg); animation: rainfall linear infinite; }
+@keyframes rainfall { from { transform: translate(0, 0) rotate(12deg); } to { transform: translate(-3vh, 110vh) rotate(12deg); } }
+@keyframes wetsheen { from { background-position: 120% 0, 0 0; } to { background-position: -120% 0, 0 0; } }
+@keyframes wxin { from { opacity: 0; } to { opacity: 1; } }
+.pboard.ev-snow { background: radial-gradient(circle at 50% 42%, #F2F8FC 0%, #DDEBF3 62%, #C9DDEA 100%); transition: background 1.2s; }
+.pboard.ev-snow .psq { filter: saturate(.78) brightness(1.05); }
+.pboard.ev-rain .psq { filter: brightness(.93) saturate(1.1) contrast(1.05); }
+.pboard.ev-rain { box-shadow: inset 0 0 6em rgba(60, 90, 140, .22); }
+.pdog { position: absolute; z-index: 9; width: 7.5%; aspect-ratio: 1; transform: translate(-50%, -50%); pointer-events: none; transition: left .95s cubic-bezier(.4,.1,.3,1), top .95s cubic-bezier(.4,.1,.3,1); filter: drop-shadow(0 .2em .25em rgba(0,0,0,.45)); animation: dogtrot .38s ease-in-out infinite alternate; }
+.pdog svg { width: 100%; height: 100%; display: block; }
+@keyframes dogtrot { from { margin-top: 0; rotate: -4deg; } to { margin-top: -.5em; rotate: 4deg; } }
+.pevt { position: absolute; left: 50%; top: 50%; z-index: 46; width: 74%; transform: translate(-50%, -50%); padding: 1.1em 1.2em 1.2em; border-radius: 1.4em; text-align: center; color: #fff; background: linear-gradient(150deg, #3FBF74, #1B7F45); box-shadow: 0 .6em 2.4em rgba(0,0,0,.5), inset 0 0 0 .22em rgba(255,255,255,.35); cursor: pointer; animation: evpop .5s cubic-bezier(.2,1.3,.4,1) both; display: flex; flex-direction: column; align-items: center; gap: .35em; font-size: calc(var(--bs) / 42); }
+.pevt.end { background: linear-gradient(150deg, #FFC94A, #E8970E); color: #3b2a00; }
+.pevt.out { animation: evout .3s ease-in both; }
+.pevt-art { width: 5.2em; height: 5.2em; } .pevt-art svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 .2em .2em rgba(0,0,0,.35)); }
+.pevt-title { font-size: 1.15em; letter-spacing: .12em; text-transform: uppercase; opacity: .92; }
+.pevt-name { font-size: 1.9em; font-weight: 900; line-height: 1.05; }
+.pevt p { margin: .2em 0 0; font-size: 1.05em; line-height: 1.3; font-weight: 600; }
+@keyframes evpop { from { opacity: 0; transform: translate(-50%, -50%) scale(.5); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes evout { to { opacity: 0; transform: translate(-50%, -50%) scale(.85); } }
+.fxplunger { width: 9%; aspect-ratio: 1; } .fxplunger svg { width: 100%; height: 100%; display: block; }

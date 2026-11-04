@@ -649,7 +649,7 @@ object Social {
     /** `players` = asientos por orden de llegada (el primero crea la sala); `tok` = ficha de cada jugador; `acts` = acciones de la partida. */
     class PolyRoom(
         val id: String, val host: String, val invited: List<String>, val players: List<String>, val tok: Map<String, Int>,
-        val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean, val dblBonus: Boolean, val rails: Boolean, val ownerFree: Boolean, val shop: Boolean, val status: String, val seed: Int, val acts: List<String>,
+        val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean, val dblBonus: Boolean, val rails: Boolean, val ownerFree: Boolean, val shop: Boolean, val events: Boolean, val status: String, val seed: Int, val acts: List<String>,
     )
 
     private fun roomOf(d: JSONObject?, id: String): PolyRoom? = d?.let {
@@ -658,7 +658,7 @@ object Social {
         if (tf != null) for (k in tf.keys()) tok[k] = tf.getJSONObject(k).optString("integerValue").toIntOrNull() ?: 0
         PolyRoom(
             id, it.text("host"), it.list("invited"), it.list("players"), tok, it.int("money").takeIf { m -> m > 0 } ?: 1500,
-            it.bool("goBonus"), it.bool("auction"), it.optJSONObject("fields")?.has("pot") != true || it.bool("pot"), it.bool("dblBonus"), it.bool("rails"), it.bool("ownerFree"), it.bool("shop"), it.text("status"), it.int("seed"), it.list("acts"),
+            it.bool("goBonus"), it.bool("auction"), it.optJSONObject("fields")?.has("pot") != true || it.bool("pot"), it.bool("dblBonus"), it.bool("rails"), it.bool("ownerFree"), it.bool("shop"), it.bool("events"), it.text("status"), it.int("seed"), it.list("acts"),
         )
     }
 
@@ -676,7 +676,7 @@ object Social {
             write(
                 "rooms/$id",
                 JSONObject().put("host", str(me)).put("invited", strs(listOf(friendUid))).put("players", strs(listOf(me))).put("tok", tokMap(me, 0))
-                    .put("money", int(1500)).put("goBonus", bool(false)).put("auction", bool(true)).put("pot", bool(true)).put("dblBonus", bool(false)).put("rails", bool(false)).put("ownerFree", bool(false)).put("shop", bool(false)).put("status", str("lobby")).put("seed", int(0)).put("acts", strs(emptyList())),
+                    .put("money", int(1500)).put("goBonus", bool(false)).put("auction", bool(true)).put("pot", bool(true)).put("dblBonus", bool(false)).put("rails", bool(false)).put("ownerFree", bool(false)).put("shop", bool(false)).put("events", bool(false)).put("status", str("lobby")).put("seed", int(0)).put("acts", strs(emptyList())),
                 serverTime = "at",
             ),
             write("chats/$pair/messages/$id", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("poly")).put("game", str(id)), serverTime = "at"),
@@ -707,7 +707,7 @@ object Social {
 
     /** Reglas que elige el anfitrión en la sala de espera. */
     class RoomCfg(
-        val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean, val dblBonus: Boolean, val rails: Boolean, val ownerFree: Boolean, val shop: Boolean,
+        val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean, val dblBonus: Boolean, val rails: Boolean, val ownerFree: Boolean, val shop: Boolean, val events: Boolean,
     )
 
     suspend fun polyCfg(room: PolyRoom, c: RoomCfg) = withContext(Dispatchers.IO) {
@@ -715,8 +715,8 @@ object Social {
             writeMask(
                 "rooms/${room.id}",
                 JSONObject().put("money", int(c.money.toLong())).put("goBonus", bool(c.goBonus)).put("auction", bool(c.auction)).put("pot", bool(c.pot))
-                    .put("dblBonus", bool(c.dblBonus)).put("rails", bool(c.rails)).put("ownerFree", bool(c.ownerFree)).put("shop", bool(c.shop)),
-                listOf("money", "goBonus", "auction", "pot", "dblBonus", "rails", "ownerFree", "shop"),
+                    .put("dblBonus", bool(c.dblBonus)).put("rails", bool(c.rails)).put("ownerFree", bool(c.ownerFree)).put("shop", bool(c.shop)).put("events", bool(c.events)),
+                listOf("money", "goBonus", "auction", "pot", "dblBonus", "rails", "ownerFree", "shop", "events"),
             ),
         )
     }
