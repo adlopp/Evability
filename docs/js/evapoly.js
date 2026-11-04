@@ -137,11 +137,23 @@ export function openEvapoly({ roomId, api, onClose }) {
     musicBtn.replaceChildren(icon(on ? 'volume' : 'mute'));
   } }, icon(musicOn() ? 'volume' : 'mute'));
   const fsBtn = h('button', { class: 'icon-btn', 'aria-label': 'Pantalla completa', title: 'Pantalla completa', onclick: () => setFull(!root.classList.contains('full')) }, icon('expand'));
+  // foco: mis calles brillan, las de los demás se apagan y se marcan las que me faltan de cada color
+  const focusPref = () => { try { return localStorage.getItem('ev.polyFocus') === '1'; } catch { return false; } };
+  let focusOn = focusPref(), hiSeat = -1;
+  const eyeBtns = [];
+  const mkEye = (cls) => { const b = h('button', { class: 'icon-btn fbtn ' + cls + (focusOn ? ' on' : ''), 'aria-label': 'Foco en mis calles', title: 'Foco en mis calles', onclick: toggleFocus }, icon('eye')); eyeBtns.push(b); return b; };
+  function toggleFocus() {
+    focusOn = !focusOn; hiSeat = -1;
+    try { localStorage.setItem('ev.polyFocus', focusOn ? '1' : '0'); } catch { /* sin almacenamiento */ }
+    eyeBtns.forEach((b) => b.classList.toggle('on', focusOn));
+    paintBoard(); renderGame();
+  }
   const toggleDark = () => { const on = darkToggle(); root.classList.toggle('dark-bg', on); darkBars(on); };
   const root = h('div', { class: 'pomo poly' },
-    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Evapoly'), h('button', { class: 'icon-btn', 'aria-label': 'Fondo oscuro', title: 'Fondo oscuro', onclick: toggleDark }, icon('moon')), fsBtn, musicBtn),
+    h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')), h('h1', { class: 'grow' }, 'Evapoly'), mkEye(''), h('button', { class: 'icon-btn', 'aria-label': 'Fondo oscuro', title: 'Fondo oscuro', onclick: toggleDark }, icon('moon')), fsBtn, musicBtn),
     h('button', { class: 'icon-btn pfull-exit', 'aria-label': 'Salir de pantalla completa', onclick: () => setFull(false) }, icon('shrink')),
     h('button', { class: 'icon-btn pfull-exit pfull-dark', 'aria-label': 'Fondo oscuro', onclick: toggleDark }, icon('moon')),
+    mkEye('pfull-exit pfull-eye'),
     body);
   /** Pantalla completa: se quita la cabecera, el tablero ocupa casi todo en el centro y a un lado queda la información del turno en pequeño. */
   function setFull(on) {
@@ -443,6 +455,14 @@ export function openEvapoly({ roomId, api, onClose }) {
     { n: 'Lluvia', ico: 'rain', t: 'Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.' },
   ];
   let viewEvk = '', viewDog = -1, wxEl = null, evCardEl = null, dogEl = null;
+  function wirePeek(el) {
+    let timer = null, held = false;
+    el.addEventListener('pointerdown', () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; peekEvent(true); }, 350); });
+    const end = () => { clearTimeout(timer); if (held) peekEvent(false); };
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => el.addEventListener(t, end));
+    el.addEventListener('click', () => { if (held) { held = false; return; } peekEvent(true); });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
   /** Tablero, clima, carta de evento y perro según el evento que se está viendo. */
   function paintEvent() {
     if (!boardEl || !centerEl) return;
@@ -454,7 +474,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     }
     if ((evCardEl?.getAttribute('data-k') || '') !== viewEvk) {
       evCardEl?.remove(); evCardEl = null;
-      if (viewEvk) { const ev = EVT[EV_IDS.indexOf(viewEvk)]; evCardEl = h('div', { class: 'pdeck e', 'data-k': viewEvk }, h('span', { class: 'dk-ico', html: svgOf({ p: icons[ev.ico] }) }), 'Evento'); centerEl.append(evCardEl); }
+      if (viewEvk) { const ev = EVT[EV_IDS.indexOf(viewEvk)]; evCardEl = h('div', { class: 'pdeck e', 'data-k': viewEvk }, h('span', { class: 'dk-ico', html: svgOf({ p: icons[ev.ico] }) }), 'Evento'); wirePeek(evCardEl); centerEl.append(evCardEl); }
     }
     if (viewEvk === 'dog' && viewDog >= 0) {
       if (!dogEl) { dogEl = h('span', { class: 'pdog', html: svgOf({ p: icons.dog }) }); gridEl.append(dogEl); }
@@ -462,14 +482,29 @@ export function openEvapoly({ roomId, api, onClose }) {
     } else if (dogEl) { dogEl.remove(); dogEl = null; }
   }
   /** Cartel de «Evento activado» (o de fin del evento) en el centro del tablero; se cierra al tocarlo. */
+  function evtCardEl(kind, start, title) {
+    const ev = EVT[kind];
+    return h('div', { class: 'pevt' + (start ? '' : ' end') },
+      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : 'sun'] }) }),
+      h('b', { class: 'pevt-title' }, title || (start ? 'Evento activado' : 'Evento terminado')),
+      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : 'Ha salido el sol'),
+      start ? h('p', {}, ev.t) : null);
+  }
+  /** Tocar la carta de evento del tablero muestra otra vez qué hace; si se mantiene pulsada, se ve mientras dure la pulsación. */
+  let peekEl = null;
+  function peekEvent(show) {
+    peekEl?.remove(); peekEl = null;
+    const kind = EV_IDS.indexOf(viewEvk);
+    if (!show || kind < 0 || !boardEl || boardEl.querySelector('.pevt')) return;
+    const el = peekEl = evtCardEl(kind, true, 'Evento activo');
+    el.addEventListener('click', () => { if (peekEl === el) peekEvent(false); });
+    boardEl.append(el);
+    setTimeout(() => { if (peekEl === el) peekEvent(false); }, 5200);
+  }
   function showEventCard(kind, start) {
     return new Promise((resolve) => {
-      const ev = EVT[kind];
-      const fx = h('div', { class: 'pevt' + (start ? '' : ' end') },
-        h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : 'sun'] }) }),
-        h('b', { class: 'pevt-title' }, start ? 'Evento activado' : 'Evento terminado'),
-        h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : 'Ha salido el sol'),
-        start ? h('p', {}, ev.t) : null);
+      const fx = evtCardEl(kind, start);
+      peekEvent(false);
       boardEl.append(fx);
       let done = false;
       const end = () => { if (done) return; done = true; fx.classList.add('out'); setTimeout(() => { fx.remove(); resolve(); }, 320); };
@@ -561,7 +596,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   /** Copia ampliada de una casilla (con su dueño y edificios) en el centro de la pantalla. */
   function zoomOf(el, c, at) {
     const F = at ? Math.min(30, Math.max(16, at.w / 24)) : Math.min(30, Math.max(18, window.innerWidth / 13)), z = el.cloneNode(true);
-    z.classList.add('pzoom');
+    z.classList.add('pzoom'); z.classList.remove('fo-mine', 'fo-miss', 'fo-dim');
     z.removeAttribute('data-i');
     let w = c.w * GS * 0.62 * F, hh = c.h * GS * 0.62 * F;
     if (z.classList.contains('s-left') || z.classList.contains('s-right')) {
@@ -586,8 +621,18 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   function paintBoard() {
     if (!gridEl) return;
+    const subj = hiSeat >= 0 && !state.bk[hiSeat] ? hiSeat : focusOn ? mySeat() : -1;
+    boardEl.classList.toggle('focus', subj >= 0);
     for (let i = 0; i < 40; i++) {
       const el = gridEl.children[i], o = state.own[i];
+      // foco: mías con brillo, las de otros apagadas y, en los colores en los que tengo alguna, las que me faltan con contorno punteado
+      const q0 = data.squares[i], grp = q0.g ? groupOf(state, q0.g) : [], mineN = grp.filter((j) => state.own[j] === subj).length;
+      const own = subj >= 0 && ['street', 'station', 'utility'].includes(q0.t);
+      const mineSq = own && o === subj, miss = own && o !== subj && mineN > 0, full = mineSq && grp.length > 0 && mineN === grp.length, dim = own && o >= 0 && o !== subj && !miss;
+      el.classList.toggle('fo-mine', mineSq); el.classList.toggle('fo-miss', miss); el.classList.toggle('fo-dim', dim);
+      if (miss) el.style.setProperty('--oc', o >= 0 ? COLORS[o] : COLORS[subj]);
+      let st = el.querySelector(':scope > .pstar');
+      if (full) { if (!st) el.append(h('span', { class: 'pstar' }, '★')); } else if (st) st.remove();
       el.classList.toggle('owned', o >= 0); el.classList.toggle('mort', !!state.mort[i]);
       let fe = el.querySelector(':scope > .pfence');
       if (state.fence[i] >= 0) { if (!fe) { fe = h('span', { class: 'pfence', html: svgOf({ p: icons.fence }) }); el.append(fe); } }
@@ -602,7 +647,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   /** Copia derecha de una casilla (con su dueño y edificios) de `cardW` píxeles de ancho, para la tira de posición. */
   function cardCopy(i, cardW) {
     const el = gridEl.children[i], c = cellOf(i), z = el.cloneNode(true);
-    z.removeAttribute('data-i'); z.classList.remove('hl'); z.classList.add('scard');
+    z.removeAttribute('data-i'); z.classList.remove('hl', 'fo-mine', 'fo-miss', 'fo-dim'); z.classList.add('scard');
     let w = c.w * GS * 0.62, hh = c.h * GS * 0.62;
     if (z.classList.contains('s-left') || z.classList.contains('s-right')) {
       z.classList.remove('s-left', 's-right'); z.classList.add('s-bot'); const pin = z.querySelector('.pin'); pin.style.width = ''; pin.style.height = ''; [w, hh] = [hh, w];
@@ -706,7 +751,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       const jail = s.jail[i], bk = s.bk[i];
       const turn = s.phase === 'order' ? s.ordCand[i] && !s.ordRolls[i] : s.turn === i && s.phase !== 'over';
       const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? `Maricarmen${s.mc[i] > 1 ? ' ×' + s.mc[i] : ''}` : null, s.tri[i] ? `Dado triple${s.tri[i] > 1 ? ' ×' + s.tri[i] : ''}` : null, s.dj[i] ? 'Doble condena' : null, s.tk[i] ? 'Billete de tren' : null, s.ob[i] ? 'Obras' : null, s.sw[i] ? 'Intercambio' : null, s.pl[i] ? 'Desatascador' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
-      const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : ''), style: `--c:${COLORS[i]}` },
+      const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : '') + (hiSeat === i ? ' sel' : ''), style: `--c:${COLORS[i]}`, onclick: () => { if (bk) return; hiSeat = hiSeat === i ? -1 : i; paintBoard(); renderGame(); } },
         tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info),
           h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: data.squares[sqi].g ? data.groups[data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
         h('span', { class: 'cash' }, eur(s.cash[i])));

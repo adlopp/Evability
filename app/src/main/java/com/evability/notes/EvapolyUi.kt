@@ -7,6 +7,7 @@ import androidx.core.view.WindowCompat
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.graphicsLayer
@@ -231,7 +232,7 @@ private class BannerInfo(val text: String, val seat: Int)
 private class Delta(val seat: Int, val text: String, val up: Boolean, val id: Long)
 
 // ───── eventos aleatorios ─────
-private class EvCard(val kind: Int, val start: Boolean)
+private class EvCard(val kind: Int, val start: Boolean, val peek: Boolean = false, val hold: Boolean = false)
 private val EV_IDS = listOf("dog", "snow", "rain")
 private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia")
 private val EV_DESC = listOf(
@@ -276,7 +277,7 @@ private fun WeatherView(kind: String) {
 @Composable
 private fun EventCardView(c: EvCard, side: Dp, onDone: () -> Unit) {
     val t = remember(c) { Animatable(0f) }
-    LaunchedEffect(c) { t.animateTo(1f, spring(0.55f, 300f)); delay(if (c.start) 4800L else 2000L); onDone() }
+    LaunchedEffect(c) { t.animateTo(1f, spring(0.55f, 300f)); delay(if (c.hold) 60000L else if (c.start) 4800L else 2000L); onDone() }
     val shape = RoundedCornerShape(side * 0.05f)
     val fg = if (c.start) Color.White else Color(0xFF3B2A00)
     val fsz = with(LocalDensity.current) { (side / 31f).toSp() }
@@ -288,7 +289,7 @@ private fun EventCardView(c: EvCard, side: Dp, onDone: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else "sun", side * 0.17f)
-            Text(if (c.start) "EVENTO ACTIVADO" else "EVENTO TERMINADO", color = fg.copy(alpha = 0.92f), fontSize = fsz * 0.9f, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            Text(if (c.peek) "EVENTO ACTIVO" else if (c.start) "EVENTO ACTIVADO" else "EVENTO TERMINADO", color = fg.copy(alpha = 0.92f), fontSize = fsz * 0.9f, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
             Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
             if (c.start) Text(EV_DESC[c.kind], color = fg, fontSize = fsz * 0.95f, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, lineHeight = fsz * 1.3f, modifier = Modifier.padding(top = side * 0.01f))
         }
@@ -387,7 +388,7 @@ private fun Die(n: Int, size: Dp, rot: Float, scale: Float = 1f) {
 @Composable
 private fun SquareView(
     i: Int, q: Poly.Sq, gside: Dp, u: Dp, st: Poly.State, data: Poly.Data, hl: Boolean,
-    zoomed: Boolean = false, onHold: (Boolean) -> Unit = {}, onClick: () -> Unit = {}, inlineW: Dp? = null,
+    zoomed: Boolean = false, onHold: (Boolean) -> Unit = {}, onClick: () -> Unit = {}, inlineW: Dp? = null, focusSeat: Int = -1,
 ) {
     val c = cellOf(i)
     val where = sideOf(i)
@@ -413,6 +414,13 @@ private fun SquareView(
     val owner = st.own[i]
     val lvl = st.lvl[i]
     val ownable = q.t == "street" || q.t == "station" || q.t == "utility"
+    // foco: mías con brillo, las de otros apagadas y, en los colores en los que tengo alguna, las que me faltan con contorno punteado
+    val fOn = focusSeat >= 0 && ownable && !zoomed && inlineW == null
+    val fGrp = if (fOn && q.g != null) (0 until 40).filter { data.squares[it].g == q.g } else emptyList()
+    val fMine = if (fOn) fGrp.count { st.own[it] == focusSeat } else 0
+    val fIsMine = fOn && owner == focusSeat
+    val fMiss = fOn && owner != focusSeat && fMine > 0
+    val fDim = fOn && owner >= 0 && owner != focusSeat && !fMiss
     val bandEm = if (band != null) 1.5f else 0f // banda de color fina, con el precio centrado
     val ownEm = if (ownable) 2.4f else 0f // franja del dueño (lleva las casas); Suerte, Caja, impuestos y esquinas no la tienen y su contenido queda centrado
     val icoEm = if (q.i == null) 0f else if (where == "corner") 4.2f else if (special) 2.9f else 2.0f
@@ -421,55 +429,83 @@ private fun SquareView(
     val nameEm = if (where == "corner") 1.35f else if (special) 1f else fitName(q.n, wEm - 0.7f, maxOf(1f, hEm - bandEm - ownEm - icoEm - prEm - 0.3f)).let { f -> if (oneWord) minOf(f, (wEm - 0.7f) / (q.n.length * 0.66f)) else f }
     Box(
         (if (inlineW != null) Modifier else if (zoomed) Modifier.offset((gside - ow) / 2f, (gside - oh) / 2f) else Modifier.offset(gside * (c[0] / 100f), gside * (c[1] / 100f)))
-            .size(ow, oh)
+            .size(ow, oh).alpha(if (fDim) 0.4f else 1f)
             .background(bg).border(if (zoomed) 2.dp else 0.7.dp, Ink.copy(alpha = 0.75f))
             .then(if (inlineW != null) Modifier.clickable { onClick() } else if (zoomed) Modifier else Modifier.pointerInput(i) { detectTapGestures(onPress = { tryAwaitRelease(); onHold(false) }, onLongPress = { onHold(true) }, onTap = { onClick() }) }),
     ) {
-        Box(Modifier.align(Alignment.Center).requiredSize(iw, ih).alpha(if (st.mort[i]) 0.55f else 1f).rotate(if (upright) 0f else if (where == "left") 90f else if (where == "right") -90f else 0f)) {
-            val bandPart: @Composable ColumnScope.() -> Unit = {
-                if (band != null) {
-                    Box(
-                        Modifier.fillMaxWidth().height(uu * bandEm).background(band).background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.28f), Color.Black.copy(alpha = 0.14f)))),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            Poly.eur(q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.9f, fontWeight = FontWeight.ExtraBold, maxLines = 1,
-                            style = androidx.compose.ui.text.TextStyle(
-                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false), lineHeight = fs * 0.9f,
-                                lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both),
-                            ),
-                        )
-                    }
-                }
-            }
-            val bodyPart: @Composable ColumnScope.() -> Unit = {
-                Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = uu * 0.3f), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        PolyIcon(q.i, uu * icoEm)
-                        Text(
-                            q.n, color = Ink, fontSize = fs * nameEm, fontWeight = if (special) FontWeight.Medium else FontWeight.ExtraBold,
-                            textAlign = TextAlign.Center, lineHeight = fs * nameEm * 1.1f, maxLines = if (oneWord) 1 else Int.MAX_VALUE, softWrap = !oneWord,
-                        )
-                        if (prEm > 0f) Text(Poly.eur(q.p), color = Ink, fontSize = fs * 0.92f, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-            val ownPart: @Composable ColumnScope.() -> Unit = {
-                if (ownable) Box(
-                    Modifier.fillMaxWidth().height(uu * ownEm).background(if (owner >= 0) PolyData.colors[owner] else Color.Transparent),
+    val ma = if (st.mort[i]) 0.55f else 1f
+        val bandPart: @Composable ColumnScope.() -> Unit = {
+            if (band != null) {
+                Box(
+                    Modifier.fillMaxWidth().height(uu * bandEm).alpha(ma).background(band).background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.28f), Color.Black.copy(alpha = 0.14f)))),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (lvl > 0) Row(horizontalArrangement = Arrangement.spacedBy(uu * 0.15f), verticalAlignment = Alignment.CenterVertically) {
-                        if (lvl == 5) PolyIcon("hotel", uu * 1.5f)
-                        else repeat(lvl) { PolyIcon("house", uu * 1.15f) }
-                    }
+                    Text(
+                        Poly.eur(q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.9f, fontWeight = FontWeight.ExtraBold, maxLines = 1,
+                        style = androidx.compose.ui.text.TextStyle(
+                            platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false), lineHeight = fs * 0.9f,
+                            lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both),
+                        ),
+                    )
                 }
             }
-            Column(Modifier.fillMaxSize()) {
-                if (where == "top") { ownPart(); bodyPart(); bandPart() } else { bandPart(); bodyPart(); ownPart() }
+        }
+        val bodyPart: @Composable ColumnScope.() -> Unit = {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = uu * 0.3f).alpha(ma), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    PolyIcon(q.i, uu * icoEm)
+                    Text(
+                        q.n, color = Ink, fontSize = fs * nameEm, fontWeight = if (special) FontWeight.Medium else FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center, lineHeight = fs * nameEm * 1.1f, maxLines = if (oneWord) 1 else Int.MAX_VALUE, softWrap = !oneWord,
+                    )
+                    if (prEm > 0f) Text(Poly.eur(q.p), color = Ink, fontSize = fs * 0.92f, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
+        val ownPart: @Composable ColumnScope.() -> Unit = {
+            if (ownable) Box(
+                Modifier.fillMaxWidth().height(uu * ownEm).background(if (owner >= 0) PolyData.colors[owner] else Color.Transparent),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (lvl > 0) Row(horizontalArrangement = Arrangement.spacedBy(uu * 0.15f), verticalAlignment = Alignment.CenterVertically) {
+                    if (lvl == 5) PolyIcon("hotel", uu * 1.5f)
+                    else repeat(lvl) { PolyIcon("house", uu * 1.15f) }
+                }
+            }
+        }
+
+    // hipotecada: la franja del dueño (con sus casas) se dibuja aparte, encima del tono rojo, para que no se apague
+    val ownSlot: @Composable ColumnScope.() -> Unit = { if (st.mort[i]) { if (ownable) Spacer(Modifier.fillMaxWidth().height(uu * ownEm)) } else ownPart() }
+    Box(Modifier.align(Alignment.Center).requiredSize(iw, ih).rotate(if (upright) 0f else if (where == "left") 90f else if (where == "right") -90f else 0f)) {
+        Column(Modifier.fillMaxSize()) {
+            if (where == "top") { ownSlot(); bodyPart(); bandPart() } else { bandPart(); bodyPart(); ownSlot() }
+        }
+    }
         if (st.mort[i]) Box(Modifier.fillMaxSize().background(Color(0x99E02020)))
+        if (st.mort[i] && ownable) Box(Modifier.align(Alignment.Center).requiredSize(iw, ih).rotate(if (upright) 0f else if (where == "left") 90f else if (where == "right") -90f else 0f)) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = if (where == "top") Arrangement.Top else Arrangement.Bottom) { ownPart() }
+        }
+        if (st.mort[i]) Canvas(Modifier.fillMaxSize()) {
+            val w = uu.toPx() * 0.28f
+            val m = w * 1.2f
+            drawLine(Color(0xFF8E0000).copy(alpha = 0.9f), Offset(m, m), Offset(size.width - m, size.height - m), strokeWidth = w, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            drawLine(Color(0xFF8E0000).copy(alpha = 0.9f), Offset(size.width - m, m), Offset(m, size.height - m), strokeWidth = w, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        }
+        if (fIsMine) {
+            val ft = rememberInfiniteTransition(label = "foco")
+            val fp by ft.animateFloat(0.35f, 1f, infiniteRepeatable(tween(1700), RepeatMode.Reverse), label = "brillo")
+            Box(Modifier.fillMaxSize().background(Color(0xFFFFDC5A).copy(alpha = 0.28f * fp)).border(uu * 0.5f, Color(0xFFFFC400).copy(alpha = 0.55f + 0.45f * fp)))
+            if (fGrp.isNotEmpty() && fMine == fGrp.size) Text("★", color = Color(0xFFFFC400), fontSize = fs * 1.7f, modifier = Modifier.align(Alignment.TopEnd).padding(end = uu * 0.2f))
+        }
+        if (fMiss) {
+            val ft = rememberInfiniteTransition(label = "falta")
+            val fa by ft.animateFloat(0.15f, 1f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "parpadeo")
+            val dc = if (owner >= 0) PolyData.colors[owner] else PolyData.colors[focusSeat]
+            Canvas(Modifier.fillMaxSize()) {
+                val w = uu.toPx() * 0.4f
+                drawRect(dc.copy(alpha = fa), topLeft = Offset(w, w), size = androidx.compose.ui.geometry.Size(size.width - 2 * w, size.height - 2 * w), style = Stroke(width = w * 0.8f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(w * 2.2f, w * 1.4f))))
+            }
+        }
         if (ownable) Box(Modifier.fillMaxSize().border(uu * (if (owner >= 0) 0.34f else 0.2f), band ?: Color(0xFF7D8791)))
         if (st.fence[i] >= 0) PolyIcon("fence", minOf(ow, oh) * 0.85f, Modifier.align(Alignment.Center))
         if (hl) {
@@ -554,7 +590,7 @@ private fun BannerView(b: BannerInfo, side: Dp) {
 @Composable
 private fun PolyBoard(
     side: Dp, data: Poly.Data, st: Poly.State, viewPos: List<Int>, tokenOf: (Int) -> Int, dice: DiceView?, pathSet: Set<Int>, slowSeat: Int, police: Boolean, landing: Int?,
-    cardFx: CardFx?, banner: BannerInfo?, pops: List<MoneyPop>, fxs: List<Fx>, hopSeat: Int, poof: List<Int>, shakeKey: Int, evk: String, dogAt: Int, evCard: EvCard?, onEvDone: () -> Unit, onCardDone: () -> Unit, onSquare: (Int) -> Unit,
+    cardFx: CardFx?, banner: BannerInfo?, pops: List<MoneyPop>, fxs: List<Fx>, hopSeat: Int, poof: List<Int>, shakeKey: Int, focusSeat: Int, evk: String, dogAt: Int, evCard: EvCard?, onEvDone: () -> Unit, onEvPeek: (Int) -> Unit, onCardDone: () -> Unit, onSquare: (Int) -> Unit,
 ) {
     val shakeX = remember { Animatable(0f) }
     LaunchedEffect(shakeKey) { if (shakeKey > 0) { for (v in listOf(7f, -7f, 5f, -4f, 2f, 0f)) shakeX.animateTo(v, tween(55)) } }
@@ -569,7 +605,7 @@ private fun PolyBoard(
     ) {
         Box(Modifier.offset(side * 0.015f, side * 0.015f).size(g)) {
             var zoom by remember { mutableStateOf<Int?>(null) }
-            for (i in 0 until 40) SquareView(i, data.squares[i], g, u, st, data, i in pathSet, onHold = { zoom = if (it) i else null }, onClick = { onSquare(i) })
+            for (i in 0 until 40) SquareView(i, data.squares[i], g, u, st, data, i in pathSet, onHold = { zoom = if (it) i else null }, onClick = { onSquare(i) }, focusSeat = focusSeat)
             // centro: mazos de cartas, título con relieve, bote de La Peza y dados
             Box(Modifier.offset(g * 0.16f, g * 0.17f).size(g * 0.21f, g * 0.145f).rotate(-35f).background(Brush.linearGradient(listOf(Color(0xFFFF9F3A), Color(0xFFE5700F))), RoundedCornerShape(u * 0.9f)).border(u * 0.22f, Color.White.copy(alpha = 0.9f), RoundedCornerShape(u * 0.9f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { PolyIcon("chance", g * 0.06f); Text("SUERTE", color = Color.White, fontWeight = FontWeight.Black, fontSize = with(density) { (u * 1.05f).toSp() }) }
@@ -581,7 +617,7 @@ private fun PolyBoard(
                 val es = remember(evk) { Animatable(0f) }
                 LaunchedEffect(evk) { es.animateTo(1f, spring(0.5f, 200f)) }
                 val eshape = RoundedCornerShape(u * 0.9f)
-                Box(Modifier.offset(g * 0.63f, g * 0.17f).size(g * 0.21f, g * 0.145f).graphicsLayer { scaleX = es.value; scaleY = es.value; alpha = es.value.coerceIn(0f, 1f); rotationZ = 35f }.background(Brush.linearGradient(listOf(Color(0xFF3FBF74), Color(0xFF1B7F45))), eshape).border(u * 0.22f, Color.White.copy(alpha = 0.9f), eshape), contentAlignment = Alignment.Center) {
+                Box(Modifier.offset(g * 0.63f, g * 0.17f).size(g * 0.21f, g * 0.145f).graphicsLayer { scaleX = es.value; scaleY = es.value; alpha = es.value.coerceIn(0f, 1f); rotationZ = 35f }.pointerInput(evk) { detectTapGestures(onPress = { tryAwaitRelease(); onEvPeek(3) }, onLongPress = { onEvPeek(2) }, onTap = { onEvPeek(1) }) }.background(Brush.linearGradient(listOf(Color(0xFF3FBF74), Color(0xFF1B7F45))), eshape).border(u * 0.22f, Color.White.copy(alpha = 0.9f), eshape), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) { PolyIcon(evk, g * 0.06f); Text("EVENTO", color = Color.White, fontWeight = FontWeight.Black, fontSize = with(density) { (u * 1.05f).toSp() }) }
                 }
             }
@@ -756,6 +792,9 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var viewEvk by remember { mutableStateOf("") }
     var viewDog by remember { mutableIntStateOf(-1) }
     var evCard by remember { mutableStateOf<EvCard?>(null) }
+    var peekHold by remember { mutableStateOf(false) }
+    var focusOn by remember { mutableStateOf(Prefs.polyFocus) }
+    var hiSeat by remember { mutableIntStateOf(-1) }
     fun pct(i: Int): FloatArray = cellOf(i).let { floatArrayOf(it[0] + it[2] / 2f, it[1] + it[3] / 2f) }
     fun fxAt(kind: String, from: FloatArray, to: FloatArray = from, n: Int = 5, color: Color = Color.White, ms: Int = 900) {
         val f = Fx(System.nanoTime() + fxs.size, kind, from[0], from[1], to[0], to[1], n, color, ms)
@@ -1089,15 +1128,16 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
 
     val r = room
     Column(Modifier.fillMaxSize().background(Bg).then(if (fullScreen) Modifier else Modifier.statusBarsPadding().navigationBarsPadding())) {
-        if (!fullScreen) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
+        if (!fullScreen) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            IconButton(onClick = onClose, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
             Text("Evapoly", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
-            IconButton(onClick = { dark = !dark; Prefs.gameDark = dark }) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
-            IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = OnSurface) }
+            IconButton(onClick = { focusOn = !focusOn; hiSeat = -1; Prefs.polyFocus = focusOn }, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(Icons.Default.Visibility, "Foco en mis calles", tint = if (focusOn) Color(0xFFF0B400) else OnSurface) }
+            IconButton(onClick = { dark = !dark; Prefs.gameDark = dark }, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
+            IconButton(onClick = { fullScreen = true }, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = OnSurface) }
             IconButton(onClick = {
                 musicOn = !musicOn; Prefs.polyMusic = musicOn
                 if (musicOn) PolyMusic.start(ctx) else PolyMusic.stop()
-            }) { Icon(if (musicOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff, "Música", tint = OnSurface) }
+            }, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(if (musicOn) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff, "Música", tint = OnSurface) }
         }
         if (r == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1131,14 +1171,18 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 val panel: @Composable (Modifier) -> Unit = { mod ->
                     GamePanel(
                         s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen, running, shownCash, shownTurn,
-                        onSend = ::send, onTrade = { showTrade = true }, mod,
+                        onSend = ::send, onTrade = { showTrade = true }, hiSeat = hiSeat, onPick = { hiSeat = if (hiSeat == it) -1 else it }, modifier = mod,
                     )
                 }
                 val strip: @Composable () -> Unit = {
                     PositionStrip(s, my, data, if (my >= 0) viewPos[my] else 0, ::tokenOf, fullScreen, { squareSel = it })
                 }
                 val board: @Composable () -> Unit = {
-                    PolyBoard(side, data, s, viewPos, ::tokenOf, dice, pathSet, slowSeat, police, landing, cardFx, banner, pops, fxs, hopSeat, poof, shakeKey, viewEvk, viewDog, evCard, { evCard = null }, { cardFx = null }) { squareSel = it }
+                    PolyBoard(side, data, s, viewPos, ::tokenOf, dice, pathSet, slowSeat, police, landing, cardFx, banner, pops, fxs, hopSeat, poof, shakeKey, if (hiSeat >= 0 && !s.bk[hiSeat]) hiSeat else if (focusOn) my else -1, viewEvk, viewDog, evCard, { evCard = null }, { m ->
+                        val k = EV_IDS.indexOf(viewEvk)
+                        if (m == 3) { if (peekHold) { peekHold = false; evCard = null } }
+                        else if (k >= 0 && evCard == null && !running) { peekHold = m == 2; evCard = EvCard(k, true, peek = true, hold = m == 2) }
+                    }, { cardFx = null }) { squareSel = it }
                 }
                 if (land) {
                     Row(
@@ -1173,8 +1217,12 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                     ) { Icon(Icons.Default.FullscreenExit, "Salir de pantalla completa", tint = OnSurface) }
                     IconButton(
                         onClick = { dark = !dark; Prefs.gameDark = dark },
-                        modifier = Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 54.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape),
+                        modifier = Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 62.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape),
                     ) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
+                    IconButton(
+                        onClick = { focusOn = !focusOn; hiSeat = -1; Prefs.polyFocus = focusOn },
+                        modifier = Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 118.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape),
+                    ) { Icon(Icons.Default.Visibility, "Foco en mis calles", tint = if (focusOn) Color(0xFFF0B400) else OnSurface) }
                 }
             }
         }
@@ -1385,7 +1433,7 @@ private fun DeltaText(d: Delta, modifier: Modifier) {
 private fun GamePanel(
     s: Poly.State, r: Social.PolyRoom, my: Int, data: Poly.Data, seatName: (Int) -> String, tokenOf: (Int) -> Int,
     log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, frozen: Boolean, shownCash: IntArray?, shownTurn: Int,
-    onSend: (String) -> Unit, onTrade: () -> Unit, modifier: Modifier,
+    onSend: (String) -> Unit, onTrade: () -> Unit, hiSeat: Int, onPick: (Int) -> Unit, modifier: Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)) {
         for (i in r.players.indices) {
@@ -1400,7 +1448,8 @@ private fun GamePanel(
                             if (turn) Brush.verticalGradient(listOf(col.copy(alpha = 0.3f), col.copy(alpha = 0.08f)))
                             else Brush.verticalGradient(listOf(OnSurface.copy(alpha = 0.08f), OnSurface.copy(alpha = 0.03f))),
                         )
-                        .border(if (turn) 2.dp else 1.dp, if (turn) col else OnSurface.copy(alpha = 0.1f), shape)
+                        .border(if (hiSeat == i) 2.dp else if (turn) 2.dp else 1.dp, if (hiSeat == i) Color(0xFFF0B400) else if (turn) col else OnSurface.copy(alpha = 0.1f), shape)
+                        .clickable(enabled = !s.bk[i]) { onPick(i) }
                         .alpha(if (s.bk[i]) 0.4f else 1f).padding(horizontal = 10.dp, vertical = if (compact) 5.dp else 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

@@ -75,6 +75,11 @@ object Prefs {
         get() = sp.getBoolean("poly_music", true)
         set(v) = sp.edit().putBoolean("poly_music", v).apply()
 
+    /** Foco del Evapoly: resalta las calles propias. */
+    var polyFocus: Boolean
+        get() = sp.getBoolean("poly_focus", false)
+        set(v) = sp.edit().putBoolean("poly_focus", v).apply()
+
     /** Fondo negro en los minijuegos (Wordle y Evadrez). */
     var gameDark: Boolean
         get() = sp.getBoolean("game_dark", false)

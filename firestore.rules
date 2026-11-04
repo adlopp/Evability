@@ -229,7 +229,6 @@ service cloud.firestore {
           && (!('ownerFree' in request.resource.data) || request.resource.data.ownerFree is bool)
           && (!('shop' in request.resource.data) || request.resource.data.shop is bool)
           && (!('events' in request.resource.data) || request.resource.data.events is bool)
-        && (!('events' in request.resource.data) || request.resource.data.events is bool)
           && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
         // un invitado entra
         || (resource.data.status == 'lobby' && request.auth.uid in resource.data.invited && !(request.auth.uid in resource.data.players)
