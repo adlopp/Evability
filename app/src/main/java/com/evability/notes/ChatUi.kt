@@ -151,11 +151,11 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     LaunchedEffect(Unit) {
         var idle = 0
         while (true) {
-            if (!AppVisibility.foreground) { delay(3_000); continue } // con la app en segundo plano no se consulta nada
+            if (!AppVisibility.foreground || chessId != null || polyId != null || playingWordle) { delay(3_000); continue } // sin mirar con la app en segundo plano ni con un juego abierto encima
             var changed = false
             try { changed = load() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
             idle = if (changed) 0 else idle + 1
-            delay((3_500L * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(12_000L)) // sin novedades se va espaciando
+            delay((4_000L * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(20_000L)) // sin novedades se va espaciando
         }
     }
     LaunchedEffect(Unit) { runCatching { myPhoto = Social.myProfile().photo } }

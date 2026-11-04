@@ -550,3 +550,17 @@ textarea.field { resize: vertical; }
   .pomo.poly.full .poly-main { --bs: min(calc(100vw - 310px), calc(100vh - 8px)); }
   .pomo.poly.full .pside { width: 270px; max-height: 100vh; }
 }
+
+/* pantalla completa: la información se separa un poco del tablero sin moverlo, y de cada jugador solo se ve el número de calles */
+.pomo.poly.full .pprops { display: none; }
+.pomo.poly.full .pside { transform: translateY(14px); }
+@media (orientation: landscape) and (min-width: 700px) {
+  .pomo.poly.full .pside { width: 256px; transform: translateX(14px); }
+}
+
+/* la banda de color es más fina y lleva solo el precio, bien centrado; la franja del dueño es grande para que se note quién compró (y lleva las casas) */
+.pband { height: 1.6em; flex-direction: row; align-items: center; justify-content: center; gap: 0; }
+.pband .pr { line-height: 1; display: block; font-size: .95em; transform: translateY(.02em); }
+.pown { height: 2.9em; display: flex; align-items: center; justify-content: center; }
+.pown .bld { display: flex; gap: .25em; align-items: center; justify-content: center; min-height: 0; }
+.bld u { width: 1.3em; height: 1.3em; } .bld u.hotel { width: 2.3em; }

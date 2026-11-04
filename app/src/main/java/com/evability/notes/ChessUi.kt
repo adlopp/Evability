@@ -166,6 +166,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     BackHandler(onBack = { if (fullScreen) fullScreen = false else onClose() })
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val kick = remember { BooleanArray(1) } // se activa al jugar para mirar pronto la respuesta
     val density = LocalDensity.current
     remember { ChessPieces.load(ctx); true }
     val me = Social.session?.uid ?: ""
@@ -303,6 +304,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
         pending = true
         scope.launch {
             try {
+                kick[0] = true
                 Social.chessMove(friend.uid, gameId, sent, wms, bms, if (o.over) o.result.toString() else null, if (o.over) o.reason else null)
             } catch (e: CancellationException) {
                 throw e
@@ -341,8 +343,11 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
             try { poll() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
             idle = if (moves.size != before) 0 else idle + 1
             // cada 2,5 s mientras mueve el rival y cada 6 s cuando te toca a ti (nadie va a mover antes)
-            val base = if (myTurn()) 6_000L else 2_500L
-            delay((base * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(12_000L))
+            val base = if (myTurn()) 10_000L else 3_000L
+            val ms = (base * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(18_000L)
+            var waited = 0L
+            while (waited < ms && !kick[0]) { delay(250); waited += 250 }
+            kick[0] = false
         }
     }
     LaunchedEffect(animTick) {

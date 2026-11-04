@@ -149,7 +149,7 @@ fun SocialHost() {
                 try { Social.checkPokes() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
                 try { Social.checkShares() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
                 try { Social.checkChats() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
-                delay(30_000)
+                delay(60_000)
             }
         }
     }

@@ -230,5 +230,7 @@ export function poller(fn, base, max = base * 3) {
   const onVis = () => { if (!document.hidden && !stopped) { clearTimeout(t); t = setTimeout(loop, 0); } };
   document.addEventListener('visibilitychange', onVis);
   t = setTimeout(loop, 0);
-  return { stop() { stopped = true; clearTimeout(t); document.removeEventListener('visibilitychange', onVis); }, reset() { idle = 0; } };
+  return { stop() { stopped = true; clearTimeout(t); document.removeEventListener('visibilitychange', onVis); }, reset() { idle = 0; },
+    /** Adelanta la próxima consulta (por ejemplo justo después de jugar, para ver pronto la respuesta). */
+    poke(ms = 2500) { idle = 0; if (!stopped) { clearTimeout(t); t = setTimeout(loop, ms); } } };
 }

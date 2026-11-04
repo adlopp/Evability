@@ -151,7 +151,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       const sig = room.status + room.acts.length + room.players.length + JSON.stringify(room.tok) + room.invited.length + room.money;
       const changed = sig !== lastSig; lastSig = sig;
       const myTurn = state && state.phase !== 'over' && state.turn === mySeat() && !state.trade && !['debt', 'auction', 'order'].includes(state.phase);
-      return { changed, delay: room.status === 'lobby' ? 3000 : myTurn ? 6000 : 2200 };
+      return { changed, delay: room.status === 'lobby' ? 4000 : myTurn ? 10000 : 3000 };
     } catch (e) { /* sin red: se reintenta */ }
     return false;
   }
@@ -257,7 +257,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     acts.push(text);
     q.push(...state.ev);
     busy = true;
-    timer?.reset();
+    timer?.poke(3000); // tras jugar, se mira pronto la respuesta de los demás
     play();
     try { await api.act(room, acts.slice(), state.phase === 'over'); }
     catch (e) {
@@ -369,15 +369,15 @@ export function openEvapoly({ roomId, api, onClose }) {
       // dentro de la casilla todo se dibuja como en las de abajo; las de los lados se giran (como en el tablero de verdad)
       const cw = c.w * GS * 0.62, ch = c.h * GS * 0.62, sideways = side === 'left' || side === 'right';
       const W = sideways ? ch : cw, H = sideways ? cw : ch;
-      const body = H - (g ? 2.9 : 0) - (side === 'corner' ? 0 : 1.5) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
+      const body = H - (g ? 1.6 : 0) - (side === 'corner' ? 0 : 2.9) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
       const fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
       const pin = h('div', { class: 'pin', style: sideways ? { width: W + 'em', height: H + 'em' } : {} },
-        g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'bld' }), h('span', { class: 'pr' }, eur(q2.p))) : null,
+        g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'pr' }, eur(q2.p))) : null,
         h('div', { class: 'pbody' },
           q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
           h('span', { class: 'nm', style: { fontSize: fs + 'em' } }, q2.n),
           q2.p && !g ? h('span', { class: 'pr2' + (q2.t === 'station' ? ' zoomonly' : '') }, eur(q2.p)) : null),
-        side === 'corner' ? null : h('div', { class: 'pown' }));
+        side === 'corner' ? null : h('div', { class: 'pown' }, h('span', { class: 'bld' })));
       const el = h('div', { class: `psq t-${q2.t} s-${side}`, 'data-i': i, style: { left: c.l + '%', top: c.t + '%', width: c.w + '%', height: c.h + '%' } }, pin);
       // mantener pulsado: la casilla se agranda mientras se sigue pulsando; un toque corto abre su ficha
       let timer, held = false, zoom = null;
@@ -466,7 +466,6 @@ export function openEvapoly({ roomId, api, onClose }) {
       const turn = s.phase === 'order' ? s.ordCand[i] && !s.ordRolls[i] : s.turn === i && s.phase !== 'over';
       const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? 'Maricarmen' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
       const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : ''), style: `--c:${COLORS[i]}` },
-        turn && s.phase !== 'over' ? h('i', { class: 'pturn' }, s.phase === 'order' ? 'Tira' : i === my ? 'Te toca' : 'Turno') : null,
         tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info),
           h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: data.squares[sqi].g ? data.groups[data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
         h('span', { class: 'cash' }, eur(s.cash[i])));
@@ -608,6 +607,6 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   fill(body, h('div', { class: 'dim', style: { padding: '24px', textAlign: 'center' } }, '…'));
-  Promise.all([loadData(), loadToks(), loadIcons()]).then(([d, t, i]) => { data = d; toks = t; icons = i; startMusic(); timer = poller(poll, 2200, 14000); }).catch(() => toast('No se pudo cargar el juego'));
+  Promise.all([loadData(), loadToks(), loadIcons()]).then(([d, t, i]) => { data = d; toks = t; icons = i; startMusic(); timer = poller(poll, 3000, 20000); }).catch(() => toast('No se pudo cargar el juego'));
   return root;
 }

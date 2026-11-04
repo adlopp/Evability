@@ -745,7 +745,8 @@ function openChat(friend) {
   input.addEventListener('input', paintAction);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
   paintAction();
-  const chatPoll = poller(() => load(), 3500, 12000);
+  const gameOpen = () => !!document.querySelector('.pomo.poly, .pomo.chess, .pomo.wordle');
+  const chatPoll = poller(async () => (gameOpen() ? false : load()), 4000, 20000);
   const tick = () => { chatPoll.reset(); return load().catch(() => {}); };
   function close() { chatPoll.stop(); cardTimers.forEach((f) => f()); stopPlaying(); if (recording) finishRec(false); root.remove(); }
   return root;
@@ -886,7 +887,7 @@ export function startHost() {
   const beat = () => { if (visible()) heartbeat().catch(() => {}); };
   const poll = () => { if (visible()) { checkPokes().catch(() => {}); checkShares().catch(() => {}); checkChats().catch(() => {}); } };
   beat(); poll();
-  hostTimers = [setInterval(beat, 30000), setInterval(poll, 30000)];
+  hostTimers = [setInterval(beat, 30000), setInterval(poll, 60000)];
 }
 export function stopHost() { hostTimers.forEach(clearInterval); hostTimers = []; }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && session && hostTimers.length) { heartbeat().catch(() => {}); checkPokes().catch(() => {}); } });

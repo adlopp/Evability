@@ -222,6 +222,7 @@ export function openChess({ friend, gameId, api, onClose }) {
     if (o.over) result = { result: o.result, reason: o.reason };
     render(true);
     pending = true;
+    timer?.poke(3000);
     try { await api.move(moves, wms, bms, o.over ? { result: o.result, reason: o.reason } : null); }
     catch (e) { toast(e.message || 'No se pudo enviar la jugada'); result = null; moves = []; g = { ...g, moves: [] }; }
     pending = false;
@@ -334,7 +335,7 @@ export function openChess({ friend, gameId, api, onClose }) {
   api.meInfo().then((i) => { myInfo = i; paintBars(); }).catch(() => {});
   render();
   // consulta la partida: cada 2,5 s mientras mueve el rival y cada 6 s cuando te toca a ti (nadie va a mover antes)
-  timer = poller(async () => { const n = moves.length; await poll(); return { changed: moves.length !== n, delay: playing() && pos && pos.turn === myColor ? 6000 : 2500 }; }, 2500, 12000);
+  timer = poller(async () => { const n = moves.length; await poll(); return { changed: moves.length !== n, delay: playing() && pos && pos.turn === myColor ? 10000 : 3000 }; }, 3000, 18000);
   ticker = setInterval(tickClock, 250);
   return root;
 }

@@ -251,8 +251,8 @@ private fun SquareView(
     val bg = when (q.t) { "go" -> Color(0xFFF6E3B4); "gotojail" -> Color(0xFFF4C7C3); "jail" -> Color(0xFFF1E1C9); "parking" -> Color(0xFFD9E8F5); else -> Color(0xFFF3F7EE) }
     val owner = st.own[i]
     val lvl = st.lvl[i]
-    val bandEm = if (band != null) 2.9f else 0f
-    val ownEm = if (where == "corner") 0f else 1.5f
+    val bandEm = if (band != null) 1.6f else 0f // banda de color fina, con el precio centrado
+    val ownEm = if (where == "corner") 0f else 2.9f // franja del dueño grande (lleva las casas)
     val icoEm = if (q.i == null) 0f else if (where == "corner") 4.2f else if (special) 2.9f else 2.0f
     val prEm = if (q.p > 0 && band == null && (q.t != "station" || zoomed)) 1.1f else 0f
     val nameEm = if (where == "corner") 1.35f else if (special) 1f else fitName(q.n, wEm - 0.7f, maxOf(1f, hEm - bandEm - ownEm - icoEm - prEm - 0.3f))
@@ -269,13 +269,7 @@ private fun SquareView(
                         Modifier.fillMaxWidth().height(uu * bandEm).background(band).background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.28f), Color.Black.copy(alpha = 0.14f)))),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Row(Modifier.height(uu * 1.1f), horizontalArrangement = Arrangement.spacedBy(uu * 0.2f), verticalAlignment = Alignment.CenterVertically) {
-                                if (lvl == 5) Box(Modifier.size(uu * 2f, uu * 1.1f).background(Color(0xFFD62828), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF5B0D0D)))
-                                else repeat(lvl) { Box(Modifier.size(uu * 1.1f).background(Color(0xFF2E9B4F), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF0D3B1D))) }
-                            }
-                            Text(Poly.eur(q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.98f, fontWeight = FontWeight.ExtraBold, maxLines = 1)
-                        }
+                        Text(Poly.eur(q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.95f, fontWeight = FontWeight.ExtraBold, maxLines = 1)
                     }
                 }
             }
@@ -292,7 +286,15 @@ private fun SquareView(
                 }
             }
             val ownPart: @Composable ColumnScope.() -> Unit = {
-                if (where != "corner") Box(Modifier.fillMaxWidth().height(uu * ownEm).background(if (owner >= 0) PolyData.colors[owner] else Color.Transparent))
+                if (where != "corner") Box(
+                    Modifier.fillMaxWidth().height(uu * ownEm).background(if (owner >= 0) PolyData.colors[owner] else Color.Transparent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (lvl > 0) Row(horizontalArrangement = Arrangement.spacedBy(uu * 0.25f), verticalAlignment = Alignment.CenterVertically) {
+                        if (lvl == 5) Box(Modifier.size(uu * 2.3f, uu * 1.3f).background(Color(0xFFD62828), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF5B0D0D)))
+                        else repeat(lvl) { Box(Modifier.size(uu * 1.3f).background(Color(0xFF2E9B4F), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF0D3B1D))) }
+                    }
+                }
             }
             Column(Modifier.fillMaxSize()) {
                 if (where == "top") { ownPart(); bodyPart(); bandPart() } else { bandPart(); bodyPart(); ownPart() }
@@ -491,6 +493,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     BackHandler(onBack = { if (fullScreen) fullScreen = false else onClose() })
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val kick = remember { BooleanArray(1) } // se activa al jugar para mirar pronto la respuesta
     val data = remember { PolyData.board(ctx) }
     val toks = remember { PolyData.tokens(ctx) }
     val me = Social.session?.uid ?: ""
@@ -664,6 +667,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         acts.add(text)
         queue.addAll(s.ev)
         busy = true
+        kick[0] = true
         ver++
         scope.launch { play() }
         scope.launch {
@@ -708,8 +712,11 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
             // sala de espera: cada 3 s; en la partida, cada 6 s cuando te toca a ti (nadie más va a actuar) y cada 2,2 s si esperas a otro
             val s2 = st
             val myTurn = s2 != null && s2.phase != "over" && s2.turn == mySeat() && s2.trade == null && s2.phase !in listOf("debt", "auction", "order")
-            val base = if (room?.status == "lobby" || s2 == null) 3_000L else if (myTurn) 6_000L else 2_200L
-            delay((base * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(14_000L))
+            val base = if (room?.status == "lobby" || s2 == null) 4_000L else if (myTurn) 10_000L else 3_000L
+            val ms = (base * (1 + minOf(3, idle / 12) * 0.5)).toLong().coerceAtMost(20_000L)
+            var waited = 0L
+            while (waited < ms && !kick[0]) { delay(250); waited += 250 }
+            kick[0] = false
         }
     }
     DisposableEffect(Unit) { onDispose { PolyMusic.stop() } }
@@ -784,13 +791,13 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         board()
                         if (fullScreen) {
                             Spacer(Modifier.width(4.dp))
-                            panel(Modifier.width(270.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(top = 44.dp, bottom = 8.dp))
+                            panel(Modifier.width(270.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 16.dp, top = 44.dp, bottom = 8.dp))
                         } else panel(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()))
                     }
                 } else {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                         board()
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(if (fullScreen) 16.dp else 8.dp))
                         panel(Modifier.fillMaxWidth().padding(horizontal = 12.dp))
                     }
                 }
@@ -1011,13 +1018,15 @@ private fun GamePanel(
                     Column(Modifier.weight(1f)) {
                         Text(seatName(i) + if (i == my) " (tú)" else "", color = OnSurface, fontWeight = FontWeight.ExtraBold, fontSize = if (compact) 13.sp else 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         val mine = (0 until 40).filter { s.own[it] == i }
-                        if (mine.isNotEmpty()) Row(Modifier.padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        if (!compact && mine.isNotEmpty()) Row(Modifier.padding(top = 3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             for (sq in mine) Box(
                                 Modifier.size(if (compact) 7.dp else 9.dp).alpha(if (s.mort[sq]) 0.35f else 1f)
                                     .background(data.squares[sq].g?.let { hex(data.groups[it] ?: "#888888") } ?: Color(0xFF8A929B), RoundedCornerShape(2.dp)).border(0.7.dp, Color.Black.copy(alpha = 0.45f), RoundedCornerShape(2.dp)),
                             )
                         }
-                        if (!compact) {
+                        if (compact) {
+                            Text(if (s.bk[i]) "Quiebra" else listOfNotNull(if (s.jail[i]) "Cárcel" else null, "$owned calles").joinToString(" · "), color = OnSurfaceDim, fontSize = 11.sp)
+                        } else {
                             val extra = if (s.bk[i]) "Quiebra"
                             else if (s.phase == "order") (if (s.ordRolls[i] > 0) "Sacó ${s.ordRolls[i]}" else "")
                             else listOfNotNull(if (s.jail[i]) "Cárcel" else null, if (s.jf[i] > 0) "Carta ×${s.jf[i]}" else null, if (s.mc[i] > 0) "Maricarmen" else null, "$owned calles").joinToString(" · ")
@@ -1025,12 +1034,6 @@ private fun GamePanel(
                         }
                     }
                     Text(Poly.eur(if (frozen && shownCash != null) shownCash[i] else s.cash[i]), color = OnSurface, fontWeight = FontWeight.Black, fontSize = if (compact) 14.sp else 17.sp)
-                }
-                if (turn && s.phase != "over") {
-                    Text(
-                        if (s.phase == "order") "TIRA" else if (i == my) "TE TOCA" else "TURNO", color = Color.White, fontWeight = FontWeight.Black, fontSize = if (compact) 9.sp else 10.sp, letterSpacing = 1.sp,
-                        modifier = Modifier.align(Alignment.TopEnd).offset(x = (-12).dp, y = (-8).dp).background(col, RoundedCornerShape(50)).padding(horizontal = 9.dp, vertical = 1.dp),
-                    )
                 }
                 for (d in deltas) if (d.seat == i) DeltaText(d, Modifier.align(Alignment.TopEnd))
             }
