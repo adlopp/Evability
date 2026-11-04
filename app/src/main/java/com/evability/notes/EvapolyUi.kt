@@ -251,15 +251,19 @@ private class Delta(val seat: Int, val text: String, val up: Boolean, val id: Lo
 
 // ───── eventos aleatorios ─────
 private class EvCard(val kind: Int, val start: Boolean, val peek: Boolean = false, val hold: Boolean = false)
-private val EV_IDS = listOf("dog", "snow", "rain", "quake", "crisis", "balance")
-private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto", "Crisis económica", "Equilibrio")
+private val EV_IDS = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush")
+private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto", "Crisis económica", "Equilibrio", "Hacienda", "Ladrón", "Boom inmobiliario", "Hora punta")
 private val EV_DESC = listOf(
     "Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.",
     "Está nevando, así que te mueves más lento: durante 5 turnos de cada jugador solo se tira un dado en lugar de dos.",
     "Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.",
-    "Durante 5 turnos de cada jugador, al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador. Los hoteles se salvan, y quien no tenga casas se libra.",
+    "Durante 5 turnos de cada jugador, al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas. Quien no tenga edificios se libra.",
     "Durante 5 turnos de cada jugador, todas las propiedades suben 50 € para comprarlas (Calle Pollo pasa de 220 € a 270 €) y, al caer en una de otro jugador, pagas 25 € extra de alquiler.",
     "El jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €. Si hay empate, cobran todos los empatados.",
+    "Cada jugador paga el 5 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).",
+    "El jugador con más dinero pierde 100 € y se los lleva el jugador que menos tiene.",
+    "Durante 5 turnos de cada jugador, construir casas y hoteles cuesta la mitad.",
+    "Durante 5 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.",
 )
 
 /** Nieve o lluvia suaves sobre el tablero: el mapa se vuelve invernal o mojado. */
@@ -309,9 +313,9 @@ private fun EventCardView(c: EvCard, side: Dp, onDone: () -> Unit) {
                 .border(side * 0.007f, Color.White.copy(alpha = 0.4f), shape).padding(side * 0.04f),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else if (c.kind == 3) "quake" else if (c.kind == 4) "crisis" else "sun", side * 0.17f)
+            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else if (c.kind == 3) "quake" else if (c.kind == 4) "crisis" else if (c.kind == 8) "boom" else if (c.kind == 9) "rush" else "sun", side * 0.17f)
             Text(if (c.peek) "EVENTO ACTIVO" else if (c.start) "EVENTO ACTIVADO" else "EVENTO TERMINADO", color = fg.copy(alpha = 0.92f), fontSize = fsz * 0.9f, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else if (c.kind == 3) "La tierra ha dejado de temblar" else if (c.kind == 4) "La crisis económica ha terminado" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
+            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else if (c.kind == 3) "La tierra ha dejado de temblar" else if (c.kind == 4) "La crisis económica ha terminado" else if (c.kind == 8) "El boom inmobiliario ha terminado" else if (c.kind == 9) "Ha pasado la hora punta" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
             if (c.start) Text(EV_DESC[c.kind], color = fg, fontSize = fsz * 0.95f, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, lineHeight = fsz * 1.3f, modifier = Modifier.padding(top = side * 0.01f))
         }
     }
@@ -940,7 +944,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 }
                 "evt" -> {
                     landing = null
-                    if (e.amt != 0) { if (e.sq < 5) { viewEvk = EV_IDS[e.sq]; viewDog = if (e.sq == 0) 0 else -1 }; PolySound.play("card") }
+                    if (e.amt != 0) { if (e.sq < 5 || e.sq >= 8) { viewEvk = EV_IDS[e.sq]; viewDog = if (e.sq == 0) 0 else -1 }; PolySound.play("card") }
                     else { viewEvk = ""; viewDog = -1; PolySound.play("turn") }
                     val c = EvCard(e.sq, e.amt != 0)
                     evCard = c
@@ -1652,7 +1656,7 @@ private fun SquareDialog(i: Int, s: Poly.State, data: Poly.Data, my: Int, seatNa
                 if (o >= 0) Line("Dueño", seatName(o) + if (s.mort[i]) " · hipotecada" else "", color = PolyData.colors[o])
                 if (o == my && my >= 0 && !locked) {
                     if (can("h$i")) PolyButton("Construir ${Poly.eur(s.houseCost(i))}", true, true) { onSend("h$i") }
-                    if (can("s$i")) PolyButton("Vender ${Poly.eur(s.houseCost(i) / 2)}", false, true) { onSend("s$i") }
+                    if (can("s$i")) PolyButton("Vender ${Poly.eur(s.houseBase(i) / 2)}", false, true) { onSend("s$i") }
                     if (can("m$i")) PolyButton("Hipotecar ${Poly.eur(q.p / 2)}", false, true) { onSend("m$i") }
                     if (can("u$i")) PolyButton("Deshipotecar ${Poly.eur(s.unmortgageCost(i))}", true, true) { onSend("u$i") }
                 }

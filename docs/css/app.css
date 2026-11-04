@@ -724,3 +724,6 @@ textarea.field { resize: vertical; }
 .pboard.ev-crisis { box-shadow: inset 0 0 5em rgba(150, 40, 40, .16); }
 .pboard .psq.crisis .pr, .pboard .psq.crisis .pr2 { color: #C62828; }
 .pboard .psq.crisis .pband .pr { color: inherit; text-decoration: underline wavy rgba(255, 90, 90, .9) .08em; }
+
+/* boom inmobiliario: un toque verde */
+.pboard.ev-boom { box-shadow: inset 0 0 5em rgba(60, 170, 90, .18); }

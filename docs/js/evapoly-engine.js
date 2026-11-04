@@ -60,7 +60,10 @@ const say = (s, m, k = 'msg', extra = {}) => s.ev.push({ k, m, ...extra });
 export const alive = (s) => { const a = []; for (let i = 0; i < s.n; i++) if (!s.bk[i]) a.push(i); return a; };
 const nextAlive = (s, from) => { for (let i = 1; i <= s.n; i++) { const t = (from + i) % s.n; if (!s.bk[t]) return t; } return from; };
 export const groupOf = (s, g) => { const a = []; for (let i = 0; i < 40; i++) if (sq(s, i).g === g) a.push(i); return a; };
-export const houseCost = (s, i) => s.data.house[sq(s, i).g] || 0;
+/** Coste base de una casa u hotel (lo que se recupera a medias al venderlo). */
+export const houseBase = (s, i) => s.data.house[sq(s, i).g] || 0;
+/** Coste de construir ahora mismo: con el boom inmobiliario cuesta la mitad. */
+export const houseCost = (s, i) => (s.evk === 'boom' ? Math.floor(houseBase(s, i) / 2) : houseBase(s, i));
 export const ownsAll = (s, seat, g) => groupOf(s, g).every((i) => s.own[i] === seat);
 export const housesOf = (s, seat) => { let n = 0; for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] > 0 && s.lvl[i] < 5) n += s.lvl[i]; return n; };
 export const hotelsOf = (s, seat) => { let n = 0; for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] === 5) n++; return n; };
@@ -74,7 +77,7 @@ export function rentOf(s, i, diceTotal = 0) {
     if (s.lvl[i] > 0) return q.r[s.lvl[i]];
     return ownsAll(s, o, q.g) ? q.r[0] * 2 : q.r[0];
   }
-  if (q.t === 'station') return q.r[countOwned(s, o, 'station') - 1];
+  if (q.t === 'station') return q.r[countOwned(s, o, 'station') - 1] * (s.evk === 'rush' ? 2 : 1);
   if (q.t === 'utility') return diceTotal * (countOwned(s, o, 'utility') === 2 ? 10 : 4);
   return 0;
 }
@@ -82,7 +85,7 @@ export function rentOf(s, i, diceTotal = 0) {
 /** Patrimonio de un jugador en efectivo si lo vendiese todo (para decidir si puede salir de una deuda). */
 export function worth(s, seat) {
   let w = s.cash[seat];
-  for (let i = 0; i < 40; i++) if (s.own[i] === seat) { if (!s.mort[i]) w += sq(s, i).p / 2; w += s.lvl[i] * houseCost(s, i) / 2; }
+  for (let i = 0; i < 40; i++) if (s.own[i] === seat) { if (!s.mort[i]) w += sq(s, i).p / 2; w += s.lvl[i] * houseBase(s, i) / 2; }
   return w;
 }
 
@@ -230,7 +233,7 @@ function draw(s, seat, which) {
 function liquidate(s, seat) {
   for (let i = 0; i < 40; i++) {
     if (s.own[i] !== seat || !s.lvl[i]) continue;
-    s.cash[seat] += s.lvl[i] * houseCost(s, i) / 2;
+    s.cash[seat] += s.lvl[i] * houseBase(s, i) / 2;
     s.lvl[i] = 0;
   }
 }
@@ -251,11 +254,11 @@ function bankrupt(s, seat, to, why) {
 }
 
 // ───── eventos aleatorios (regla opcional) ─────
-const EV_NAMES = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance'], EV_TURNS = 5, BALANCE_PRIZE = 500, DOG_BITE = 150, DOG_STEP = 4, QUAKE_PCT = 15, EVENT_PCT = 15, CRISIS_PRICE = 50, CRISIS_RENT = 25;
+const EV_NAMES = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush'], EV_TURNS = 5, RUSH_STEPS = 2, BALANCE_PRIZE = 500, DOG_BITE = 150, DOG_STEP = 4, QUAKE_PCT = 20, EVENT_PCT = 15, CRISIS_PRICE = 50, CRISIS_RENT = 25;
 /** Precio al que se compra una propiedad ahora mismo (con la crisis económica sube). */
 export const buyPrice = (s, i) => sq(s, i).p + (s.evk === 'crisis' ? CRISIS_PRICE : 0);
-const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más', 'Evento del terremoto: al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador', 'Evento de crisis económica: comprar una propiedad cuesta 50 € más y al caer en una ajena se pagan 25 € extra de alquiler', 'Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados'];
-const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia', 'La tierra ha dejado de temblar', 'La crisis económica ha terminado', ''];
+const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más', 'Evento del terremoto: al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador (un hotel se queda en 3 casas)', 'Evento de crisis económica: comprar una propiedad cuesta 50 € más y al caer en una ajena se pagan 25 € extra de alquiler', 'Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados', 'Evento de Hacienda: cada jugador paga el 5 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote)', 'Evento del ladrón: el jugador con más dinero pierde 100 € y se los lleva el que menos tiene', 'Evento de boom inmobiliario: construir casas y hoteles cuesta la mitad', 'Evento de hora punta: los dados suman 2 casillas más y las estaciones cobran el doble de alquiler'];
+const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia', 'La tierra ha dejado de temblar', 'La crisis económica ha terminado', '', '', '', 'El boom inmobiliario ha terminado', 'Ha pasado la hora punta'];
 
 // el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
 function dogBite(s, i) {
@@ -270,7 +273,7 @@ function dogBites(s, squares) {
 /** Patrimonio: dinero + precio de las propiedades (las hipotecadas, a la mitad) + coste de las casas y hoteles. */
 function fortune(s, seat) {
   let w = s.cash[seat];
-  for (let i = 0; i < 40; i++) if (s.own[i] === seat) { w += s.mort[i] ? sq(s, i).p / 2 : sq(s, i).p; w += s.lvl[i] * houseCost(s, i); }
+  for (let i = 0; i < 40; i++) if (s.own[i] === seat) { w += s.mort[i] ? sq(s, i).p / 2 : sq(s, i).p; w += s.lvl[i] * houseBase(s, i); }
   return w;
 }
 
@@ -285,17 +288,42 @@ function balance(s, seat) {
   });
 }
 
-/** Terremoto: derrumba una casa al azar de cada jugador (los hoteles no se tocan; sin casas, se libra). */
+/** Hacienda (evento instantáneo): cada jugador paga el 5 % de su dinero al bote de La Peza (o a la banca). */
+function hacienda(s, seat) {
+  say(s, EV_TEXT[6], 'evt', { seat, amt: 1, sq: 6 });
+  for (const i of alive(s)) {
+    const v = Math.floor(s.cash[i] * 0.05);
+    if (v <= 0) continue;
+    s.cash[i] -= v; if (s.cfg.pot) s.pot += v;
+    say(s, `Hacienda: @${i} paga ${eur(v)}`, 'pay', { seat: i, to: -1, amt: v });
+  }
+}
+
+/** Ladrón (evento instantáneo): el jugador con más dinero pierde 100 € y se los lleva el que menos tiene. */
+function thief(s, seat) {
+  say(s, EV_TEXT[7], 'evt', { seat, amt: 1, sq: 7 });
+  const left = alive(s);
+  let rich = left[0], poor = left[0];
+  for (const i of left) { if (s.cash[i] > s.cash[rich]) rich = i; if (s.cash[i] < s.cash[poor]) poor = i; }
+  if (rich === poor) { say(s, 'El ladrón no encuentra a quién robar'); return; }
+  const v = Math.min(100, s.cash[rich]);
+  if (v <= 0) return;
+  s.cash[rich] -= v; s.cash[poor] += v;
+  say(s, `El ladrón le quita ${eur(v)} a @${rich} y se los da a @${poor}`, 'pay', { seat: rich, to: poor, amt: v });
+}
+
+/** Terremoto: derrumba un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas; sin edificios, se libra. */
 function quake(s) {
   say(s, '¡Terremoto! La tierra tiembla', 'quake', { sq: -1 });
   for (let seat = 0; seat < s.n; seat++) {
     if (s.bk[seat]) continue;
     const houses = [];
-    for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] >= 1 && s.lvl[i] <= 4) houses.push(i);
+    for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] >= 1) houses.push(i);
     if (!houses.length) continue;
     const i = houses[rint(s, houses.length)];
-    s.lvl[i]--;
-    say(s, `El terremoto derrumba una casa de @${seat} en ${sq(s, i).n}`, 'crumble', { seat, sq: i });
+    const hotel = s.lvl[i] === 5;
+    s.lvl[i] = hotel ? 3 : s.lvl[i] - 1;
+    say(s, hotel ? `El terremoto derrumba el hotel de @${seat} en ${sq(s, i).n}: se queda en 3 casas` : `El terremoto derrumba una casa de @${seat} en ${sq(s, i).n}`, 'crumble', { seat, sq: i, amt: hotel ? 1 : 0 });
   }
 }
 
@@ -304,8 +332,8 @@ function maybeEvent(s, seat) {
   if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase === 'over') return;
   s.evChk = true;
   if (s.evk || s.tc[seat] < 2 || rint(s, 100) >= EVENT_PCT) return;
-  const kind = rint(s, 6);
-  if (kind === 5) { balance(s, seat); return; }
+  const kind = rint(s, 10);
+  if (kind >= 5 && kind <= 7) { [balance, hacienda, thief][kind - 5](s, seat); return; }
   s.evk = EV_NAMES[kind]; s.evf = true;
   for (let i = 0; i < s.n; i++) s.evl[i] = s.bk[i] ? 0 : EV_TURNS;
   say(s, EV_TEXT[kind], 'evt', { seat, amt: 1, sq: kind });
@@ -459,26 +487,28 @@ export function act(s, seat, code, dry = false) {
       const snow = s.evk === 'snow' && s.evl[seat] > 0 && !s.jail[seat], rain = s.evk === 'rain' && s.evl[seat] > 0;
       const a = rain ? rint(s, 3) + 4 : rint(s, 6) + 1, b = snow ? 0 : rain ? rint(s, 3) + 4 : rint(s, 6) + 1;
       s.d1 = a; s.d2 = b;
+      const rush = s.evk === 'rush' && s.evl[seat] > 0 ? RUSH_STEPS : 0; // hora punta: los dados llevan más lejos
+      if (rush) say(s, `@${seat} avanza ${rush} casillas más por la hora punta`);
       say(s, b ? `@${seat} saca ${a} y ${b}` : `@${seat} saca ${a}`, 'dice', { seat, d1: a, d2: b });
       if (s.jail[seat]) {
         if (a === b) {
           s.jail[seat] = false; s.jt[seat] = 0; s.again = false;
           say(s, `@${seat} saca dobles y sale de la cárcel`, 'free');
-          moveDice(s, seat, a + b);
+          moveDice(s, seat, a + b + rush);
         } else if (++s.jt[seat] >= s.jmax[seat]) {
           s.jail[seat] = false; s.jt[seat] = 0; s.again = false;
           say(s, `@${seat} agota su condena: paga la multa y sale`);
           pay(s, seat, JAIL_FINE, -1, ' de multa');
-          if (s.debts.length) s.pendMove = a + b; else moveDice(s, seat, a + b);
+          if (s.debts.length) s.pendMove = a + b + rush; else moveDice(s, seat, a + b + rush);
         } else { say(s, `@${seat} sigue en la cárcel (${s.jt[seat]}/${s.jmax[seat]})`); s.again = false; }
       } else if (a === b) {
         if (++s.dbl >= 3) { say(s, `@${seat} saca tres dobles seguidos`); sendJail(s, seat, ''); }
         else {
           s.again = true;
           if (s.cfg.dblBonus) { const v = s.dbl === 1 ? 50 : 100; s.cash[seat] += v; say(s, `@${seat} gana ${eur(v)} por dobles`, 'gain', { seat, amt: v }); }
-          moveDice(s, seat, a + b);
+          moveDice(s, seat, a + b + rush);
         }
-      } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b); }
+      } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b + rush); }
       maybeEvent(s, seat);
       settle(s);
       return ok();
@@ -561,7 +591,7 @@ export function act(s, seat, code, dry = false) {
       const err = op === 'h' ? canBuild(s, seat, i) : op === 's' ? canSell(s, seat, i) : op === 'm' ? canMortgage(s, seat, i) : canUnmortgage(s, seat, i);
       if (err) return err;
       if (dry) return OK;
-      const q = sq(s, i), c = houseCost(s, i);
+      const q = sq(s, i), c = op === 's' ? houseBase(s, i) : houseCost(s, i);
       if (op === 'h') {
         s.cash[seat] -= c;
         s.lvl[i]++;

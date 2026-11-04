@@ -2,7 +2,7 @@
 // evapoly-engine.js en cada dispositivo con la misma semilla, así todos ven lo mismo. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggle, darkBars } from './ui.js';
-import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice } from './evapoly-engine.js';
+import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase } from './evapoly-engine.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
 const MONEY_MIN = 500, MONEY_MAX = 2500, MONEY_STEP = 50;
@@ -364,7 +364,7 @@ export function openEvapoly({ roomId, api, onClose }) {
         await wait(600); popSeats.clear(); paintTokens(); showLanding(e.sq);
       } else if (e.k === 'evt') {
         clearLanding();
-        if (e.amt) { if (e.sq < 5) { viewEvk = EV_IDS[e.sq]; viewDog = e.sq === 0 ? 0 : -1; paintEvent(); } SFX.card(); await showEventCard(e.sq, true); }
+        if (e.amt) { if (e.sq < 5 || e.sq >= 8) { viewEvk = EV_IDS[e.sq]; viewDog = e.sq === 0 ? 0 : -1; paintEvent(); } SFX.card(); await showEventCard(e.sq, true); }
         else { viewEvk = ''; viewDog = -1; paintEvent(); SFX.turn(); await showEventCard(e.sq, false); }
       } else if (e.k === 'dog') {
         viewDog = e.to; paintEvent(); SFX.step(); await wait(1000);
@@ -452,14 +452,18 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── eventos aleatorios ─────
-  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance'];
+  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush'];
   const EVT = [
     { n: 'Perro sarnoso', ico: 'dog', t: 'Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.' },
     { n: 'Nieve', ico: 'snow', t: 'Está nevando, así que te mueves más lento: durante 5 turnos de cada jugador solo se tira un dado en lugar de dos.' },
     { n: 'Lluvia', ico: 'rain', t: 'Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.' },
-    { n: 'Terremoto', ico: 'quake', t: 'Durante 5 turnos de cada jugador, al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador. Los hoteles se salvan, y quien no tenga casas se libra.' },
+    { n: 'Terremoto', ico: 'quake', t: 'Durante 5 turnos de cada jugador, al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas. Quien no tenga edificios se libra.' },
     { n: 'Crisis económica', ico: 'crisis', t: 'Durante 5 turnos de cada jugador, todas las propiedades suben 50 € para comprarlas (Calle Pollo pasa de 220 € a 270 €) y, al caer en una de otro jugador, pagas 25 € extra de alquiler.' },
     { n: 'Equilibrio', ico: 'balance', t: 'El jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €. Si hay empate, cobran todos los empatados.' },
+    { n: 'Hacienda', ico: 'hacienda', t: 'Cada jugador paga el 5 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).' },
+    { n: 'Ladrón', ico: 'thief', t: 'El jugador con más dinero pierde 100 € y se los lleva el jugador que menos tiene.' },
+    { n: 'Boom inmobiliario', ico: 'boom', t: 'Durante 5 turnos de cada jugador, construir casas y hoteles cuesta la mitad.' },
+    { n: 'Hora punta', ico: 'rush', t: 'Durante 5 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.' },
   ];
   let viewEvk = '', viewDog = -1, wxEl = null, evCardEl = null, dogEl = null;
   function wirePeek(el) {
@@ -500,9 +504,9 @@ export function openEvapoly({ roomId, api, onClose }) {
   function evtCardEl(kind, start, title) {
     const ev = EVT[kind];
     return h('div', { class: 'pevt' + (start ? '' : ' end') },
-      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : kind === 3 ? 'quake' : kind === 4 ? 'crisis' : 'sun'] }) }),
+      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : kind === 3 ? 'quake' : kind === 4 ? 'crisis' : kind === 8 ? 'boom' : kind === 9 ? 'rush' : 'sun'] }) }),
       h('b', { class: 'pevt-title' }, title || (start ? 'Evento activado' : 'Evento terminado')),
-      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : kind === 3 ? 'La tierra ha dejado de temblar' : kind === 4 ? 'La crisis económica ha terminado' : 'Ha salido el sol'),
+      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : kind === 3 ? 'La tierra ha dejado de temblar' : kind === 4 ? 'La crisis económica ha terminado' : kind === 8 ? 'El boom inmobiliario ha terminado' : kind === 9 ? 'Ha pasado la hora punta' : 'Ha salido el sol'),
       start ? h('p', {}, ev.t) : null);
   }
   /** Tocar la carta de evento del tablero muestra otra vez qué hace; si se mantiene pulsada, se ve mientras dure la pulsación. */
@@ -862,7 +866,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       const can = (code) => act(s, my, code, true) === null;
       if (my >= 0 && o === my && !running) {
         if (can('h' + i)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send('h' + i); draw(); } }, `Construir ${eur(houseCost(s, i))}`));
-        if (can('s' + i)) buttons.push(h('button', { class: 'btn outline', onclick: async () => { await send('s' + i); draw(); } }, `Vender ${eur(houseCost(s, i) / 2)}`));
+        if (can('s' + i)) buttons.push(h('button', { class: 'btn outline', onclick: async () => { await send('s' + i); draw(); } }, `Vender ${eur(houseBase(s, i) / 2)}`));
         if (can('m' + i)) buttons.push(h('button', { class: 'btn outline', onclick: async () => { await send('m' + i); draw(); } }, `Hipotecar ${eur(q2.p / 2)}`));
         if (can('u' + i)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send('u' + i); draw(); } }, `Deshipotecar ${eur(unmortgageCost(s, i))}`));
       }
