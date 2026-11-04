@@ -150,6 +150,7 @@ function sendJail(s, seat, why) {
 }
 
 function land(s, seat, i, ctx) {
+  if (s.evk === 'dog' && s.dog === i && !s.bk[seat]) dogBite(s, seat);
   const q = sq(s, i);
   switch (q.t) {
     case 'street': case 'station': case 'utility': {
@@ -251,16 +252,31 @@ function bankrupt(s, seat, to, why) {
 }
 
 // ───── eventos aleatorios (regla opcional) ─────
-const EV_NAMES = ['dog', 'snow', 'rain'], EV_TURNS = 5, DOG_BITE = 150, DOG_STEP = 4;
-const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien se encuentra', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más'];
-const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia'];
+const EV_NAMES = ['dog', 'snow', 'rain', 'quake'], EV_TURNS = 5, DOG_BITE = 150, DOG_STEP = 4, QUAKE_PCT = 15;
+const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más', 'Evento del terremoto: al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador'];
+const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia', 'La tierra ha dejado de temblar'];
 
+// el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
+function dogBite(s, i) {
+  const v = Math.min(DOG_BITE, s.cash[i]);
+  s.cash[i] -= v;
+  say(s, `El perro muerde a @${i} y le quita ${eur(v)}`, 'bite', { seat: i, amt: v, sq: s.pos[i] });
+}
 function dogBites(s, squares) {
-  for (let i = 0; i < s.n; i++) {
-    if (s.bk[i] || !squares.includes(s.pos[i])) continue;
-    const v = Math.min(DOG_BITE, s.cash[i]);
-    s.cash[i] -= v;
-    say(s, `El perro muerde a @${i} y le quita ${eur(v)}`, 'bite', { seat: i, amt: v, sq: s.pos[i] });
+  for (let i = 0; i < s.n; i++) if (!s.bk[i] && squares.includes(s.pos[i])) dogBite(s, i);
+}
+
+/** Terremoto: derrumba una casa al azar de cada jugador (los hoteles no se tocan; sin casas, se libra). */
+function quake(s) {
+  say(s, '¡Terremoto! La tierra tiembla', 'quake', { sq: -1 });
+  for (let seat = 0; seat < s.n; seat++) {
+    if (s.bk[seat]) continue;
+    const houses = [];
+    for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] >= 1 && s.lvl[i] <= 4) houses.push(i);
+    if (!houses.length) continue;
+    const i = houses[rint(s, houses.length)];
+    s.lvl[i]--;
+    say(s, `El terremoto derrumba una casa de @${seat} en ${sq(s, i).n}`, 'crumble', { seat, sq: i });
   }
 }
 
@@ -269,7 +285,7 @@ function maybeEvent(s, seat) {
   if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase === 'over') return;
   s.evChk = true;
   if (s.evk || s.tc[seat] < 2 || rint(s, 10) !== 0) return;
-  const kind = rint(s, 3);
+  const kind = rint(s, 4);
   s.evk = EV_NAMES[kind]; s.evf = true;
   for (let i = 0; i < s.n; i++) s.evl[i] = s.bk[i] ? 0 : EV_TURNS;
   say(s, EV_TEXT[kind], 'evt', { seat, amt: 1, sq: kind });
@@ -286,8 +302,8 @@ function nextTurn(s) {
         const from = s.dog, path = Array.from({ length: DOG_STEP }, (_, i) => (from + i + 1) % 40);
         s.dog = path[DOG_STEP - 1];
         say(s, 'El perro avanza 4 casillas', 'dog', { from, to: s.dog });
-        dogBites(s, path);
-      }
+        dogBites(s, [s.dog]);
+      } else if (s.evk === 'quake' && rint(s, 100) < QUAKE_PCT) quake(s);
       s.evl[prev] = Math.max(0, s.evl[prev] - 1);
     }
     if (s.evl.every((v, i) => s.bk[i] || v <= 0)) {
@@ -640,6 +656,7 @@ export function act(s, seat, code, dry = false) {
       const from = s.pos[t], a = s.pos[seat];
       s.pos[t] = a;
       say(s, `@${seat} chupa a @${t} con el desatascador y lo deja a su lado`, 'pull', { seat, to: t, from, sq: a });
+      if (s.evk === 'dog' && s.dog === a) dogBite(s, t);
       return ok();
     }
     case 'x': {

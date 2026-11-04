@@ -235,6 +235,7 @@ object Poly {
     }
 
     private fun land(s: State, seat: Int, i: Int, dice: Int = 0, utilRoll: Boolean = false, double: Boolean = false) {
+        if (s.evk == "dog" && s.dog == i && !s.bk[seat]) dogBite(s, seat)
         val q = s.sq(i)
         when (q.t) {
             "street", "station", "utility" -> {
@@ -341,19 +342,35 @@ object Poly {
     }
 
     // ───── eventos aleatorios (regla opcional) ─────
-    private val EV_NAMES = listOf("dog", "snow", "rain")
+    private val EV_NAMES = listOf("dog", "snow", "rain", "quake")
+    private const val QUAKE_PCT = 15
     private const val EV_TURNS = 5
     private const val DOG_BITE = 150
     private const val DOG_STEP = 4
-    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien se encuentra", "Evento de nieve: está nevando, así que solo se tira un dado", "Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más")
-    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia")
+    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella", "Evento de nieve: está nevando, así que solo se tira un dado", "Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más", "Evento del terremoto: al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador")
+    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia", "La tierra ha dejado de temblar")
+
+    // el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
+    private fun dogBite(s: State, i: Int) {
+        val v = minOf(DOG_BITE, s.cash[i])
+        s.cash[i] -= v
+        say(s, "El perro muerde a @$i y le quita ${eur(v)}", "bite", seat = i, amt = v, sq = s.pos[i])
+    }
 
     private fun dogBites(s: State, squares: List<Int>) {
-        for (i in 0 until s.n) {
-            if (s.bk[i] || s.pos[i] !in squares) continue
-            val v = minOf(DOG_BITE, s.cash[i])
-            s.cash[i] -= v
-            say(s, "El perro muerde a @$i y le quita ${eur(v)}", "bite", seat = i, amt = v, sq = s.pos[i])
+        for (i in 0 until s.n) if (!s.bk[i] && s.pos[i] in squares) dogBite(s, i)
+    }
+
+    /** Terremoto: derrumba una casa al azar de cada jugador (los hoteles no se tocan; sin casas, se libra). */
+    private fun quake(s: State) {
+        say(s, "¡Terremoto! La tierra tiembla", "quake", sq = -1)
+        for (seat in 0 until s.n) {
+            if (s.bk[seat]) continue
+            val houses = (0 until 40).filter { s.own[it] == seat && s.lvl[it] in 1..4 }
+            if (houses.isEmpty()) continue
+            val i = houses[rint(s, houses.size)]
+            s.lvl[i]--
+            say(s, "El terremoto derrumba una casa de @$seat en ${s.sq(i).n}", "crumble", seat = seat, sq = i)
         }
     }
 
@@ -362,7 +379,7 @@ object Poly {
         if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase == "over") return
         s.evChk = true
         if (s.evk != "" || s.tc[seat] < 2 || rint(s, 10) != 0) return
-        val kind = rint(s, 3)
+        val kind = rint(s, 4)
         s.evk = EV_NAMES[kind]; s.evf = true
         for (i in 0 until s.n) s.evl[i] = if (s.bk[i]) 0 else EV_TURNS
         say(s, EV_TEXT[kind], "evt", seat = seat, amt = 1, sq = kind)
@@ -380,8 +397,8 @@ object Poly {
                     val path = List(DOG_STEP) { (from + it + 1) % 40 }
                     s.dog = path[DOG_STEP - 1]
                     say(s, "El perro avanza 4 casillas", "dog", from = from, to = s.dog)
-                    dogBites(s, path)
-                }
+                    dogBites(s, listOf(s.dog))
+                } else if (s.evk == "quake" && rint(s, 100) < QUAKE_PCT) quake(s)
                 s.evl[prev] = maxOf(0, s.evl[prev] - 1)
             }
             if ((0 until s.n).all { s.bk[it] || s.evl[it] <= 0 }) {
@@ -735,6 +752,7 @@ object Poly {
                 val from = s.pos[t]; val a = s.pos[seat]
                 s.pos[t] = a
                 say(s, "@$seat chupa a @$t con el desatascador y lo deja a su lado", "pull", seat = seat, to = t, from = from, sq = a)
+                if (s.evk == "dog" && s.dog == a) dogBite(s, t)
                 return ok()
             }
             'X' -> {

@@ -368,6 +368,10 @@ export function openEvapoly({ roomId, api, onClose }) {
         else { viewEvk = ''; viewDog = -1; paintEvent(); SFX.turn(); await showEventCard(e.sq, false); }
       } else if (e.k === 'dog') {
         viewDog = e.to; paintEvent(); SFX.step(); await wait(1000);
+      } else if (e.k === 'quake') {
+        clearLanding(); SFX.bounce(); fxCracks(); quakeShake(); await wait(1500);
+      } else if (e.k === 'crumble') {
+        paintBoard(); fxPuff(e.sq, 8); SFX.bounce(); await wait(500);
       } else if (e.k === 'bite') {
         fxPuff(e.sq, 5); SFX.bounce(); shake();
       } else if (e.k === 'pull') {
@@ -448,11 +452,12 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── eventos aleatorios ─────
-  const EV_IDS = ['dog', 'snow', 'rain'];
+  const EV_IDS = ['dog', 'snow', 'rain', 'quake'];
   const EVT = [
-    { n: 'Perro sarnoso', ico: 'dog', t: 'Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno y se come a quien se encuentre: le quita 150 €.' },
+    { n: 'Perro sarnoso', ico: 'dog', t: 'Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.' },
     { n: 'Nieve', ico: 'snow', t: 'Está nevando, así que te mueves más lento: durante 5 turnos de cada jugador solo se tira un dado en lugar de dos.' },
     { n: 'Lluvia', ico: 'rain', t: 'Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.' },
+    { n: 'Terremoto', ico: 'quake', t: 'Durante 5 turnos de cada jugador, al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador. Los hoteles se salvan, y quien no tenga casas se libra.' },
   ];
   let viewEvk = '', viewDog = -1, wxEl = null, evCardEl = null, dogEl = null;
   function wirePeek(el) {
@@ -485,9 +490,9 @@ export function openEvapoly({ roomId, api, onClose }) {
   function evtCardEl(kind, start, title) {
     const ev = EVT[kind];
     return h('div', { class: 'pevt' + (start ? '' : ' end') },
-      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : 'sun'] }) }),
+      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : kind === 3 ? 'quake' : 'sun'] }) }),
       h('b', { class: 'pevt-title' }, title || (start ? 'Evento activado' : 'Evento terminado')),
-      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : 'Ha salido el sol'),
+      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : kind === 3 ? 'La tierra ha dejado de temblar' : 'Ha salido el sol'),
       start ? h('p', {}, ev.t) : null);
   }
   /** Tocar la carta de evento del tablero muestra otra vez qué hace; si se mantiene pulsada, se ve mientras dure la pulsación. */
@@ -626,13 +631,9 @@ export function openEvapoly({ roomId, api, onClose }) {
     for (let i = 0; i < 40; i++) {
       const el = gridEl.children[i], o = state.own[i];
       // foco: mías con brillo, las de otros apagadas y, en los colores en los que tengo alguna, las que me faltan con contorno punteado
-      const q0 = data.squares[i], grp = q0.g ? groupOf(state, q0.g) : [], mineN = grp.filter((j) => state.own[j] === subj).length;
-      const own = subj >= 0 && ['street', 'station', 'utility'].includes(q0.t);
-      const mineSq = own && o === subj, miss = own && o !== subj && mineN > 0, full = mineSq && grp.length > 0 && mineN === grp.length, dim = own && o >= 0 && o !== subj && !miss;
-      el.classList.toggle('fo-mine', mineSq); el.classList.toggle('fo-miss', miss); el.classList.toggle('fo-dim', dim);
-      if (miss) el.style.setProperty('--oc', o >= 0 ? COLORS[o] : COLORS[subj]);
-      let st = el.querySelector(':scope > .pstar');
-      if (full) { if (!st) el.append(h('span', { class: 'pstar' }, '★')); } else if (st) st.remove();
+      const q0 = data.squares[i], corner = ['go', 'jail', 'parking', 'gotojail'].includes(q0.t);
+      const mineSq = subj >= 0 && ['street', 'station', 'utility'].includes(q0.t) && o === subj, dim = subj >= 0 && !corner && !mineSq;
+      el.classList.toggle('fo-mine', mineSq); el.classList.toggle('fo-dim', dim);
       el.classList.toggle('owned', o >= 0); el.classList.toggle('mort', !!state.mort[i]);
       let fe = el.querySelector(':scope > .pfence');
       if (state.fence[i] >= 0) { if (!fe) { fe = h('span', { class: 'pfence', html: svgOf({ p: icons.fence }) }); el.append(fe); } }
@@ -716,6 +717,12 @@ export function openEvapoly({ roomId, api, onClose }) {
     fxPuff(sqi, 5); fxSparkle(sqi, 8);
     await wait(650);
   }
+  function fxCracks() {
+    const mk = () => { let x = 15 + Math.random() * 70, y = 15 + Math.random() * 70, d = `M${x.toFixed(1)} ${y.toFixed(1)}`; for (let k = 0; k < 8; k++) { x += (Math.random() - 0.5) * 12; y += (Math.random() - 0.2) * 12; d += ` L${x.toFixed(1)} ${y.toFixed(1)}`; } return d; };
+    const svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="none">${[0, 1, 2, 3].map(() => `<path d="${mk()}" pathLength="1"/>`).join('')}</svg>`;
+    fxSpawn(h('span', { class: 'fxcracks', style: 'left:50%;top:50%', html: svg }), 3400);
+  }
+  const quakeShake = () => { boardEl?.classList.add('quake'); setTimeout(() => boardEl?.classList.remove('quake'), 1300); };
   const shake = () => { boardEl?.classList.add('shake'); setTimeout(() => boardEl?.classList.remove('shake'), 520); };
 
   function paintTokens() {

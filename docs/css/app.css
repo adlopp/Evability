@@ -355,8 +355,8 @@ textarea.field { resize: vertical; }
 .psq.t-go { background: #F6E3B4; } .psq.t-gotojail { background: #F4C7C3; } .psq.t-jail { background: #F1E1C9; } .psq.t-parking { background: #D9E8F5; }
 .psq.mort .pin { filter: grayscale(1); opacity: .6; }
 /* recorrido de la última tirada, en amarillo */
-.psq.hl::after { content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none; background: rgba(255, 214, 0, .5); box-shadow: inset 0 0 0 .28em #FFC400; animation: hlpulse .9s ease-in-out infinite alternate; }
-@keyframes hlpulse { from { background: rgba(255, 214, 0, .32); } to { background: rgba(255, 214, 0, .6); } }
+.psq.hl::after { content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none; background: rgba(255, 240, 180, .2); box-shadow: inset 0 0 0 .12em rgba(255, 221, 120, .6); animation: hlpulse 1.2s ease-in-out infinite alternate; }
+@keyframes hlpulse { from { background: rgba(255, 240, 180, .1); } to { background: rgba(255, 240, 180, .26); } }
 .psq.pzoom { z-index: 300; pointer-events: none; box-shadow: 0 10px 40px rgba(0,0,0,.6); border-radius: 6px; border-width: 2px; color: #1c1b22; }
 .psq.pzoom::after { display: none; }
 
@@ -710,3 +710,12 @@ textarea.field { resize: vertical; }
 .psq.mort .pin > :not(.pown) { filter: grayscale(1) sepia(.4) saturate(2.5) hue-rotate(-30deg); opacity: .62; }
 .psq.mort .pown { position: relative; z-index: 4; }
 .psq.mort::after { background: linear-gradient(to top right, transparent calc(50% - .13em), rgba(142, 0, 0, .9) calc(50% - .13em), rgba(142, 0, 0, .9) calc(50% + .13em), transparent calc(50% + .13em)), linear-gradient(to bottom right, transparent calc(50% - .13em), rgba(142, 0, 0, .9) calc(50% - .13em), rgba(142, 0, 0, .9) calc(50% + .13em), transparent calc(50% + .13em)), rgba(214, 40, 40, .28); z-index: 5; }
+
+/* terremoto: grietas y temblor del tablero */
+.fxcracks { width: 100%; height: 100%; } .fxcracks svg { width: 100%; height: 100%; display: block; }
+.fxcracks path { fill: none; stroke: #2b1d12; stroke-width: .42; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; filter: drop-shadow(0 0 .3px rgba(255,255,255,.6)); animation: crack .8s ease-out forwards, crackfade .9s 2.3s forwards; }
+@keyframes crack { to { stroke-dashoffset: 0; } }
+@keyframes crackfade { to { opacity: 0; } }
+.pboard.quake { animation: pquake 1.2s linear; }
+@keyframes pquake { 0%, 100% { transform: translate(0, 0); } 8% { transform: translate(-6px, 3px); } 16% { transform: translate(6px, -4px); } 24% { transform: translate(-5px, -3px); } 32% { transform: translate(5px, 4px); } 40% { transform: translate(-4px, 2px); } 50% { transform: translate(4px, -2px); } 62% { transform: translate(-3px, 2px); } 75% { transform: translate(2px, -1px); } 88% { transform: translate(-1px, 1px); } }
+.pboard.ev-quake { box-shadow: inset 0 0 5em rgba(120, 80, 30, .2); }

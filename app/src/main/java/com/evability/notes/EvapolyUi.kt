@@ -200,6 +200,24 @@ private fun FxView(f: Fx, g: Dp) {
                     val a = k.toFloat() / f.n * 2f * PI.toFloat()
                     drawCircle(f.color.copy(alpha = 1f - p), px(0.8f * (1f - p) + 0.2f), Offset(px(f.x0 + kotlin.math.cos(a) * 5f * p), px(f.y0 + sin(a) * 5f * p)))
                 }
+                "cracks" -> {
+                    val reveal = (p / 0.25f).coerceIn(0f, 1f)
+                    val fade = if (p > 0.72f) 1f - (p - 0.72f) / 0.28f else 1f
+                    for (c in 0 until 4) {
+                        val rr = java.util.Random(f.id * 31 + c)
+                        var x = 15f + rr.nextFloat() * 70f
+                        var y = 15f + rr.nextFloat() * 70f
+                        val pts = arrayListOf(Offset(px(x), px(y)))
+                        repeat(8) { x += (rr.nextFloat() - 0.5f) * 12f; y += (rr.nextFloat() - 0.2f) * 12f; pts.add(Offset(px(x), px(y))) }
+                        val shown = reveal * 8f
+                        for (k in 0 until 8) {
+                            val part = (shown - k).coerceIn(0f, 1f)
+                            if (part <= 0f) break
+                            val a = pts[k]; val b = pts[k + 1]
+                            drawLine(Color(0xFF2B1D12).copy(alpha = fade), a, Offset(a.x + (b.x - a.x) * part, a.y + (b.y - a.y) * part), strokeWidth = px(0.4f), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                        }
+                    }
+                }
                 "ghost" -> drawCircle(f.color.copy(alpha = 0.45f * (1f - p)), px(1.7f * (1f - 0.7f * p)), Offset(px(f.x0), px(f.y0)))
                 "coins" -> for (k in 0 until f.n) {
                     val q = ((p - k * 0.1f) / 0.6f).coerceIn(0f, 1f)
@@ -233,12 +251,13 @@ private class Delta(val seat: Int, val text: String, val up: Boolean, val id: Lo
 
 // ───── eventos aleatorios ─────
 private class EvCard(val kind: Int, val start: Boolean, val peek: Boolean = false, val hold: Boolean = false)
-private val EV_IDS = listOf("dog", "snow", "rain")
-private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia")
+private val EV_IDS = listOf("dog", "snow", "rain", "quake")
+private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto")
 private val EV_DESC = listOf(
-    "Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno y se come a quien se encuentre: le quita 150 €.",
+    "Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.",
     "Está nevando, así que te mueves más lento: durante 5 turnos de cada jugador solo se tira un dado en lugar de dos.",
     "Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.",
+    "Durante 5 turnos de cada jugador, al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador. Los hoteles se salvan, y quien no tenga casas se libra.",
 )
 
 /** Nieve o lluvia suaves sobre el tablero: el mapa se vuelve invernal o mojado. */
@@ -288,9 +307,9 @@ private fun EventCardView(c: EvCard, side: Dp, onDone: () -> Unit) {
                 .border(side * 0.007f, Color.White.copy(alpha = 0.4f), shape).padding(side * 0.04f),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else "sun", side * 0.17f)
+            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else if (c.kind == 3) "quake" else "sun", side * 0.17f)
             Text(if (c.peek) "EVENTO ACTIVO" else if (c.start) "EVENTO ACTIVADO" else "EVENTO TERMINADO", color = fg.copy(alpha = 0.92f), fontSize = fsz * 0.9f, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
+            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else if (c.kind == 3) "La tierra ha dejado de temblar" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
             if (c.start) Text(EV_DESC[c.kind], color = fg, fontSize = fsz * 0.95f, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, lineHeight = fsz * 1.3f, modifier = Modifier.padding(top = side * 0.01f))
         }
     }
@@ -415,12 +434,9 @@ private fun SquareView(
     val lvl = st.lvl[i]
     val ownable = q.t == "street" || q.t == "station" || q.t == "utility"
     // foco: mías con brillo, las de otros apagadas y, en los colores en los que tengo alguna, las que me faltan con contorno punteado
-    val fOn = focusSeat >= 0 && ownable && !zoomed && inlineW == null
-    val fGrp = if (fOn && q.g != null) (0 until 40).filter { data.squares[it].g == q.g } else emptyList()
-    val fMine = if (fOn) fGrp.count { st.own[it] == focusSeat } else 0
-    val fIsMine = fOn && owner == focusSeat
-    val fMiss = fOn && owner != focusSeat && fMine > 0
-    val fDim = fOn && owner >= 0 && owner != focusSeat && !fMiss
+    val fOn = focusSeat >= 0 && !zoomed && inlineW == null
+    val fIsMine = fOn && ownable && owner == focusSeat
+    val fDim = fOn && q.t != "go" && q.t != "jail" && q.t != "parking" && q.t != "gotojail" && !fIsMine
     val bandEm = if (band != null) 1.5f else 0f // banda de color fina, con el precio centrado
     val ownEm = if (ownable) 2.4f else 0f // franja del dueño (lleva las casas); Suerte, Caja, impuestos y esquinas no la tienen y su contenido queda centrado
     val icoEm = if (q.i == null) 0f else if (where == "corner") 4.2f else if (special) 2.9f else 2.0f
@@ -495,23 +511,13 @@ private fun SquareView(
             val ft = rememberInfiniteTransition(label = "foco")
             val fp by ft.animateFloat(0.35f, 1f, infiniteRepeatable(tween(1700), RepeatMode.Reverse), label = "brillo")
             Box(Modifier.fillMaxSize().background(Color(0xFFFFDC5A).copy(alpha = 0.28f * fp)).border(uu * 0.5f, Color(0xFFFFC400).copy(alpha = 0.55f + 0.45f * fp)))
-            if (fGrp.isNotEmpty() && fMine == fGrp.size) Text("★", color = Color(0xFFFFC400), fontSize = fs * 1.7f, modifier = Modifier.align(Alignment.TopEnd).padding(end = uu * 0.2f))
-        }
-        if (fMiss) {
-            val ft = rememberInfiniteTransition(label = "falta")
-            val fa by ft.animateFloat(0.15f, 1f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "parpadeo")
-            val dc = if (owner >= 0) PolyData.colors[owner] else PolyData.colors[focusSeat]
-            Canvas(Modifier.fillMaxSize()) {
-                val w = uu.toPx() * 0.4f
-                drawRect(dc.copy(alpha = fa), topLeft = Offset(w, w), size = androidx.compose.ui.geometry.Size(size.width - 2 * w, size.height - 2 * w), style = Stroke(width = w * 0.8f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(w * 2.2f, w * 1.4f))))
-            }
         }
         if (ownable) Box(Modifier.fillMaxSize().border(uu * (if (owner >= 0) 0.34f else 0.2f), band ?: Color(0xFF7D8791)))
         if (st.fence[i] >= 0) PolyIcon("fence", minOf(ow, oh) * 0.85f, Modifier.align(Alignment.Center))
         if (hl) {
             val pulse = rememberInfiniteTransition(label = "ruta")
-            val a by pulse.animateFloat(0.32f, 0.6f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "ruta")
-            Box(Modifier.fillMaxSize().background(Color(0xFFFFD600).copy(alpha = a)).border(uu * 0.28f, Color(0xFFFFC400)))
+            val a by pulse.animateFloat(0.1f, 0.26f, infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "ruta")
+            Box(Modifier.fillMaxSize().background(Color(0xFFFFF0B4).copy(alpha = a)).border(uu * 0.12f, Color(0xFFFFDD78).copy(alpha = 0.6f)))
         }
     }
 }
@@ -941,6 +947,14 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                     evCard = null
                 }
                 "dog" -> { viewDog = e.to; PolySound.play("step"); delay(1000) }
+                "quake" -> {
+                    landing = null
+                    PolySound.play("bounce")
+                    fxAt("cracks", floatArrayOf(50f, 50f), n = 4, ms = 3200)
+                    repeat(5) { shakeKey++; delay(250) }
+                    delay(250)
+                }
+                "crumble" -> { ver++; fx("puff", e.sq, 8); PolySound.play("bounce"); delay(500) }
                 "bite" -> { fx("puff", e.sq, 5); PolySound.play("bounce"); shakeKey++ }
                 "pull" -> {
                     landing = null
