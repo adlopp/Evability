@@ -61,7 +61,7 @@
   {
    "n": "Impuesto",
    "t": "tax",
-   "p": 200,
+   "p": 100,
    "i": "tax"
   },
   {
@@ -300,7 +300,7 @@
    "i": "train"
   },
   {
-   "n": "Calle Arrancapechos",
+   "n": "Calle Pájaro",
    "t": "street",
    "g": "yellow",
    "p": 260,
@@ -433,7 +433,7 @@
   {
    "n": "Impuesto de lujo",
    "t": "tax",
-   "p": 100,
+   "p": 200,
    "i": "lux"
   },
   {
@@ -564,7 +564,7 @@
     "e": "cash:100"
    },
    {
-    "x": "Gastos de hospital: el Dr. Javi dice que pagues 100 €.",
+    "x": "Gastos de hospital: paga 100 €.",
     "e": "cash:-100"
    },
    {

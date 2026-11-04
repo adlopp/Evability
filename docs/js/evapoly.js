@@ -159,7 +159,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── sala de espera ─────
   let lobbySig = '';
-  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.status]);
+  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.status]);
   function renderLobby() {
     lobbySig = sigOf();
     const isHost = room.host === me, inRoom = room.players.includes(me), invitedOnly = !inRoom && room.invited.includes(me);
@@ -203,7 +203,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(body, h('div', { class: 'poly-lobby' }, seats, tokRow,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Dinero inicial'), moneyOut), slider,
-        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus')),
+        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails')),
       h('div', { class: 'pbtns' }, buttons)));
   }
   const firstFreeTok = () => { const used = new Set(Object.values(room.tok)); return toks.findIndex((_, i) => !used.has(i)); };
@@ -220,7 +220,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── partida ─────
-  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus });
+  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus, rails: room.rails });
   function startState() {
     state = initGame(data, room.players.length, cfgOf(), room.seed);
     acts = [];
@@ -293,6 +293,10 @@ export function openEvapoly({ roomId, api, onClose }) {
         let p = from;
         for (let i = 0; i < steps; i++) { p = (p + dir + 40) % 40; view.pos[e.seat] = p; SFX.step(); paintTokens(); await wait(e.seat === mySeat() || steps < 8 ? 160 : 120); }
         showLanding(to);
+      } else if (e.k === 'rail') {
+        clearLanding(); slowSeat = e.seat; paintTokens(); await wait(60);
+        view.pos[e.seat] = e.to; paintTokens(); SFX.coin(); await wait(1600);
+        slowSeat = -1; paintTokens(); showLanding(e.to);
       } else if (e.k === 'jail') {
         clearLanding();
         // sirena, luces de policía y la ficha cruza el tablero en diagonal hasta la cárcel
@@ -374,12 +378,15 @@ export function openEvapoly({ roomId, api, onClose }) {
       const W = sideways ? ch : cw, H = sideways ? cw : ch;
       const ownable = ['street', 'station', 'utility'].includes(q2.t);
       const body = H - (g ? 1.5 : 0) - (ownable ? 2.4 : 0) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
-      const fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
+      // un nombre de una sola palabra va en una sola línea, con la letra justa para que no se parta ni tape el precio
+      const one = !q2.n.includes(' ') && side !== 'corner';
+      let fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
+      if (one && !special) fs = Math.min(fs, (W - 0.7) / (q2.n.length * 0.66));
       const pin = h('div', { class: 'pin', style: sideways ? { width: W + 'em', height: H + 'em' } : {} },
         g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'pr' }, eur(q2.p))) : null,
         h('div', { class: 'pbody' },
           q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
-          h('span', { class: 'nm', style: { fontSize: fs + 'em' } }, q2.n),
+          h('span', { class: 'nm' + (one && !special ? ' one' : ''), style: { fontSize: fs + 'em' } }, q2.n),
           q2.p && !g ? h('span', { class: 'pr2' + (q2.t === 'station' ? ' zoomonly' : '') }, eur(q2.p)) : null),
         ownable ? h('div', { class: 'pown' }, h('span', { class: 'bld' })) : null);
       const el = h('div', { class: `psq t-${q2.t} s-${side}`, 'data-i': i, style: { left: c.l + '%', top: c.t + '%', width: c.w + '%', height: c.h + '%' } }, pin);
@@ -462,13 +469,13 @@ export function openEvapoly({ roomId, api, onClose }) {
     return z;
   }
 
-  /** Tira lineal de tu posición: la casilla de detrás, la tuya y las siguientes (3 en pantalla completa, 5 normal), siempre en línea aunque el tablero gire. */
+  /** Tira lineal de tu posición: la casilla de detrás, la tuya y la de delante, siempre en línea aunque el tablero gire. */
   function paintStrip() {
     if (!stripEl || !state || !gridEl) return;
     const my = mySeat();
     if (my < 0 || state.bk[my]) { fill(stripEl); return; }
-    const n = root.classList.contains('full') ? 3 : 5, pos = view.pos[my];
-    const w = Math.max(46, ((stripEl.clientWidth || 320) - (n - 1) * 6 - 10) / n);
+    const full = root.classList.contains('full'), n = 3, pos = view.pos[my];
+    const w = Math.max(46, Math.min(full ? 80 : 96, ((stripEl.clientWidth || 320) - (n - 1) * 6 - 10) / n));
     fill(stripEl, Array.from({ length: n }, (_, k) => {
       const i = (pos - 1 + k + 40) % 40, now = k === 1, card = cardCopy(i, w);
       card.addEventListener('click', () => openSquare(i));
@@ -553,6 +560,12 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (s.jail[my]) { row.push(btn(`Pagar ${eur(JAIL_FINE)}`, 'p', { primary: false, disabled: s.cash[my] < JAIL_FINE })); if (s.jf[my] > 0) row.push(btn('Usar carta', 'c', { primary: false })); }
       row.push(btn('Tirar dados', 'r', { cls: 'cta' }));
       out.push(h('div', { class: 'pbtns' }, row));
+      // regla opcional: viajar en tren a otra estación tuya en vez de tirar
+      if (s.cfg.rails && !s.jail[my]) {
+        const trips = [5, 15, 25, 35].filter((i) => act(s, my, 'x' + i, true) === null);
+        const ST = [5, 15, 25, 35];
+        if (trips.length) out.push(h('div', { class: 'pbtns' }, trips.map((i) => btn(`Tren a ${data.squares[i].n.replace('Estación ', '')} · ${(ST.indexOf(i) - ST.indexOf(s.pos[my]) + 4) % 4 === 1 ? 50 : 150} €`, 'x' + i, { primary: false }))));
+      }
     } else if (s.phase === 'buy') {
       const qd = data.squares[s.buy];
       status(`${qd.n} · ${eur(qd.p)}`);

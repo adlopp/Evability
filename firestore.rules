@@ -202,7 +202,7 @@ service cloud.firestore {
       allow read: if signedIn()
         && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players);
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'tok', 'money', 'goBonus', 'auction', 'pot', 'dblBonus', 'status', 'seed', 'acts', 'at'])
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'tok', 'money', 'goBonus', 'auction', 'pot', 'dblBonus', 'rails', 'status', 'seed', 'acts', 'at'])
         && request.resource.data.host == request.auth.uid
         && request.resource.data.players == [request.auth.uid]
         && invitedOk(request.resource.data.invited)
@@ -211,16 +211,18 @@ service cloud.firestore {
         && request.resource.data.goBonus is bool && request.resource.data.auction is bool
         && (!('pot' in request.resource.data) || request.resource.data.pot is bool)
         && (!('dblBonus' in request.resource.data) || request.resource.data.dblBonus is bool)
+        && (!('rails' in request.resource.data) || request.resource.data.rails is bool)
         && request.resource.data.acts.size() == 0
         && request.resource.data.at == request.time;
       allow update: if signedIn() && (
         // el anfitrión cambia las reglas o invita a más amigos (solo en la sala de espera)
         (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['money', 'goBonus', 'auction', 'pot', 'dblBonus', 'invited'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['money', 'goBonus', 'auction', 'pot', 'dblBonus', 'rails', 'invited'])
           && request.resource.data.money is int && request.resource.data.money >= 500 && request.resource.data.money <= 2500
           && request.resource.data.goBonus is bool && request.resource.data.auction is bool
           && (!('pot' in request.resource.data) || request.resource.data.pot is bool)
           && (!('dblBonus' in request.resource.data) || request.resource.data.dblBonus is bool)
+          && (!('rails' in request.resource.data) || request.resource.data.rails is bool)
           && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
         // un invitado entra
         || (resource.data.status == 'lobby' && request.auth.uid in resource.data.invited && !(request.auth.uid in resource.data.players)

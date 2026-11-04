@@ -585,3 +585,9 @@ textarea.field { resize: vertical; }
 
 .pslot .scard { color: #1c1b22; }
 .pslot .scard::after { display: none; }
+
+/* la tira de posición va abajo del todo de la columna de información */
+.pstrip { margin-top: auto; }
+@media (orientation: landscape) and (min-width: 800px) { .poly-main .pside { align-self: stretch; } }
+
+.pbody .nm.one { white-space: nowrap; }

@@ -258,7 +258,8 @@ private fun SquareView(
     val ownEm = if (ownable) 2.4f else 0f // franja del dueño (lleva las casas); Suerte, Caja, impuestos y esquinas no la tienen y su contenido queda centrado
     val icoEm = if (q.i == null) 0f else if (where == "corner") 4.2f else if (special) 2.9f else 2.0f
     val prEm = if (q.p > 0 && band == null && (q.t != "station" || zoomed)) 1.1f else 0f
-    val nameEm = if (where == "corner") 1.35f else if (special) 1f else fitName(q.n, wEm - 0.7f, maxOf(1f, hEm - bandEm - ownEm - icoEm - prEm - 0.3f))
+    val oneWord = !q.n.contains(' ') && where != "corner" && !special // una sola palabra: una sola línea, con la letra justa
+    val nameEm = if (where == "corner") 1.35f else if (special) 1f else fitName(q.n, wEm - 0.7f, maxOf(1f, hEm - bandEm - ownEm - icoEm - prEm - 0.3f)).let { f -> if (oneWord) minOf(f, (wEm - 0.7f) / (q.n.length * 0.66f)) else f }
     Box(
         (if (inlineW != null) Modifier else if (zoomed) Modifier.offset((gside - ow) / 2f, (gside - oh) / 2f) else Modifier.offset(gside * (c[0] / 100f), gside * (c[1] / 100f)))
             .size(ow, oh)
@@ -288,7 +289,7 @@ private fun SquareView(
                         PolyIcon(q.i, uu * icoEm)
                         Text(
                             q.n, color = Ink, fontSize = fs * nameEm, fontWeight = if (special) FontWeight.Medium else FontWeight.ExtraBold,
-                            textAlign = TextAlign.Center, lineHeight = fs * nameEm * 1.1f,
+                            textAlign = TextAlign.Center, lineHeight = fs * nameEm * 1.1f, maxLines = if (oneWord) 1 else Int.MAX_VALUE, softWrap = !oneWord,
                         )
                         if (prEm > 0f) Text(Poly.eur(q.p), color = Ink, fontSize = fs * 0.92f, fontWeight = FontWeight.SemiBold)
                     }
@@ -553,7 +554,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     }
 
     fun buildState(r: Social.PolyRoom) {
-        val s = Poly.initGame(data, r.players.size, Poly.Cfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus), r.seed)
+        val s = Poly.initGame(data, r.players.size, Poly.Cfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus, r.rails), r.seed)
         acts.clear()
         for (a in r.acts) { Poly.applyText(s, a); acts.add(a) }
         st = s
@@ -613,6 +614,18 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         delay(if (e.seat == mySeat() || steps < 8) 160 else 120)
                     }
                     // al caer, la casilla se ve ampliada en el centro unos segundos (la ven todos)
+                    landing = e.to
+                    val shown = e.to
+                    scope.launch { delay(2400); if (landing == shown) landing = null }
+                }
+                "rail" -> {
+                    landing = null
+                    slowSeat = e.seat
+                    delay(60)
+                    viewPos[e.seat] = e.to
+                    PolySound.play("coin")
+                    delay(1600)
+                    slowSeat = -1
                     landing = e.to
                     val shown = e.to
                     scope.launch { delay(2400); if (landing == shown) landing = null }
@@ -775,7 +788,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 onLeave = { scope.launch { try { Social.polyLeave(r); onClose() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onRemove = { scope.launch { runCatching { Social.polyRemove(roomId) }; onClose() } },
                 onTok = { t -> scope.launch { try { Social.polyTok(r, t); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
-                onCfg = { money, go, auc, pot, dbl -> scope.launch { try { Social.polyCfg(r, money, go, auc, pot, dbl); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
+                onCfg = { money, go, auc, pot, dbl, rails -> scope.launch { try { Social.polyCfg(r, money, go, auc, pot, dbl, rails); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onStart = { scope.launch { try { Social.polyStart(r, kotlin.random.Random.nextInt(Int.MAX_VALUE)); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onInvite = { scope.launch { try { inviteList = Social.overview().friends.map { it.profile } } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
             )
@@ -792,9 +805,12 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 }.coerceAtLeast(260.dp)
                 val panel: @Composable (Modifier) -> Unit = { mod ->
                     GamePanel(
-                        s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen, running, shownCash, shownTurn, if (my >= 0) viewPos[my] else 0, { squareSel = it },
+                        s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen, running, shownCash, shownTurn,
                         onSend = ::send, onTrade = { showTrade = true }, mod,
                     )
+                }
+                val strip: @Composable () -> Unit = {
+                    PositionStrip(s, my, data, if (my >= 0) viewPos[my] else 0, ::tokenOf, fullScreen, { squareSel = it })
                 }
                 val board: @Composable () -> Unit = {
                     PolyBoard(side, data, s, viewPos, ::tokenOf, dice, pathSet, slowSeat, police, landing, cardFx, banner, { cardFx = null }) { squareSel = it }
@@ -808,14 +824,21 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         board()
                         if (fullScreen) {
                             Spacer(Modifier.width(4.dp))
-                            panel(Modifier.width(270.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 16.dp, top = 44.dp, bottom = 8.dp))
-                        } else panel(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()))
+                            Column(Modifier.width(270.dp).fillMaxHeight().padding(start = 16.dp, top = 44.dp, bottom = 8.dp)) {
+                                panel(Modifier.weight(1f).verticalScroll(rememberScrollState()))
+                                strip()
+                            }
+                        } else Column(Modifier.weight(1f).fillMaxHeight()) {
+                            panel(Modifier.weight(1f).verticalScroll(rememberScrollState()))
+                            strip()
+                        }
                     }
                 } else {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                         board()
                         Spacer(Modifier.height(if (fullScreen) 16.dp else 8.dp))
                         panel(Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+                        strip()
                     }
                 }
                 if (fullScreen) {
@@ -880,7 +903,7 @@ private fun firstFreeToken(r: Social.PolyRoom, n: Int): Int {
 @Composable
 private fun PolyLobby(
     r: Social.PolyRoom, me: String, names: Map<String, String>, photos: Map<String, String>, tokenCount: Int, onToast: (String) -> Unit,
-    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onTok: (Int) -> Unit, onCfg: (Int, Boolean, Boolean, Boolean, Boolean) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
+    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onTok: (Int) -> Unit, onCfg: (Int, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
 ) {
     val isHost = r.host == me
     val inRoom = me in r.players
@@ -950,24 +973,28 @@ private fun PolyLobby(
                 }
                 Slider(
                     value = money, onValueChange = { money = it }, valueRange = 500f..2500f, steps = 39, enabled = isHost,
-                    onValueChangeFinished = { onCfg(money.toInt(), r.goBonus, r.auction, r.pot, r.dblBonus) },
+                    onValueChangeFinished = { onCfg(money.toInt(), r.goBonus, r.auction, r.pot, r.dblBonus, r.rails) },
                     colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
                 )
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("400 € al caer en la Salida", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.goBonus, { onCfg(r.money, it, r.auction, r.pot, r.dblBonus) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.goBonus, { onCfg(r.money, it, r.auction, r.pot, r.dblBonus, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Subastas", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.auction, { onCfg(r.money, r.goBonus, it, r.pot, r.dblBonus) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.auction, { onCfg(r.money, r.goBonus, it, r.pot, r.dblBonus, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Bote en La Peza", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.pot, { onCfg(r.money, r.goBonus, r.auction, it, r.dblBonus) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.pot, { onCfg(r.money, r.goBonus, r.auction, it, r.dblBonus, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Premio por dobles (50 € y 100 €)", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.dblBonus, { onCfg(r.money, r.goBonus, r.auction, r.pot, it) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.dblBonus, { onCfg(r.money, r.goBonus, r.auction, r.pot, it, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Viaje en tren entre estaciones (50 € y 150 €)", color = OnSurface, modifier = Modifier.weight(1f))
+                    Switch(r.rails, { onCfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus, it) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
             }
             // botones
@@ -995,6 +1022,28 @@ private fun PolyButton(label: String, primary: Boolean, enabled: Boolean, modifi
     }
 }
 
+/** Tira lineal con tu posición, siempre en línea aunque el tablero gire: la casilla de detrás, la tuya y la de delante. */
+@Composable
+private fun PositionStrip(s: Poly.State, my: Int, data: Poly.Data, myPos: Int, tokenOf: (Int) -> Int, compact: Boolean, onSquare: (Int) -> Unit, modifier: Modifier = Modifier) {
+    if (my < 0 || s.bk[my]) return
+    val col = PolyData.colors[my]
+    BoxWithConstraints(modifier.fillMaxWidth().padding(top = 24.dp, bottom = 8.dp)) {
+        val cardW = ((maxWidth - 6.dp * 2 - 12.dp) / 3).coerceAtMost(if (compact) 80.dp else 96.dp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+            for (k in 0 until 3) {
+                val idx = (myPos - 1 + k + 40) % 40
+                val now = k == 1
+                Box(contentAlignment = Alignment.TopCenter) {
+                    Box(Modifier.graphicsLayer { scaleX = if (now) 1.16f else 1f; scaleY = if (now) 1.16f else 1f; alpha = if (now) 1f else 0.88f }.then(if (now) Modifier.border(3.dp, col, RoundedCornerShape(6.dp)) else Modifier)) {
+                        SquareView(idx, data.squares[idx], 0.dp, 1.dp, s, data, false, inlineW = cardW, onClick = { onSquare(idx) })
+                    }
+                    if (now) TokenView(tokenOf(my), 32.dp, col, Modifier.offset(y = (-22).dp))
+                }
+            }
+        }
+    }
+}
+
 /** Cifra que sube y se desvanece junto al nombre cuando cambia el dinero. */
 @Composable
 private fun DeltaText(d: Delta, modifier: Modifier) {
@@ -1011,7 +1060,7 @@ private fun DeltaText(d: Delta, modifier: Modifier) {
 @Composable
 private fun GamePanel(
     s: Poly.State, r: Social.PolyRoom, my: Int, data: Poly.Data, seatName: (Int) -> String, tokenOf: (Int) -> Int,
-    log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, frozen: Boolean, shownCash: IntArray?, shownTurn: Int, myPos: Int, onSquare: (Int) -> Unit,
+    log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, frozen: Boolean, shownCash: IntArray?, shownTurn: Int,
     onSend: (String) -> Unit, onTrade: () -> Unit, modifier: Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)) {
@@ -1100,6 +1149,14 @@ private fun GamePanel(
                 if (s.jail[my]) { B("Pagar ${Poly.eur(Poly.JAIL_FINE)}", "p", false, s.cash[my] >= Poly.JAIL_FINE); if (s.jf[my] > 0) B("Usar carta", "c", false) }
                 B("Tirar dados", "r", cta = true)
             }
+            // regla opcional: viajar en tren a otra estación tuya en vez de tirar
+            if (s.cfg.rails && !s.jail[my]) {
+                val st = listOf(5, 15, 25, 35)
+                val trips = st.filter { Poly.act(s, my, "x$it", true) == null }
+                if (trips.isNotEmpty()) Btns {
+                    for (i in trips) B("Tren a ${data.squares[i].n.removePrefix("Estación ")} · ${if ((st.indexOf(i) - st.indexOf(s.pos[my]) + 4) % 4 == 1) 50 else 150} €", "x$i", false)
+                }
+            }
         } else if (s.phase == "buy") {
             val q = data.squares[s.buy]
             Status("${q.n} · ${Poly.eur(q.p)}")
@@ -1122,26 +1179,6 @@ private fun GamePanel(
         val lines = log.takeLast(if (compact) 2 else 4)
         lines.forEachIndexed { idx, line ->
             Text(line, color = OnSurfaceDim.copy(alpha = if (idx == lines.lastIndex) 1f else 0.6f), fontSize = if (compact) 11.sp else 13.sp, fontWeight = if (idx == lines.lastIndex) FontWeight.SemiBold else FontWeight.Normal)
-        }
-        // tira lineal con tu posición: la casilla de detrás, la tuya y las siguientes (3 en pantalla completa, 5 normal)
-        if (my >= 0 && !s.bk[my]) {
-            val n = if (compact) 3 else 5
-            val col = PolyData.colors[my]
-            BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 8.dp)) {
-                val cardW = (maxWidth - 6.dp * (n - 1) - 12.dp) / n
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                    for (k in 0 until n) {
-                        val idx = (myPos - 1 + k + 40) % 40
-                        val now = k == 1
-                        Box(contentAlignment = Alignment.TopCenter) {
-                            Box(Modifier.graphicsLayer { scaleX = if (now) 1.16f else 1f; scaleY = if (now) 1.16f else 1f; alpha = if (now) 1f else 0.88f }.then(if (now) Modifier.border(3.dp, col, RoundedCornerShape(6.dp)) else Modifier)) {
-                                SquareView(idx, data.squares[idx], 0.dp, 1.dp, s, data, false, inlineW = cardW, onClick = { onSquare(idx) })
-                            }
-                            if (now) TokenView(tokenOf(my), 32.dp, col, Modifier.offset(y = (-20).dp))
-                        }
-                    }
-                }
-            }
         }
     }
 }

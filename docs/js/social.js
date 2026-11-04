@@ -366,7 +366,7 @@ const roomOf = (d, id) => (d ? {
   id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), acts: list(d, 'acts'),
   tok: Object.fromEntries(Object.entries(d.fields?.tok?.mapValue?.fields || {}).map(([k, v]) => [k, Number(v.integerValue)])),
   money: Number(d.fields?.money?.integerValue || 1500), goBonus: d.fields?.goBonus?.booleanValue === true, auction: d.fields?.auction?.booleanValue === true,
-  pot: d.fields?.pot?.booleanValue !== false, dblBonus: d.fields?.dblBonus?.booleanValue === true,
+  pot: d.fields?.pot?.booleanValue !== false, dblBonus: d.fields?.dblBonus?.booleanValue === true, rails: d.fields?.rails?.booleanValue === true,
   seed: Number(d.fields?.seed?.integerValue || 0),
 } : null);
 const getRoom = async (id) => roomOf((await getAll('rooms', [id]).catch(() => ({})))[id], id);
@@ -375,7 +375,7 @@ const getRoom = async (id) => roomOf((await getAll('rooms', [id]).catch(() => ({
 async function createRoom(friendUid) {
   const me = (await live()).uid, pair = pairId(me, friendUid), id = uid();
   await commit(
-    write(`rooms/${id}`, { host: str(me), invited: strs([friendUid]), players: strs([me]), tok: { mapValue: { fields: { [me]: intV(0) } } }, money: intV(1500), goBonus: boolV(false), auction: boolV(true), pot: boolV(true), dblBonus: boolV(false), status: str('lobby'), seed: intV(0), acts: strs([]) }, { serverTime: 'at' }),
+    write(`rooms/${id}`, { host: str(me), invited: strs([friendUid]), players: strs([me]), tok: { mapValue: { fields: { [me]: intV(0) } } }, money: intV(1500), goBonus: boolV(false), auction: boolV(true), pot: boolV(true), dblBonus: boolV(false), rails: boolV(false), status: str('lobby'), seed: intV(0), acts: strs([]) }, { serverTime: 'at' }),
     write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('poly'), game: str(id) }, { serverTime: 'at' }),
     write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
   return id;
@@ -395,7 +395,7 @@ const polyApi = (id) => ({
   },
   join: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs([...room.players, me]), tok: { mapValue: { fields: { [me]: intV(tok) } } } }, ['players', `tok.\`${me}\``])); },
   leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
-  setCfg: async (room, c) => { await commit(writeMask(`rooms/${room.id}`, { money: intV(c.money), goBonus: boolV(c.goBonus), auction: boolV(c.auction), pot: boolV(c.pot), dblBonus: boolV(c.dblBonus) }, ['money', 'goBonus', 'auction', 'pot', 'dblBonus'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`rooms/${room.id}`, { money: intV(c.money), goBonus: boolV(c.goBonus), auction: boolV(c.auction), pot: boolV(c.pot), dblBonus: boolV(c.dblBonus), rails: boolV(c.rails) }, ['money', 'goBonus', 'auction', 'pot', 'dblBonus', 'rails'])); },
   setTok: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { tok: { mapValue: { fields: { [me]: intV(tok) } } } }, [`tok.\`${me}\``])); },
   start: async (room, seed) => { await commit(writeMask(`rooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
   act: async (room, acts, over) => { await commit(writeMask(`rooms/${room.id}`, { acts: strs(acts), ...(over ? { status: str('finished') } : {}) }, over ? ['acts', 'status'] : ['acts'])); },

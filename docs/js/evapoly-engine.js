@@ -7,7 +7,7 @@
 //   r tirar · p pagar multa de cárcel · c usar carta de cárcel · b comprar · n no comprar · a subastar
 //   i<cantidad> pujar · f retirarse de la subasta · e terminar turno
 //   h<casilla> construir · s<casilla> vender edificio · m<casilla> hipotecar · u<casilla> deshipotecar
-//   k usar la carta Maricarmen (te libra de un alquiler) · d pagar la deuda · q declararse en quiebra · z abandonar la partida
+//   x<estación> viajar en tren a otra estación tuya (regla opcional) · k usar la carta Maricarmen (te libra de un alquiler) · d pagar la deuda · q declararse en quiebra · z abandonar la partida
 //   T<a>|<doy €>|<pido €>|<doy casillas>|<pido casillas>|<doy cartas>|<pido cartas> proponer un trato · Y aceptar · N rechazar/cancelar
 
 export const GO_SALARY = 200;
@@ -35,7 +35,7 @@ function shuffled(s, n) {
 // ───── estado inicial ─────
 export function initGame(data, n, cfg, seed) {
   const s = {
-    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus }, r: seed | 0,
+    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails }, r: seed | 0,
     pos: Array(n).fill(0), cash: Array(n).fill(cfg.money), jail: Array(n).fill(false), jt: Array(n).fill(0), jf: Array(n).fill(0),
     bk: Array(n).fill(false),
     own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false), hs: HOUSES, ht: HOTELS,
@@ -467,6 +467,24 @@ export function act(s, seat, code, dry = false) {
         s.cash[seat] -= unmortgageCost(s, i); s.mort[i] = false;
         say(s, `@${seat} deshipoteca ${q.n}`, 'mort', { seat, sq: i });
       }
+      return ok();
+    }
+    case 'x': {
+      // movimiento por raíles: en vez de tirar, pagas y viajas a otra estación tuya (la siguiente 50 €, la de enfrente 150 €); solo hacia delante
+      if (!s.cfg.rails || !mine || s.phase !== 'roll' || s.dbl > 0 || s.again) return 'Ahora no puedes viajar en tren';
+      if (s.jail[seat]) return 'Estás en la cárcel';
+      const st = [5, 15, 25, 35], from = s.pos[seat], k = st.indexOf(from), to = Number(arg), j = st.indexOf(to);
+      if (k < 0 || s.own[from] !== seat || s.mort[from]) return 'Tienes que estar en una estación tuya';
+      if (j < 0 || s.own[to] !== seat || s.mort[to]) return 'Esa estación no es tuya';
+      const step = (j - k + 4) % 4, cost = step === 1 ? 50 : step === 2 ? 150 : 0;
+      if (!cost) return 'Solo a la siguiente o a la de enfrente';
+      if (s.cash[seat] < cost) return 'No tienes dinero';
+      if (dry) return OK;
+      s.cash[seat] -= cost;
+      say(s, `@${seat} paga ${eur(cost)} y viaja en tren hasta ${sq(s, to).n}`, 'rail', { seat, from, to, amt: cost });
+      if (to < from) goPay(s, seat, false); // cruza la Salida
+      s.pos[seat] = to; s.again = false; s.dbl = 0;
+      settle(s);
       return ok();
     }
     case 'k': {

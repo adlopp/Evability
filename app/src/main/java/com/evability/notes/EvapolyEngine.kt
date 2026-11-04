@@ -21,7 +21,7 @@ object Poly {
     class Sq(val n: String, val t: String, val g: String?, val p: Int, val r: IntArray, val i: String? = null)
     class Card(val x: String, val e: String)
     class Data(val squares: List<Sq>, val groups: Map<String, String>, val house: Map<String, Int>, val chance: List<Card>, val chest: List<Card>)
-    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false)
+    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false, val rails: Boolean = false)
     class Deck(var order: List<Int> = emptyList(), var i: Int = 0, var held: Int = -1, var held2: Int = -1)
     class Auction(val sq: Int, var bid: Int, var bidder: Int, val active: MutableList<Int>, var cur: Int)
     class Debt(val seat: Int, val amt: Int, var to: Int, val why: String, val rent: Boolean = false, val tax: Boolean = false)
@@ -561,6 +561,29 @@ object Poly {
                         say(s, "@$seat deshipoteca ${q.n}", "mort", seat = seat, sq = i)
                     }
                 }
+                return ok()
+            }
+            'x' -> {
+                // movimiento por raíles: en vez de tirar, pagas y viajas a otra estación tuya (la siguiente 50 €, la de enfrente 150 €); solo hacia delante
+                if (!s.cfg.rails || !mine || s.phase != "roll" || s.dbl > 0 || s.again) return "Ahora no puedes viajar en tren"
+                if (s.jail[seat]) return "Estás en la cárcel"
+                val st = listOf(5, 15, 25, 35)
+                val from = s.pos[seat]
+                val k = st.indexOf(from)
+                val to = arg.toIntOrNull() ?: return "Estación no válida"
+                val j = st.indexOf(to)
+                if (k < 0 || s.own[from] != seat || s.mort[from]) return "Tienes que estar en una estación tuya"
+                if (j < 0 || s.own[to] != seat || s.mort[to]) return "Esa estación no es tuya"
+                val step = (j - k + 4) % 4
+                val cost = if (step == 1) 50 else if (step == 2) 150 else 0
+                if (cost == 0) return "Solo a la siguiente o a la de enfrente"
+                if (s.cash[seat] < cost) return "No tienes dinero"
+                if (dry) return null
+                s.cash[seat] -= cost
+                say(s, "@$seat paga ${eur(cost)} y viaja en tren hasta ${s.sq(to).n}", "rail", seat = seat, from = from, to = to, amt = cost)
+                if (to < from) goPay(s, seat, false) // cruza la Salida
+                s.pos[seat] = to; s.again = false; s.dbl = 0
+                settle(s)
                 return ok()
             }
             'k' -> {
