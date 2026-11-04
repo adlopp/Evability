@@ -865,7 +865,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── tienda de La Peza ─────
   const SHOP_NAMES = { 1: 'Maricarmen', 2: 'Dado triple', 3: 'Doble condena', 4: 'Billete de tren', 5: 'Obras', 6: 'Intercambio', 7: 'Desatascador' };
-  const haveOf = (s, k, my) => [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl][k][my];
+  const haveOf = (s, k, my) => [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl][k][my] + ((s.sb[my] >> k) & 1);
   function openShop() {
     const s = state, my = mySeat();
     const content = h('div', { class: 'stack' });
@@ -873,7 +873,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     const draw = () => fill(content, Object.entries(SHOP).map(([k, it]) => h('button', {
       class: 'game-row', disabled: s.cash[my] < it.p || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || running || busy,
       onclick: async () => { m.close(); await send('o' + k); },
-    }, h('div', {}, SHOP_NAMES[k], h('small', {}, haveOf(s, Number(k), my) > 0 ? 'Ya lo tienes' : eur(it.p))))));
+    }, h('div', {}, SHOP_NAMES[k], h('small', {}, haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : eur(it.p))))));
     draw();
     m = modal({ title: 'Tienda', content, actions: [{ label: 'Cerrar' }] });
   }

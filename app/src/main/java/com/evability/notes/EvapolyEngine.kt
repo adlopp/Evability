@@ -75,6 +75,7 @@ object Poly {
         val sh = IntArray(n) // 1 si ya compró en la tienda en esta visita
         val fence = IntArray(40) { -1 } // vallas de obras: quién la puso
         val pl = IntArray(n) // desatascadores
+        val sb = IntArray(n) // objetos de la tienda que ya ha comprado cada jugador (un bit por objeto): solo se compra una vez
         var evk = "" // evento activo: dog, snow o rain
         var evl = IntArray(n) // turnos que le quedan a cada jugador con el evento activo
         var evf = false // el evento se ha activado en este mismo turno
@@ -127,7 +128,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), sb.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -700,10 +701,10 @@ object Poly {
                 val item = SHOP[k] ?: return "Objeto no válido"
                 if (s.sh[seat] != 0) return "Solo puedes comprar un objeto por visita"
                 val have = when (k) { 1 -> s.mc[seat]; 2 -> s.tri[seat]; 3 -> s.dj[seat]; 4 -> s.tk[seat]; 5 -> s.ob[seat]; 6 -> s.sw[seat]; else -> s.pl[seat] }
-                if (have > 0) return "Ya tienes ese objeto"
+                if (have > 0 || (s.sb[seat] shr k) and 1 == 1) return "Ya has comprado ese objeto"
                 if (s.cash[seat] < item.second) return "No tienes dinero"
                 if (dry) return null
-                s.cash[seat] -= item.second; s.sh[seat] = 1
+                s.cash[seat] -= item.second; s.sh[seat] = 1; s.sb[seat] = s.sb[seat] or (1 shl k)
                 when (k) { 1 -> s.mc[seat]++; 2 -> s.tri[seat]++; 3 -> s.dj[seat]++; 4 -> s.tk[seat]++; 5 -> s.ob[seat]++; 6 -> s.sw[seat]++; else -> s.pl[seat]++ }
                 say(s, "@$seat compra ${item.first} en la tienda por ${eur(item.second)}", "buy", seat = seat, amt = item.second)
                 return ok()

@@ -1586,8 +1586,8 @@ private fun GamePanel(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val names = mapOf(1 to "Maricarmen", 2 to "Dado triple", 3 to "Doble condena", 4 to "Billete de tren", 5 to "Obras", 6 to "Intercambio", 7 to "Desatascador")
                         for ((k, it) in Poly.SHOP) {
-                            val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; else -> s.pl[my] } > 0
-                            PolyButton("${names[k]} · " + (if (have) "Ya lo tienes" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !locked) { showShop = false; onSend("o$k") }
+                            val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; else -> s.pl[my] } > 0 || (s.sb[my] shr k) and 1 == 1
+                            PolyButton("${names[k]} · " + (if (have) "Ya lo has comprado" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !locked) { showShop = false; onSend("o$k") }
                         }
                     }
                 },
