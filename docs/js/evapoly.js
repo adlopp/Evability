@@ -106,6 +106,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   function setFull(on) {
     root.classList.toggle('full', on);
     fsBtn.replaceChildren(icon(on ? 'shrink' : 'expand'));
+    setTimeout(paintStrip, 80);
     if (on) root.requestFullscreen?.().catch(() => {});
     else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
   }
@@ -275,7 +276,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     while (q.length && !closed) {
       const e = q.shift();
       if (e.k === 'dice') {
-        pathSet = new Set(); paintPath();
+        clearLanding(); pathSet = new Set(); paintPath();
         SFX.dice();
         // los dados giran cambiando de cara y se van frenando hasta quedarse en el resultado
         const t0 = Date.now();
@@ -291,7 +292,9 @@ export function openEvapoly({ roomId, api, onClose }) {
         pathSet = new Set(Array.from({ length: steps + 1 }, (_, i) => (from + dir * i + 80) % 40)); paintPath();
         let p = from;
         for (let i = 0; i < steps; i++) { p = (p + dir + 40) % 40; view.pos[e.seat] = p; SFX.step(); paintTokens(); await wait(e.seat === mySeat() || steps < 8 ? 160 : 120); }
+        showLanding(to);
       } else if (e.k === 'jail') {
+        clearLanding();
         // sirena, luces de policía y la ficha cruza el tablero en diagonal hasta la cárcel
         SFX.siren(); boardEl.classList.add('police'); slowSeat = e.seat; paintTokens();
         await wait(60); view.pos[e.seat] = e.to; paintTokens();
@@ -303,7 +306,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       else if (e.k === 'build') SFX.build();
       else if (e.k === 'win') SFX.win();
       if (e.k === 'buy' || e.k === 'build' || e.k === 'mort') paintBoard();
-      if (e.k === 'card') await showCard(e);
+      if (e.k === 'card') { clearLanding(); await showCard(e); }
       if (e.m) { log.push(say(e.m)); if (log.length > 40) log.shift(); paintLog(); }
     }
     running = false;
@@ -340,7 +343,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── dibujo ─────
-  let boardEl = null, gridEl = null, tokensEl = null, centerEl = null, sideEl = null, logEl = null, actEl = null, diceBox = null, potEl = null;
+  let stripEl = null, boardEl = null, gridEl = null, tokensEl = null, centerEl = null, sideEl = null, logEl = null, actEl = null, diceBox = null, potEl = null;
   const dieA = makeDie(), dieB = makeDie();
   let pathSet = new Set(), slowSeat = -1, lastCash = null;
   const deltas = [];
@@ -369,7 +372,8 @@ export function openEvapoly({ roomId, api, onClose }) {
       // dentro de la casilla todo se dibuja como en las de abajo; las de los lados se giran (como en el tablero de verdad)
       const cw = c.w * GS * 0.62, ch = c.h * GS * 0.62, sideways = side === 'left' || side === 'right';
       const W = sideways ? ch : cw, H = sideways ? cw : ch;
-      const body = H - (g ? 1.6 : 0) - (side === 'corner' ? 0 : 2.9) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
+      const ownable = ['street', 'station', 'utility'].includes(q2.t);
+      const body = H - (g ? 1.5 : 0) - (ownable ? 2.4 : 0) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
       const fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
       const pin = h('div', { class: 'pin', style: sideways ? { width: W + 'em', height: H + 'em' } : {} },
         g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'pr' }, eur(q2.p))) : null,
@@ -377,7 +381,7 @@ export function openEvapoly({ roomId, api, onClose }) {
           q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
           h('span', { class: 'nm', style: { fontSize: fs + 'em' } }, q2.n),
           q2.p && !g ? h('span', { class: 'pr2' + (q2.t === 'station' ? ' zoomonly' : '') }, eur(q2.p)) : null),
-        side === 'corner' ? null : h('div', { class: 'pown' }, h('span', { class: 'bld' })));
+        ownable ? h('div', { class: 'pown' }, h('span', { class: 'bld' })) : null);
       const el = h('div', { class: `psq t-${q2.t} s-${side}`, 'data-i': i, style: { left: c.l + '%', top: c.t + '%', width: c.w + '%', height: c.h + '%' } }, pin);
       // mantener pulsado: la casilla se agranda mientras se sigue pulsando; un toque corto abre su ficha
       let timer, held = false, zoom = null;
@@ -402,14 +406,15 @@ export function openEvapoly({ roomId, api, onClose }) {
     sideEl = h('div', { class: 'pplayers' });
     actEl = h('div', { class: 'pact' });
     logEl = h('div', { class: 'plog' });
-    sideBox.append(sideEl, actEl, logEl);
+    stripEl = h('div', { class: 'pstrip' });
+    sideBox.append(sideEl, actEl, logEl, stripEl);
     fill(body, h('div', { class: 'poly-main' }, boardEl, sideBox));
     paintBoard(); paintTokens(); paintCenter(); paintLog(); paintPath();
   }
 
   /** Copia ampliada de una casilla (con su dueño y edificios) en el centro de la pantalla. */
-  function zoomOf(el, c) {
-    const F = Math.min(30, Math.max(18, window.innerWidth / 13)), z = el.cloneNode(true);
+  function zoomOf(el, c, at) {
+    const F = at ? Math.min(30, Math.max(16, at.w / 24)) : Math.min(30, Math.max(18, window.innerWidth / 13)), z = el.cloneNode(true);
     z.classList.add('pzoom');
     z.removeAttribute('data-i');
     let w = c.w * GS * 0.62 * F, hh = c.h * GS * 0.62 * F;
@@ -417,8 +422,20 @@ export function openEvapoly({ roomId, api, onClose }) {
       // las de los lados se enderezan: se ven de pie, con la banda arriba
       z.classList.remove('s-left', 's-right'); z.classList.add('s-bot'); const pin = z.querySelector('.pin'); pin.style.width = ''; pin.style.height = ''; [w, hh] = [hh, w];
     }
-    Object.assign(z.style, { position: 'fixed', left: '50%', top: '42%', transform: 'translate(-50%, -50%)', width: w + 'px', height: hh + 'px', fontSize: F + 'px' });
+    Object.assign(z.style, { position: 'fixed', left: at ? at.x + 'px' : '50%', top: at ? at.y + 'px' : '42%', transform: 'translate(-50%, -50%)', width: w + 'px', height: hh + 'px', fontSize: F + 'px' });
     return z;
+  }
+
+  /** Al caer en una casilla, se ve ampliada en el centro unos segundos (como al mantenerla pulsada); la ven todos. */
+  let landEl = null, landTimer = null;
+  function clearLanding() { clearTimeout(landTimer); landEl?.remove(); landEl = null; }
+  function showLanding(i) {
+    clearLanding();
+    if (!gridEl) return;
+    const br = boardEl.getBoundingClientRect(); // se ve en el centro del tablero
+    landEl = zoomOf(gridEl.children[i], cellOf(i), { x: br.left + br.width / 2, y: br.top + br.height / 2, w: br.width }); landEl.classList.add('landing');
+    document.body.append(landEl);
+    landTimer = setTimeout(clearLanding, 2400);
   }
 
   function paintBoard() {
@@ -432,6 +449,33 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (bld) { const lvl = state.lvl[i]; bld.replaceChildren(...(lvl === 5 ? [h('u', { class: 'hotel' })] : Array.from({ length: lvl }, () => h('u', { class: 'house' })))); }
     }
   }
+  /** Copia derecha de una casilla (con su dueño y edificios) de `cardW` píxeles de ancho, para la tira de posición. */
+  function cardCopy(i, cardW) {
+    const el = gridEl.children[i], c = cellOf(i), z = el.cloneNode(true);
+    z.removeAttribute('data-i'); z.classList.remove('hl'); z.classList.add('scard');
+    let w = c.w * GS * 0.62, hh = c.h * GS * 0.62;
+    if (z.classList.contains('s-left') || z.classList.contains('s-right')) {
+      z.classList.remove('s-left', 's-right'); z.classList.add('s-bot'); const pin = z.querySelector('.pin'); pin.style.width = ''; pin.style.height = ''; [w, hh] = [hh, w];
+    }
+    const F = cardW / w;
+    Object.assign(z.style, { left: 'auto', top: 'auto', width: cardW + 'px', height: (hh * F) + 'px', fontSize: F + 'px' });
+    return z;
+  }
+
+  /** Tira lineal de tu posición: la casilla de detrás, la tuya y las siguientes (3 en pantalla completa, 5 normal), siempre en línea aunque el tablero gire. */
+  function paintStrip() {
+    if (!stripEl || !state || !gridEl) return;
+    const my = mySeat();
+    if (my < 0 || state.bk[my]) { fill(stripEl); return; }
+    const n = root.classList.contains('full') ? 3 : 5, pos = view.pos[my];
+    const w = Math.max(46, ((stripEl.clientWidth || 320) - (n - 1) * 6 - 10) / n);
+    fill(stripEl, Array.from({ length: n }, (_, k) => {
+      const i = (pos - 1 + k + 40) % 40, now = k === 1, card = cardCopy(i, w);
+      card.addEventListener('click', () => openSquare(i));
+      return h('div', { class: 'pslot' + (now ? ' now' : ''), style: `--c:${COLORS[my]}` }, card, now ? tokEl(my, 'mini on-strip') : null);
+    }));
+  }
+
   /** Casillas que se iluminan en amarillo: todas las del recorrido de la última tirada. */
   function paintPath() { if (gridEl) for (let i = 0; i < 40; i++) gridEl.children[i].classList.toggle('hl', pathSet.has(i)); }
   function paintTokens() {
@@ -441,6 +485,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       const c = centerOf(view.pos[s]), dx = (s % 2 ? 1 : -1) * 1.6, dy = (s < 2 ? -1 : 1) * 1.6;
       return h('span', { class: 'ptk on-board' + (state.turn === s && state.phase !== 'order' ? ' turn' : '') + (slowSeat === s ? ' slow' : ''), style: `--c:${COLORS[s]};left:${c.x + dx}%;top:${c.y + dy}%`, html: svgOf(tokenOf(s)) });
     }));
+    paintStrip();
   }
   function paintCenter() {
     if (!centerEl) return;
@@ -603,7 +648,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── salir ─────
   function close() {
-    closed = true; timer?.stop(); stopMusic(); document.removeEventListener('fullscreenchange', onFs); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); root.remove(); onClose?.();
+    closed = true; clearLanding(); timer?.stop(); stopMusic(); document.removeEventListener('fullscreenchange', onFs); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); root.remove(); onClose?.();
   }
 
   fill(body, h('div', { class: 'dim', style: { padding: '24px', textAlign: 'center' } }, '…'));

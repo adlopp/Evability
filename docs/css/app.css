@@ -564,3 +564,24 @@ textarea.field { resize: vertical; }
 .pown { height: 2.9em; display: flex; align-items: center; justify-content: center; }
 .pown .bld { display: flex; gap: .25em; align-items: center; justify-content: center; min-height: 0; }
 .bld u { width: 1.3em; height: 1.3em; } .bld u.hotel { width: 2.3em; }
+
+/* precio centrado en una banda más fina, franja del dueño algo más pequeña, casas más pequeñas y casilla ampliada al caer */
+.pband { height: 1.5em; display: flex; align-items: center; justify-content: center; line-height: 1; }
+.pband .pr { display: block; font-size: .9em; line-height: 1; transform: none; padding: 0; margin: 0; }
+.pown { height: 2.4em; }
+.pown .bld { gap: .15em; }
+.bld u { width: .9em; height: .9em; border-radius: .12em; } .bld u.hotel { width: 1.7em; }
+.psq.landing { animation: landpop .4s cubic-bezier(.2,1.3,.4,1) both; }
+@keyframes landpop { from { opacity: 0; scale: .55; } to { opacity: 1; scale: 1; } }
+
+/* tira lineal con tu posición */
+.pstrip { display: flex; gap: 6px; justify-content: center; align-items: center; padding: 22px 4px 8px; }
+.pstrip:empty { display: none; }
+.pslot { position: relative; flex: none; display: flex; align-items: center; justify-content: center; }
+.pslot .scard { position: relative; flex: none; border-radius: 6px; box-shadow: 0 .3em .8em rgba(0,0,0,.35); opacity: .88; cursor: pointer; overflow: hidden; }
+.pslot.now { z-index: 2; } .pslot.now .scard { opacity: 1; transform: scale(1.16); box-shadow: 0 0 0 3px var(--c), 0 .5em 1.4em rgba(0,0,0,.5); }
+.pslot .ptk.on-strip { position: absolute; left: 50%; top: -20px; transform: translateX(-50%); z-index: 3; width: 34px; height: 34px; }
+.pomo.poly.full .pstrip { padding: 20px 0 6px; gap: 5px; }
+
+.pslot .scard { color: #1c1b22; }
+.pslot .scard::after { display: none; }

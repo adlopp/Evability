@@ -26,7 +26,7 @@
    "i": "go"
   },
   {
-   "n": "Calle Cojones",
+   "n": "Calle Colgones",
    "t": "street",
    "g": "brown",
    "p": 60,
@@ -45,7 +45,7 @@
    "i": "chest"
   },
   {
-   "n": "Calle Colgones",
+   "n": "Calle Cojones",
    "t": "street",
    "g": "brown",
    "p": 60,
@@ -564,7 +564,7 @@
     "e": "cash:100"
    },
    {
-    "x": "Gastos de hospital: paga 100 €.",
+    "x": "Gastos de hospital: el Dr. Javi dice que pagues 100 €.",
     "e": "cash:-100"
    },
    {

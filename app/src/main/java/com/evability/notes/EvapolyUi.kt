@@ -228,20 +228,22 @@ private fun Die(n: Int, size: Dp, rot: Float, scale: Float = 1f) {
 @Composable
 private fun SquareView(
     i: Int, q: Poly.Sq, gside: Dp, u: Dp, st: Poly.State, data: Poly.Data, hl: Boolean,
-    zoomed: Boolean = false, onHold: (Boolean) -> Unit = {}, onClick: () -> Unit = {},
+    zoomed: Boolean = false, onHold: (Boolean) -> Unit = {}, onClick: () -> Unit = {}, inlineW: Dp? = null,
 ) {
     val c = cellOf(i)
-    val zs = if (zoomed) 2.6f else 1f
-    val uu = u * zs
-    val fs = with(LocalDensity.current) { uu.toSp() }
     val where = sideOf(i)
-    val cw = gside * (c[2] / 100f) * zs
-    val ch = gside * (c[3] / 100f) * zs
     // dentro de la casilla todo se dibuja como en las de abajo; las de los lados se giran (como en el tablero de verdad)
     val sideways = where == "left" || where == "right"
+    val cwEm = c[2] * 0.97f * 0.62f
+    val chEm = c[3] * 0.97f * 0.62f
+    val zs = if (zoomed) 2.6f else 1f
+    val uu = if (inlineW != null) inlineW / (if (sideways) chEm else cwEm) else u * zs
+    val fs = with(LocalDensity.current) { uu.toSp() }
+    val cw = if (inlineW != null) uu * cwEm else gside * (c[2] / 100f) * zs
+    val ch = if (inlineW != null) uu * chEm else gside * (c[3] / 100f) * zs
     val iw = if (sideways) ch else cw
     val ih = if (sideways) cw else ch
-    val upright = zoomed && sideways // al ampliarla se ve recta, como las de abajo
+    val upright = (zoomed || inlineW != null) && sideways // al ampliarla (o en la tira) se ve recta, como las de abajo
     val ow = if (upright) iw else cw
     val oh = if (upright) ih else ch
     val wEm = iw.value / uu.value
@@ -251,16 +253,17 @@ private fun SquareView(
     val bg = when (q.t) { "go" -> Color(0xFFF6E3B4); "gotojail" -> Color(0xFFF4C7C3); "jail" -> Color(0xFFF1E1C9); "parking" -> Color(0xFFD9E8F5); else -> Color(0xFFF3F7EE) }
     val owner = st.own[i]
     val lvl = st.lvl[i]
-    val bandEm = if (band != null) 1.6f else 0f // banda de color fina, con el precio centrado
-    val ownEm = if (where == "corner") 0f else 2.9f // franja del dueño grande (lleva las casas)
+    val ownable = q.t == "street" || q.t == "station" || q.t == "utility"
+    val bandEm = if (band != null) 1.5f else 0f // banda de color fina, con el precio centrado
+    val ownEm = if (ownable) 2.4f else 0f // franja del dueño (lleva las casas); Suerte, Caja, impuestos y esquinas no la tienen y su contenido queda centrado
     val icoEm = if (q.i == null) 0f else if (where == "corner") 4.2f else if (special) 2.9f else 2.0f
     val prEm = if (q.p > 0 && band == null && (q.t != "station" || zoomed)) 1.1f else 0f
     val nameEm = if (where == "corner") 1.35f else if (special) 1f else fitName(q.n, wEm - 0.7f, maxOf(1f, hEm - bandEm - ownEm - icoEm - prEm - 0.3f))
     Box(
-        (if (zoomed) Modifier.offset((gside - ow) / 2f, (gside - oh) / 2f) else Modifier.offset(gside * (c[0] / 100f), gside * (c[1] / 100f)))
+        (if (inlineW != null) Modifier else if (zoomed) Modifier.offset((gside - ow) / 2f, (gside - oh) / 2f) else Modifier.offset(gside * (c[0] / 100f), gside * (c[1] / 100f)))
             .size(ow, oh)
             .background(bg).border(if (zoomed) 2.dp else 0.7.dp, Ink.copy(alpha = 0.75f))
-            .then(if (zoomed) Modifier else Modifier.pointerInput(i) { detectTapGestures(onPress = { tryAwaitRelease(); onHold(false) }, onLongPress = { onHold(true) }, onTap = { onClick() }) }),
+            .then(if (inlineW != null) Modifier.clickable { onClick() } else if (zoomed) Modifier else Modifier.pointerInput(i) { detectTapGestures(onPress = { tryAwaitRelease(); onHold(false) }, onLongPress = { onHold(true) }, onTap = { onClick() }) }),
     ) {
         Box(Modifier.align(Alignment.Center).requiredSize(iw, ih).alpha(if (st.mort[i]) 0.55f else 1f).rotate(if (upright) 0f else if (where == "left") 90f else if (where == "right") -90f else 0f)) {
             val bandPart: @Composable ColumnScope.() -> Unit = {
@@ -269,7 +272,13 @@ private fun SquareView(
                         Modifier.fillMaxWidth().height(uu * bandEm).background(band).background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.28f), Color.Black.copy(alpha = 0.14f)))),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(Poly.eur(q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.95f, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                        Text(
+                            Poly.eur(q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.9f, fontWeight = FontWeight.ExtraBold, maxLines = 1,
+                            style = androidx.compose.ui.text.TextStyle(
+                                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false), lineHeight = fs * 0.9f,
+                                lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both),
+                            ),
+                        )
                     }
                 }
             }
@@ -286,13 +295,13 @@ private fun SquareView(
                 }
             }
             val ownPart: @Composable ColumnScope.() -> Unit = {
-                if (where != "corner") Box(
+                if (ownable) Box(
                     Modifier.fillMaxWidth().height(uu * ownEm).background(if (owner >= 0) PolyData.colors[owner] else Color.Transparent),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (lvl > 0) Row(horizontalArrangement = Arrangement.spacedBy(uu * 0.25f), verticalAlignment = Alignment.CenterVertically) {
-                        if (lvl == 5) Box(Modifier.size(uu * 2.3f, uu * 1.3f).background(Color(0xFFD62828), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF5B0D0D)))
-                        else repeat(lvl) { Box(Modifier.size(uu * 1.3f).background(Color(0xFF2E9B4F), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF0D3B1D))) }
+                    if (lvl > 0) Row(horizontalArrangement = Arrangement.spacedBy(uu * 0.15f), verticalAlignment = Alignment.CenterVertically) {
+                        if (lvl == 5) Box(Modifier.size(uu * 1.7f, uu * 0.9f).background(Color(0xFFD62828), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF5B0D0D)))
+                        else repeat(lvl) { Box(Modifier.size(uu * 0.9f).background(Color(0xFF2E9B4F), RoundedCornerShape(uu * 0.15f)).border(0.7.dp, Color(0xFF0D3B1D))) }
                     }
                 }
             }
@@ -381,7 +390,7 @@ private fun BannerView(b: BannerInfo, side: Dp) {
 
 @Composable
 private fun PolyBoard(
-    side: Dp, data: Poly.Data, st: Poly.State, viewPos: List<Int>, tokenOf: (Int) -> Int, dice: DiceView?, pathSet: Set<Int>, slowSeat: Int, police: Boolean,
+    side: Dp, data: Poly.Data, st: Poly.State, viewPos: List<Int>, tokenOf: (Int) -> Int, dice: DiceView?, pathSet: Set<Int>, slowSeat: Int, police: Boolean, landing: Int?,
     cardFx: CardFx?, banner: BannerInfo?, onCardDone: () -> Unit, onSquare: (Int) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -395,7 +404,7 @@ private fun PolyBoard(
     ) {
         Box(Modifier.offset(side * 0.015f, side * 0.015f).size(g)) {
             var zoom by remember { mutableStateOf<Int?>(null) }
-            for (i in 0 until 40) SquareView(i, data.squares[i], g, u, st, data, i in pathSet, onHold = { zoom = if (it) i else null }) { onSquare(i) }
+            for (i in 0 until 40) SquareView(i, data.squares[i], g, u, st, data, i in pathSet, onHold = { zoom = if (it) i else null }, onClick = { onSquare(i) })
             // centro: mazos de cartas, título con relieve, bote de La Peza y dados
             Box(Modifier.offset(g * 0.16f, g * 0.17f).size(g * 0.21f, g * 0.145f).rotate(-35f).background(Brush.linearGradient(listOf(Color(0xFFFF9F3A), Color(0xFFE5700F))), RoundedCornerShape(u * 0.9f)).border(u * 0.22f, Color.White.copy(alpha = 0.9f), RoundedCornerShape(u * 0.9f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { PolyIcon("chance", g * 0.06f); Text("SUERTE", color = Color.White, fontWeight = FontWeight.Black, fontSize = with(density) { (u * 1.05f).toSp() }) }
@@ -438,7 +447,7 @@ private fun PolyBoard(
                 val y by animateDpAsState(g * ((ci[1] + ci[3] / 2f + dy) / 100f) - tk / 2f, tween(ms, easing = if (slowSeat == s) FastOutSlowInEasing else LinearEasing), label = "y$s")
                 TokenView(tokenOf(s), tk, PolyData.colors[s], Modifier.offset(x, y))
             }
-            zoom?.let { SquareView(it, data.squares[it], g, u, st, data, false, zoomed = true) }
+            (zoom ?: landing)?.let { SquareView(it, data.squares[it], g, u, st, data, false, zoomed = true) }
         }
         if (police) {
             val pt = rememberInfiniteTransition(label = "policia")
@@ -515,6 +524,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var pathSet by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var slowSeat by remember { mutableIntStateOf(-1) }
     var police by remember { mutableStateOf(false) }
+    var landing by remember { mutableStateOf<Int?>(null) }
     val deltas = remember { mutableStateListOf<Delta>() }
     var lastCash by remember { mutableStateOf<IntArray?>(null) }
     var shownCash by remember { mutableStateOf<IntArray?>(null) }
@@ -578,6 +588,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
             val e = queue.removeFirst()
             when (e.k) {
                 "dice" -> {
+                    landing = null
                     pathSet = emptySet()
                     PolySound.play("dice")
                     // los dados giran cambiando de cara y se van frenando hasta quedarse en el resultado
@@ -601,9 +612,14 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         PolySound.play("step")
                         delay(if (e.seat == mySeat() || steps < 8) 160 else 120)
                     }
+                    // al caer, la casilla se ve ampliada en el centro unos segundos (la ven todos)
+                    landing = e.to
+                    val shown = e.to
+                    scope.launch { delay(2400); if (landing == shown) landing = null }
                 }
                 "jail" -> {
                     // sirena, luces de policía y la ficha cruza el tablero en diagonal hasta la cárcel
+                    landing = null
                     PolySound.play("siren"); police = true; slowSeat = e.seat
                     delay(60)
                     viewPos[e.seat] = e.to
@@ -615,6 +631,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 "buy" -> PolySound.play("buy")
                 "build" -> PolySound.play("build")
                 "card" -> {
+                    landing = null
                     PolySound.play(if (e.sq == 1) "chest" else "card")
                     val fx = CardFx(if (e.sq == 1) "chest" else if (e.sq == 0) "chance" else "peza", if (e.sq == 1) "Caja de comunidad" else if (e.sq == 0) "Suerte" else "La Peza", seatName(e.seat), e.text)
                     cardFx = fx
@@ -775,12 +792,12 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 }.coerceAtLeast(260.dp)
                 val panel: @Composable (Modifier) -> Unit = { mod ->
                     GamePanel(
-                        s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen, running, shownCash, shownTurn,
+                        s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen, running, shownCash, shownTurn, if (my >= 0) viewPos[my] else 0, { squareSel = it },
                         onSend = ::send, onTrade = { showTrade = true }, mod,
                     )
                 }
                 val board: @Composable () -> Unit = {
-                    PolyBoard(side, data, s, viewPos, ::tokenOf, dice, pathSet, slowSeat, police, cardFx, banner, { cardFx = null }) { squareSel = it }
+                    PolyBoard(side, data, s, viewPos, ::tokenOf, dice, pathSet, slowSeat, police, landing, cardFx, banner, { cardFx = null }) { squareSel = it }
                 }
                 if (land) {
                     Row(
@@ -994,7 +1011,8 @@ private fun DeltaText(d: Delta, modifier: Modifier) {
 @Composable
 private fun GamePanel(
     s: Poly.State, r: Social.PolyRoom, my: Int, data: Poly.Data, seatName: (Int) -> String, tokenOf: (Int) -> Int,
-    log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, frozen: Boolean, shownCash: IntArray?, shownTurn: Int, onSend: (String) -> Unit, onTrade: () -> Unit, modifier: Modifier,
+    log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, frozen: Boolean, shownCash: IntArray?, shownTurn: Int, myPos: Int, onSquare: (Int) -> Unit,
+    onSend: (String) -> Unit, onTrade: () -> Unit, modifier: Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)) {
         for (i in r.players.indices) {
@@ -1104,6 +1122,26 @@ private fun GamePanel(
         val lines = log.takeLast(if (compact) 2 else 4)
         lines.forEachIndexed { idx, line ->
             Text(line, color = OnSurfaceDim.copy(alpha = if (idx == lines.lastIndex) 1f else 0.6f), fontSize = if (compact) 11.sp else 13.sp, fontWeight = if (idx == lines.lastIndex) FontWeight.SemiBold else FontWeight.Normal)
+        }
+        // tira lineal con tu posición: la casilla de detrás, la tuya y las siguientes (3 en pantalla completa, 5 normal)
+        if (my >= 0 && !s.bk[my]) {
+            val n = if (compact) 3 else 5
+            val col = PolyData.colors[my]
+            BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 8.dp)) {
+                val cardW = (maxWidth - 6.dp * (n - 1) - 12.dp) / n
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                    for (k in 0 until n) {
+                        val idx = (myPos - 1 + k + 40) % 40
+                        val now = k == 1
+                        Box(contentAlignment = Alignment.TopCenter) {
+                            Box(Modifier.graphicsLayer { scaleX = if (now) 1.16f else 1f; scaleY = if (now) 1.16f else 1f; alpha = if (now) 1f else 0.88f }.then(if (now) Modifier.border(3.dp, col, RoundedCornerShape(6.dp)) else Modifier)) {
+                                SquareView(idx, data.squares[idx], 0.dp, 1.dp, s, data, false, inlineW = cardW, onClick = { onSquare(idx) })
+                            }
+                            if (now) TokenView(tokenOf(my), 32.dp, col, Modifier.offset(y = (-20).dp))
+                        }
+                    }
+                }
+            }
         }
     }
 }
