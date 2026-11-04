@@ -2,7 +2,7 @@
 // evapoly-engine.js en cada dispositivo con la misma semilla, así todos ven lo mismo. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller } from './ui.js';
-import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE } from './evapoly-engine.js';
+import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP } from './evapoly-engine.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
 const MONEY_MIN = 500, MONEY_MAX = 2500, MONEY_STEP = 50;
@@ -159,7 +159,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── sala de espera ─────
   let lobbySig = '';
-  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.ownerFree, room.buildAll, room.status]);
+  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.ownerFree, room.shop, room.status]);
   function renderLobby() {
     lobbySig = sigOf();
     const isHost = room.host === me, inRoom = room.players.includes(me), invitedOnly = !inRoom && room.invited.includes(me);
@@ -203,7 +203,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(body, h('div', { class: 'poly-lobby' }, seats, tokRow,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Dinero inicial'), moneyOut), slider,
-        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails'), toggle('Sin alquiler si el dueño está en la casilla', 'ownerFree'), toggle('Una casa en cada calle del grupo', 'buildAll')),
+        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails'), toggle('Sin alquiler si el dueño está en la casilla', 'ownerFree'), toggle('Tienda en La Peza', 'shop')),
       h('div', { class: 'pbtns' }, buttons)));
   }
   const firstFreeTok = () => { const used = new Set(Object.values(room.tok)); return toks.findIndex((_, i) => !used.has(i)); };
@@ -220,7 +220,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── partida ─────
-  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus, rails: room.rails, ownerFree: room.ownerFree, buildAll: room.buildAll });
+  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus, rails: room.rails, ownerFree: room.ownerFree, shop: room.shop });
   function startState() {
     state = initGame(data, room.players.length, cfgOf(), room.seed);
     acts = [];
@@ -281,10 +281,10 @@ export function openEvapoly({ roomId, api, onClose }) {
         // los dados giran cambiando de cara y se van frenando hasta quedarse en el resultado
         const t0 = Date.now();
         while (Date.now() - t0 < 1400 && !closed) {
-          dice = { d1: 1 + Math.floor(Math.random() * 6), d2: 1 + Math.floor(Math.random() * 6), rolling: true }; paintCenter();
+          dice = { d1: 1 + Math.floor(Math.random() * 6), d2: 1 + Math.floor(Math.random() * 6), d3: e.d3 ? 1 + Math.floor(Math.random() * 6) : 0, rolling: true }; paintCenter();
           await wait(60 + (Date.now() - t0) / 9);
         }
-        dice = { d1: e.d1, d2: e.d2, rolling: false }; paintCenter();
+        dice = { d1: e.d1, d2: e.d2, d3: e.d3 || 0, rolling: false }; paintCenter();
         await wait(350);
       } else if (e.k === 'move') {
         const from = view.pos[e.seat], to = e.to, dir = e.dir ?? 1;
@@ -309,6 +309,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       else if (e.k === 'buy') SFX.buy();
       else if (e.k === 'build') SFX.build();
       else if (e.k === 'win') SFX.win();
+      moneyPop(e);
       if (e.k === 'buy' || e.k === 'build' || e.k === 'mort') paintBoard();
       if (e.k === 'card') { clearLanding(); await showCard(e); }
       if (e.m) { log.push(say(e.m)); if (log.length > 40) log.shift(); paintLog(); }
@@ -317,6 +318,17 @@ export function openEvapoly({ roomId, api, onClose }) {
     view.pos = state.pos.slice();
     if (state.turn !== seen) { seen = state.turn; if (state.turn === mySeat() && state.phase !== 'over' && state.phase !== 'order') { SFX.turn(); banner('Te toca', mySeat()); } }
     renderGame();
+  }
+
+  /** Pagos y cobros: salen un momento en medio del tablero, no solo en el registro. */
+  function moneyPop(e) {
+    if (!moneyBox || !e.amt || e.seat == null || e.seat < 0 || !['pay', 'gain', 'go', 'buy', 'build', 'mort', 'rail', 'free'].includes(e.k)) return;
+    const amt = eur(Math.abs(e.amt)), who = seatName(e.seat);
+    const incoming = e.k === 'gain' || e.k === 'go' || ((e.k === 'build' || e.k === 'mort') && e.amt > 0);
+    const text = e.k === 'pay' && e.to >= 0 ? `${who} → ${seatName(e.to)} · ${amt}` : incoming ? `${who} +${amt}` : `${who} −${amt}`;
+    const el = h('div', { class: 'pmoney ' + (e.k === 'pay' && e.to >= 0 ? 'xfer' : incoming ? 'in' : 'out'), style: `--c:${COLORS[e.seat]}` }, text);
+    moneyBox.append(el); setTimeout(() => el.remove(), 2300);
+    while (moneyBox.children.length > 4) moneyBox.firstChild.remove();
   }
 
   /** Cartel que aparece un momento sobre el tablero (por ejemplo «Te toca»). */
@@ -347,8 +359,8 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── dibujo ─────
-  let stripEl = null, boardEl = null, gridEl = null, tokensEl = null, centerEl = null, sideEl = null, logEl = null, actEl = null, diceBox = null, potEl = null;
-  const dieA = makeDie(), dieB = makeDie();
+  let moneyBox = null, stripEl = null, boardEl = null, gridEl = null, tokensEl = null, centerEl = null, sideEl = null, logEl = null, actEl = null, diceBox = null, potEl = null;
+  const dieA = makeDie(), dieB = makeDie(), dieC = makeDie();
   let pathSet = new Set(), slowSeat = -1, lastCash = null;
   const deltas = [];
 
@@ -404,11 +416,13 @@ export function openEvapoly({ roomId, api, onClose }) {
     }
     tokensEl = h('div', { class: 'ptokens' });
     potEl = h('div', { class: 'ppot' });
-    diceBox = h('div', { class: 'pdice', style: { visibility: 'hidden' } }, dieA.el, dieB.el);
+    dieC.el.style.display = 'none';
+    diceBox = h('div', { class: 'pdice', style: { visibility: 'hidden' } }, dieA.el, dieB.el, dieC.el);
     const deck = (cls, ico, label) => h('div', { class: 'pdeck ' + cls }, h('span', { class: 'dk-ico', html: svgOf({ p: icons[ico] }) }), label);
     centerEl = h('div', { class: 'pcenter' }, deck('c', 'chance', 'Suerte'), deck('h', 'chest', 'Caja'), h('div', { class: 'ptitle' }, 'EVAPOLY'), potEl, diceBox);
     gridEl.append(centerEl, tokensEl);
-    boardEl.append(gridEl);
+    moneyBox = h('div', { class: 'pmoneys' });
+    boardEl.append(gridEl, moneyBox);
     const sideBox = h('div', { class: 'pside' });
     sideEl = h('div', { class: 'pplayers' });
     actEl = h('div', { class: 'pact' });
@@ -453,7 +467,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       const ow = el.querySelector('.pown');
       if (ow) { ow.style.background = o >= 0 ? COLORS[o] : 'transparent'; ow.style.visibility = o >= 0 ? 'visible' : 'hidden'; }
       const bld = el.querySelector('.bld');
-      if (bld) { const lvl = state.lvl[i]; bld.replaceChildren(...(lvl === 5 ? [h('u', { class: 'hotel' })] : Array.from({ length: lvl }, () => h('u', { class: 'house' })))); }
+      if (bld) { const lvl = state.lvl[i]; bld.replaceChildren(...(lvl === 5 ? [h('span', { class: 'htl', html: svgOf({ p: icons.hotel }) })] : Array.from({ length: lvl }, () => h('span', { class: 'hse', html: svgOf({ p: icons.house }) })))); }
     }
   }
   /** Copia derecha de una casilla (con su dueño y edificios) de `cardW` píxeles de ancho, para la tira de posición. */
@@ -498,7 +512,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (!centerEl) return;
     potEl.textContent = state && state.pot > 0 ? `La Peza · ${eur(state.pot)}` : '';
     potEl.style.display = state && state.pot > 0 ? '' : 'none';
-    if (dice) { dieA.set(dice.d1); dieB.set(dice.d2); diceBox.style.visibility = 'visible'; diceBox.classList.toggle('rolling', !!dice.rolling); diceBox.classList.toggle('landed', !dice.rolling); }
+    if (dice) { dieA.set(dice.d1); dieB.set(dice.d2); dieC.el.style.display = dice.d3 ? '' : 'none'; if (dice.d3) dieC.set(dice.d3); diceBox.style.visibility = 'visible'; diceBox.classList.toggle('rolling', !!dice.rolling); diceBox.classList.toggle('landed', !dice.rolling); }
   }
   function paintLog() { if (logEl) { fill(logEl, log.slice(-4).map((l) => h('div', {}, l))); logEl.scrollTop = logEl.scrollHeight; } }
 
@@ -516,7 +530,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(sideEl, room.players.map((u, i) => {
       const jail = s.jail[i], bk = s.bk[i];
       const turn = s.phase === 'order' ? s.ordCand[i] && !s.ordRolls[i] : s.turn === i && s.phase !== 'over';
-      const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? 'Maricarmen' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
+      const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? `Maricarmen${s.mc[i] > 1 ? ' ×' + s.mc[i] : ''}` : null, s.tri[i] ? `Dado triple${s.tri[i] > 1 ? ' ×' + s.tri[i] : ''}` : null, s.dj[i] ? `Doble condena${s.dj[i] > 1 ? ' ×' + s.dj[i] : ''}` : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
       const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : ''), style: `--c:${COLORS[i]}` },
         tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info),
           h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: data.squares[sqi].g ? data.groups[data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
@@ -560,6 +574,11 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (s.jail[my]) { row.push(btn(`Pagar ${eur(JAIL_FINE)}`, 'p', { primary: false, disabled: s.cash[my] < JAIL_FINE })); if (s.jf[my] > 0) row.push(btn('Usar carta', 'c', { primary: false })); }
       row.push(btn('Tirar dados', 'r', { cls: 'cta' }));
       out.push(h('div', { class: 'pbtns' }, row));
+      // objetos comprados en la tienda
+      const items = [];
+      if (s.tri[my] > 0 && !s.jail[my]) items.push(btn('Dado triple', 'R', { primary: false }));
+      if (s.jail[my] && s.dj[my] > 0 && s.jmax[my] === 3) items.push(btn('Doble condena', 'w', { primary: false }));
+      if (items.length) out.push(h('div', { class: 'pbtns' }, items));
       // regla opcional: viajar en tren a otra estación tuya en vez de tirar
       if (s.cfg.rails && !s.jail[my]) {
         const trips = [5, 15, 25, 35].filter((i) => act(s, my, 'x' + i, true) === null);
@@ -575,6 +594,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     // acciones secundarias en tu turno
     if (my >= 0 && cur === my && (s.phase === 'roll' || s.phase === 'end') && !s.trade) {
       out.push(h('div', { class: 'pbtns small' },
+        s.cfg.shop && s.pos[my] === 20 && !s.jail[my] ? h('button', { class: 'text-btn', disabled: running, onclick: openShop }, 'Tienda') : null,
         h('button', { class: 'text-btn', disabled: running, onclick: openTrade }, 'Negociar'),
         h('button', { class: 'text-btn', disabled: running, onclick: async () => { if (await confirmDialog('Abandonar', '', 'Abandonar')) send('z'); } }, 'Abandonar')));
     }
@@ -601,10 +621,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       const buttons = [];
       const can = (code) => act(s, my, code, true) === null;
       if (my >= 0 && o === my && !running) {
-        const all = s.cfg.buildAll, code = (all ? 'g' : 'h') + i;
-        let cost = houseCost(s, i);
-        if (all && q2.g) { const g = groupOf(s, q2.g), mn = Math.min(...g.map((j) => s.lvl[j])); cost = g.filter((j) => s.lvl[j] === mn).length * houseCost(s, i); }
-        if (can(code)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send(code); draw(); } }, all ? `Construir en cada calle ${eur(cost)}` : `Construir ${eur(houseCost(s, i))}`));
+        if (can('h' + i)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send('h' + i); draw(); } }, `Construir ${eur(houseCost(s, i))}`));
         if (can('s' + i)) buttons.push(h('button', { class: 'btn outline', onclick: async () => { await send('s' + i); draw(); } }, `Vender ${eur(houseCost(s, i) / 2)}`));
         if (can('m' + i)) buttons.push(h('button', { class: 'btn outline', onclick: async () => { await send('m' + i); draw(); } }, `Hipotecar ${eur(q2.p / 2)}`));
         if (can('u' + i)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send('u' + i); draw(); } }, `Deshipotecar ${eur(unmortgageCost(s, i))}`));
@@ -613,6 +630,19 @@ export function openEvapoly({ roomId, api, onClose }) {
     };
     draw();
     modal({ content, actions: [{ label: 'Cerrar' }] });
+  }
+
+  // ───── tienda de La Peza ─────
+  const SHOP_NAMES = { 1: 'Maricarmen', 2: 'Dado triple', 3: 'Doble condena' };
+  function openShop() {
+    const s = state, my = mySeat();
+    const content = h('div', { class: 'stack' });
+    const draw = () => fill(content, Object.entries(SHOP).map(([k, it]) => h('button', {
+      class: 'game-row', disabled: s.cash[my] < it.p || running || busy,
+      onclick: async () => { await send('o' + k); draw(); },
+    }, h('div', {}, SHOP_NAMES[k], h('small', {}, eur(it.p))))));
+    draw();
+    modal({ title: 'Tienda', content, actions: [{ label: 'Cerrar' }] });
   }
 
   // ───── tratos ─────

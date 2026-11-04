@@ -13,7 +13,9 @@
 export const GO_SALARY = 200;
 export const JAIL_FINE = 50;
 export const JAIL = 10;
-export const HOUSES = 32, HOTELS = 12;
+export const MAX_HOUSES = 32, MAX_HOTELS = 12; // límite de casas y de hoteles de CADA jugador (no se comparte)
+/** Tienda de La Peza (regla opcional): objetos que no salen en Suerte ni en Caja. */
+export const SHOP = { 1: { n: 'la carta Maricarmen', p: 450 }, 2: { n: 'el dado triple', p: 100 }, 3: { n: 'la doble condena', p: 250 } };
 
 export const eur = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' €';
 
@@ -35,13 +37,13 @@ function shuffled(s, n) {
 // ───── estado inicial ─────
 export function initGame(data, n, cfg, seed) {
   const s = {
-    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails, ownerFree: !!cfg.ownerFree, buildAll: !!cfg.buildAll }, r: seed | 0,
+    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails, ownerFree: !!cfg.ownerFree, shop: !!cfg.shop }, r: seed | 0,
     pos: Array(n).fill(0), cash: Array(n).fill(cfg.money), jail: Array(n).fill(false), jt: Array(n).fill(0), jf: Array(n).fill(0),
     bk: Array(n).fill(false),
-    own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false), hs: HOUSES, ht: HOTELS,
+    own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false),
     deck: { c: { order: [], i: 0, held: -1, held2: -1 }, h: { order: [], i: 0, held: -1, held2: -1 } }, mc: Array(n).fill(0), mcBy: -1, pot: 0,
     turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, trade: null,
-    heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0),
+    heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0), tri: Array(n).fill(0), dj: Array(n).fill(0), jmax: Array(n).fill(3),
   };
   s.deck.c.order = shuffled(s, data.cards.chance.length);
   s.deck.h.order = shuffled(s, data.cards.chest.length);
@@ -58,6 +60,8 @@ const nextAlive = (s, from) => { for (let i = 1; i <= s.n; i++) { const t = (fro
 export const groupOf = (s, g) => { const a = []; for (let i = 0; i < 40; i++) if (sq(s, i).g === g) a.push(i); return a; };
 export const houseCost = (s, i) => s.data.house[sq(s, i).g] || 0;
 export const ownsAll = (s, seat, g) => groupOf(s, g).every((i) => s.own[i] === seat);
+export const housesOf = (s, seat) => { let n = 0; for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] > 0 && s.lvl[i] < 5) n += s.lvl[i]; return n; };
+export const hotelsOf = (s, seat) => { let n = 0; for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] === 5) n++; return n; };
 export const countOwned = (s, seat, t) => { let c = 0; for (let i = 0; i < 40; i++) if (s.own[i] === seat && sq(s, i).t === t) c++; return c; };
 
 /** Alquiler que se paga al caer en la casilla `i` (sin contar los dados, que valen para los servicios). */
@@ -122,7 +126,7 @@ function moveDice(s, seat, total) {
 
 function sendJail(s, seat, why) {
   const from = s.pos[seat];
-  s.pos[seat] = JAIL; s.jail[seat] = true; s.jt[seat] = 0;
+  s.pos[seat] = JAIL; s.jail[seat] = true; s.jt[seat] = 0; s.jmax[seat] = 3;
   s.again = false; s.dbl = 0;
   say(s, `@${seat} va a la cárcel${why}`, 'jail', { seat, from, to: JAIL });
 }
@@ -207,7 +211,6 @@ function liquidate(s, seat) {
   for (let i = 0; i < 40; i++) {
     if (s.own[i] !== seat || !s.lvl[i]) continue;
     s.cash[seat] += s.lvl[i] * houseCost(s, i) / 2;
-    if (s.lvl[i] === 5) s.ht++; else s.hs += s.lvl[i];
     s.lvl[i] = 0;
   }
 }
@@ -215,10 +218,10 @@ function liquidate(s, seat) {
 function bankrupt(s, seat, to, why) {
   liquidate(s, seat);
   for (let i = 0; i < 40; i++) if (s.own[i] === seat) { s.own[i] = to; if (to < 0) s.mort[i] = false; }
-  if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; if (s.mcBy === seat) s.mcBy = to; }
-  else if (s.mc[seat] > 0) { s.deck.c.held2 = -1; s.mcBy = -1; }
+  if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] += s.tri[seat]; s.dj[to] += s.dj[seat]; if (s.mcBy === seat) s.mcBy = to; }
+  else if (s.mcBy === seat) { s.deck.c.held2 = -1; s.mcBy = -1; }
   else for (const w of ['c', 'h']) if (s.deck[w].held >= 0 && s.heldBy[w] === seat) { s.deck[w].held = -1; s.heldBy[w] = -1; }
-  s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.bk[seat] = true; s.jail[seat] = false;
+  s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.bk[seat] = true; s.jail[seat] = false;
   s.debts = s.debts.filter((d) => d.seat !== seat).map((d) => (d.to === seat ? { ...d, to } : d));
   if (s.trade && (s.trade.from === seat || s.trade.to === seat)) s.trade = null;
   say(s, `@${seat} ${why}${to >= 0 ? `: todo pasa a @${to}` : ': todo vuelve al banco'}`, 'bankrupt', { seat });
@@ -253,14 +256,14 @@ function canBuild(s, seat, i) {
   if (s.lvl[i] >= 5) return 'Ya tiene hotel';
   if (g.some((j) => s.lvl[j] < s.lvl[i])) return 'Hay que construir por igual en todo el grupo';
   if (s.cash[seat] < houseCost(s, i)) return 'No tienes dinero';
-  if (s.lvl[i] === 4 ? s.ht < 1 : s.hs < 1) return 'No quedan edificios en el banco';
+  if (s.lvl[i] === 4 ? hotelsOf(s, seat) >= MAX_HOTELS : housesOf(s, seat) >= MAX_HOUSES) return s.lvl[i] === 4 ? 'Ya tienes 12 hoteles' : 'Ya tienes 32 casas';
   return null;
 }
 function canSell(s, seat, i) {
   const q = sq(s, i);
   if (q.t !== 'street' || s.own[i] !== seat || s.lvl[i] < 1) return 'Sin edificios';
   if (groupOf(s, q.g).some((j) => s.lvl[j] > s.lvl[i])) return 'Hay que vender por igual en todo el grupo';
-  if (s.lvl[i] === 5 && s.hs < 4) return 'No hay 4 casas en el banco para cambiar el hotel';
+  if (s.lvl[i] === 5 && housesOf(s, seat) + 4 > MAX_HOUSES) return 'No te caben 4 casas más para cambiar el hotel';
   return null;
 }
 function canMortgage(s, seat, i) {
@@ -356,12 +359,12 @@ export function act(s, seat, code, dry = false) {
           s.jail[seat] = false; s.jt[seat] = 0; s.again = false;
           say(s, `@${seat} saca dobles y sale de la cárcel`, 'free');
           moveDice(s, seat, a + b);
-        } else if (++s.jt[seat] >= 3) {
+        } else if (++s.jt[seat] >= s.jmax[seat]) {
           s.jail[seat] = false; s.jt[seat] = 0; s.again = false;
-          say(s, `@${seat} falla por tercera vez: paga la multa y sale`);
+          say(s, `@${seat} agota su condena: paga la multa y sale`);
           pay(s, seat, JAIL_FINE, -1, ' de multa');
           if (s.debts.length) s.pendMove = a + b; else moveDice(s, seat, a + b);
-        } else { say(s, `@${seat} sigue en la cárcel (${s.jt[seat]}/3)`); s.again = false; }
+        } else { say(s, `@${seat} sigue en la cárcel (${s.jt[seat]}/${s.jmax[seat]})`); s.again = false; }
       } else if (a === b) {
         if (++s.dbl >= 3) { say(s, `@${seat} saca tres dobles seguidos`); sendJail(s, seat, ''); }
         else {
@@ -378,7 +381,7 @@ export function act(s, seat, code, dry = false) {
       if (s.cash[seat] < JAIL_FINE) return 'No tienes dinero';
       if (dry) return OK;
       s.cash[seat] -= JAIL_FINE; s.jail[seat] = false; s.jt[seat] = 0;
-      say(s, `@${seat} paga ${eur(JAIL_FINE)} y sale de la cárcel`, 'free');
+      say(s, `@${seat} paga ${eur(JAIL_FINE)} y sale de la cárcel`, 'free', { seat, amt: JAIL_FINE, to: -1 });
       return ok();
     case 'c':
       if (!mine || s.phase !== 'roll' || !s.jail[seat] || s.jf[seat] < 1) return 'No puedes usar la carta';
@@ -393,7 +396,7 @@ export function act(s, seat, code, dry = false) {
       if (s.cash[seat] < q.p) return 'No tienes dinero';
       if (dry) return OK;
       s.cash[seat] -= q.p; s.own[s.buy] = seat;
-      say(s, `@${seat} compra ${q.n} por ${eur(q.p)}`, 'buy', { seat, sq: s.buy });
+      say(s, `@${seat} compra ${q.n} por ${eur(q.p)}`, 'buy', { seat, sq: s.buy, amt: q.p });
       s.buy = -1; settle(s);
       return ok();
     }
@@ -431,7 +434,7 @@ export function act(s, seat, code, dry = false) {
       if (au.active.length === 0 || (au.active.length === 1 && au.bidder === au.active[0])) {
         if (au.bidder >= 0) {
           s.cash[au.bidder] -= au.bid; s.own[au.sq] = au.bidder;
-          say(s, `@${au.bidder} gana la subasta de ${sq(s, au.sq).n} por ${eur(au.bid)}`, 'buy', { seat: au.bidder, sq: au.sq });
+          say(s, `@${au.bidder} gana la subasta de ${sq(s, au.sq).n} por ${eur(au.bid)}`, 'buy', { seat: au.bidder, sq: au.sq, amt: au.bid });
         } else say(s, `Nadie puja por ${sq(s, au.sq).n}`);
         s.auction = null; settle(s);
       } else au.cur = au.active[(op === 'f' ? pos : pos + 1) % au.active.length];
@@ -453,41 +456,52 @@ export function act(s, seat, code, dry = false) {
       const q = sq(s, i), c = houseCost(s, i);
       if (op === 'h') {
         s.cash[seat] -= c;
-        if (s.lvl[i] === 4) { s.ht--; s.hs += 4; } else s.hs--;
         s.lvl[i]++;
-        say(s, `@${seat} construye ${s.lvl[i] === 5 ? 'un hotel' : 'una casa'} en ${q.n}`, 'build', { seat, sq: i });
+        say(s, `@${seat} construye ${s.lvl[i] === 5 ? 'un hotel' : 'una casa'} en ${q.n}`, 'build', { seat, sq: i, amt: -c });
       } else if (op === 's') {
         s.cash[seat] += c / 2;
-        if (s.lvl[i] === 5) { s.ht++; s.hs -= 4; } else s.hs++;
         s.lvl[i]--;
-        say(s, `@${seat} vende un edificio de ${q.n}`, 'build', { seat, sq: i });
+        say(s, `@${seat} vende un edificio de ${q.n}`, 'build', { seat, sq: i, amt: c / 2 });
       } else if (op === 'm') {
         s.mort[i] = true; s.cash[seat] += q.p / 2;
-        say(s, `@${seat} hipoteca ${q.n} y cobra ${eur(q.p / 2)}`, 'mort', { seat, sq: i });
+        say(s, `@${seat} hipoteca ${q.n} y cobra ${eur(q.p / 2)}`, 'mort', { seat, sq: i, amt: q.p / 2 });
       } else {
         s.cash[seat] -= unmortgageCost(s, i); s.mort[i] = false;
-        say(s, `@${seat} deshipoteca ${q.n}`, 'mort', { seat, sq: i });
+        say(s, `@${seat} deshipoteca ${q.n}`, 'mort', { seat, sq: i, amt: -unmortgageCost(s, i) });
       }
       return ok();
     }
-    case 'g': {
-      // opción: una casa en cada calle del grupo de una vez (las que van más atrás; se paga por todas)
-      if (!s.cfg.buildAll || !(mine && free)) return 'Ahora no puedes construir';
-      const i = Number(arg), q = sq(s, i);
-      if (!Number.isInteger(i) || i < 0 || i > 39 || q.t !== 'street' || s.own[i] !== seat) return 'No es tuya';
-      const g = groupOf(s, q.g);
-      if (!ownsAll(s, seat, q.g)) return 'Necesitas todo el grupo';
-      if (g.some((j) => s.mort[j])) return 'Hay una hipotecada en el grupo';
-      const min = Math.min(...g.map((j) => s.lvl[j]));
-      if (min >= 5) return 'Ya tiene hotel';
-      const todo = g.filter((j) => s.lvl[j] === min), cost = todo.length * houseCost(s, i);
-      let hs = s.hs, ht = s.ht;
-      for (const j of todo) { if (s.lvl[j] === 4) { if (ht < 1) return 'No quedan hoteles en el banco'; ht--; hs += 4; } else { if (hs < 1) return 'No quedan casas en el banco'; hs--; } }
-      if (s.cash[seat] < cost) return 'No tienes dinero';
+    case 'R': {
+      // dado triple (comprado en la tienda): se tiran tres dados y no se aplica nada de los dobles
+      if (!mine || s.phase !== 'roll' || s.tri[seat] < 1 || s.jail[seat]) return 'No puedes tirar el dado triple ahora';
       if (dry) return OK;
-      s.cash[seat] -= cost;
-      for (const j of todo) { if (s.lvl[j] === 4) { s.ht--; s.hs += 4; } else s.hs--; s.lvl[j]++; }
-      say(s, `@${seat} construye ${min === 4 ? 'un hotel' : 'una casa'} en cada calle del grupo (${todo.length}) por ${eur(cost)}`, 'build', { seat, sq: i });
+      s.tri[seat]--;
+      const a = rint(s, 6) + 1, b = rint(s, 6) + 1, c3 = rint(s, 6) + 1;
+      s.d1 = a; s.d2 = b;
+      say(s, `@${seat} usa el dado triple y saca ${a}, ${b} y ${c3}`, 'dice', { seat, d1: a, d2: b, d3: c3 });
+      s.again = false; s.dbl = 0;
+      moveDice(s, seat, a + b + c3);
+      settle(s);
+      return ok();
+    }
+    case 'w': {
+      // doble condena (comprada en la tienda): en la cárcel, en vez de 3 turnos puedes estar hasta 6
+      if (!mine || s.phase !== 'roll' || !s.jail[seat] || s.dj[seat] < 1 || s.jmax[seat] > 3) return 'No puedes usar la doble condena';
+      if (dry) return OK;
+      s.dj[seat]--; s.jmax[seat] = 6;
+      say(s, `@${seat} usa la doble condena: puede estar hasta 6 turnos en la cárcel`, 'msg', { seat });
+      return ok();
+    }
+    case 'o': {
+      // tienda de La Peza (regla opcional): se compra estando en La Peza
+      if (!s.cfg.shop || !(mine && free) || s.pos[seat] !== 20 || s.jail[seat]) return 'La tienda está en La Peza';
+      const item = SHOP[Number(arg)];
+      if (!item) return 'Objeto no válido';
+      if (s.cash[seat] < item.p) return 'No tienes dinero';
+      if (dry) return OK;
+      s.cash[seat] -= item.p;
+      if (Number(arg) === 1) s.mc[seat]++; else if (Number(arg) === 2) s.tri[seat]++; else s.dj[seat]++;
+      say(s, `@${seat} compra ${item.n} en la tienda por ${eur(item.p)}`, 'buy', { seat, amt: item.p });
       return ok();
     }
     case 'x': {
@@ -513,7 +527,8 @@ export function act(s, seat, code, dry = false) {
       const d = s.debts[0];
       if (s.phase !== 'debt' || !d || d.seat !== seat || !d.rent || s.mc[seat] < 1) return 'No puedes usar Maricarmen';
       if (dry) return OK;
-      s.debts.shift(); s.mc[seat]--; s.deck.c.held2 = -1; s.mcBy = -1;
+      s.debts.shift(); s.mc[seat]--;
+      if (s.mcBy === seat) { s.deck.c.held2 = -1; s.mcBy = -1; } // si era la de la baraja, vuelve a ella; la comprada simplemente se gasta
       say(s, `@${seat} usa Maricarmen y no paga el alquiler`, 'free', { seat });
       settle(s);
       return ok();
@@ -600,4 +615,4 @@ export function applyText(s, text) {
 }
 
 /** Resumen del estado, para comparar partidas entre JS y Kotlin. */
-export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.hs, s.ht, s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
+export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
