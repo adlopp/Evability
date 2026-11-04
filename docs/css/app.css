@@ -605,3 +605,53 @@ textarea.field { resize: vertical; }
 .pmoney.in { background: #1f9d55; } .pmoney.out { background: #d33a31; } .pmoney.xfer { background: #3a3ac9; }
 @keyframes moneyup { 0% { opacity: 0; transform: translateY(1em) scale(.8); } 12% { opacity: 1; transform: translateY(0) scale(1.05); } 80% { opacity: 1; } 100% { opacity: 0; transform: translateY(-1.6em); } }
 .pdice .die { flex: none; }
+
+/* casilla hipotecada: tal cual, pero con un tono rojo bien marcado */
+.psq.mort { background: linear-gradient(180deg, #F2877F, #E5605A) !important; }
+.psq.mort .pin { filter: grayscale(1) sepia(.4) saturate(2.5) hue-rotate(-30deg); opacity: .62; }
+.psq.mort::after { content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none; background: rgba(214, 40, 40, .28); }
+/* valla de obras */
+.pfence { position: absolute; left: 8%; right: 8%; top: 50%; transform: translateY(-50%); z-index: 6; pointer-events: none; display: block; filter: drop-shadow(0 .12em .2em rgba(0,0,0,.45)); animation: fencein .5s cubic-bezier(.2,1.4,.4,1); }
+.pfence svg { width: 100%; height: auto; max-height: 100%; display: block; }
+@keyframes fencein { from { transform: translateY(-50%) scale(.2) rotate(-12deg); opacity: 0; } to { transform: translateY(-50%) scale(1) rotate(0); opacity: 1; } }
+
+.pomo.poly.full .pfull-dark { top: 56px; }
+.pomo.poly.dark-bg .pfull-exit, .pomo.poly.dark-bg .icon-btn { color: var(--on-surface); }
+
+/* ───── efectos del Evapoly ───── */
+.pfx-layer { position: absolute; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
+.pfx-layer > span { position: absolute; display: block; transform: translate(-50%, -50%); }
+.fxcoin { width: 2.6%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #FFF3B0, #F4B400 60%, #B8860B); box-shadow: 0 .1em .3em rgba(0,0,0,.4), inset 0 0 0 .12em rgba(255,255,255,.55); }
+.fxpuff { width: 4%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,.95), rgba(190,180,165,.75) 70%); animation: fxpuff .9s ease-out forwards; }
+@keyframes fxpuff { 0% { opacity: .9; transform: translate(-50%, -50%) scale(.3); } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy) - 2.5%)) scale(1.8); } }
+.fxspark { width: 1.4%; aspect-ratio: 1; border-radius: 50%; box-shadow: 0 0 .5em currentColor; animation: fxspark .75s ease-out forwards; }
+@keyframes fxspark { 0% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(.2); } }
+.fxghost { width: 3.4%; aspect-ratio: 1; border-radius: 50%; background: var(--c); opacity: .45; animation: fxghost .6s ease-out forwards; }
+@keyframes fxghost { to { opacity: 0; transform: translate(-50%, -50%) scale(.3); } }
+.fxconf { width: 1.4%; height: 2.4%; border-radius: 1px; transform: none; }
+.fxtrain { width: 9%; aspect-ratio: 1; filter: drop-shadow(0 .2em .3em rgba(0,0,0,.4)); }
+.fxtrain svg, .fxhammer svg { width: 100%; height: 100%; display: block; }
+.fxsmoke { width: 3.2%; aspect-ratio: 1; border-radius: 50%; background: rgba(245,245,245,.85); animation: fxsmoke 1.1s ease-out forwards; }
+@keyframes fxsmoke { 0% { opacity: .85; transform: translate(-50%, -50%) scale(.4); } 100% { opacity: 0; transform: translate(-50%, calc(-50% - 3.5%)) scale(2); } }
+.fxhammer { left: 50%; top: 46%; width: 22%; aspect-ratio: 1; transform-origin: 80% 85%; animation: fxhammer 1s cubic-bezier(.5, 0, .75, 0) forwards; filter: drop-shadow(0 .3em .5em rgba(0,0,0,.4)); }
+@keyframes fxhammer { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-60deg); } 15% { opacity: 1; } 33% { transform: translate(-50%, -50%) rotate(12deg); } 42% { transform: translate(-50%, -50%) rotate(-6deg); } 55% { transform: translate(-50%, -50%) rotate(4deg); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) rotate(0deg); } }
+/* halo del turno, saltito de la ficha al avanzar, cambio de sitio y campeón */
+.ptk.on-board.turn::after { content: ''; position: absolute; inset: -35%; border-radius: 50%; border: .22em solid var(--c); opacity: 0; animation: tkring 1.5s ease-out infinite; pointer-events: none; }
+@keyframes tkring { 0% { opacity: .85; transform: scale(.6); } 100% { opacity: 0; transform: scale(1.5); } }
+.ptk.hop svg { animation: tkhop .16s ease-out; }
+@keyframes tkhop { 0% { transform: translateY(0) scale(1); } 50% { transform: translateY(-.7em) scale(1.12); } 100% { transform: translateY(0) scale(1); } }
+.ptk.on-board.poof { animation: tkpoof .38s ease-in forwards; }
+@keyframes tkpoof { to { opacity: 0; transform: translate(-50%, -50%) scale(.1) rotate(180deg); } }
+.ptk.on-board.pop { animation: tkpop .5s cubic-bezier(.2, 1.5, .4, 1); }
+@keyframes tkpop { from { opacity: 0; transform: translate(-50%, -50%) scale(.1) rotate(-180deg); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+.ptk.on-board.champ { z-index: 35; animation: tkchamp 1s ease-in-out infinite alternate; }
+@keyframes tkchamp { from { transform: translate(-50%, -50%) scale(1.6); box-shadow: 0 0 0 .25em #FFD84A, 0 0 1em .4em #FFD84A; } to { transform: translate(-50%, -50%) scale(2); box-shadow: 0 0 0 .3em #fff, 0 0 1.6em .7em #FFD84A; } }
+/* casitas que caen con rebote y hoteles que se levantan */
+.bld .hse.drop, .bld .htl.drop { animation: hdrop .55s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes hdrop { 0% { transform: translateY(-380%) scale(.7); opacity: 0; } 55% { opacity: 1; } 100% { transform: translateY(0) scale(1); } }
+.bld .htl.rise { transform-origin: 50% 100%; animation: hrise .6s cubic-bezier(.2, 1.4, .4, 1); }
+@keyframes hrise { 0% { transform: scaleY(0); } 100% { transform: scaleY(1); } }
+/* sacudida del tablero (obras, cartas malas) */
+.pboard.shake { animation: pshake .5s ease-in-out; }
+@keyframes pshake { 0%, 100% { transform: translate(0); } 15% { transform: translate(-.5%, .3%); } 30% { transform: translate(.5%, -.3%); } 45% { transform: translate(-.4%, -.2%); } 60% { transform: translate(.4%, .2%); } 80% { transform: translate(-.2%, 0); } }
+@media (prefers-reduced-motion: reduce) { .ptk.on-board.turn::after, .ptk.on-board.champ { animation: none; } }

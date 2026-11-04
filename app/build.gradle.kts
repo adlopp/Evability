@@ -11,8 +11,8 @@ android {
         applicationId = "com.evability.notes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
-        versionName = "1.11.9"
+        versionCode = 49
+        versionName = "1.12.0"
     }
 
     buildTypes {
@@ -38,6 +38,7 @@ android {
 // El tablero, las cartas, las fichas y la música del Evapoly viven en docs/ (los usa también la web): se copian a los assets al compilar.
 val syncPolyAssets by tasks.registering(Copy::class) {
     from("../docs/data/evapoly.json", "../docs/data/evapoly-tokens.json", "../docs/data/evapoly-icons.json", "../docs/music/evapoly.mp3", "../docs/music/evapoly-dados.mp3", "../docs/music/evapoly-policia.mp3")
+    from("../docs/music") { include("evapoly-s-*.mp3") }
     into(layout.buildDirectory.dir("generated/polyAssets"))
 }
 android.sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/polyAssets"))

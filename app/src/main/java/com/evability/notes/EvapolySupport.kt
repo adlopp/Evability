@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.media.SoundPool
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.ui.graphics.Color
@@ -79,7 +80,60 @@ object PolySound {
     private const val RATE = 22050
     private var app: Context? = null
 
-    fun init(ctx: Context) { app = ctx.applicationContext }
+    fun init(ctx: Context) { app = ctx.applicationContext; ensurePool() }
+
+    // Sonidos grabados de fichas, cartas y dados (Kenney, CC0): se cargan una vez y se mezclan en capas con retardos.
+    private var pool: SoundPool? = null
+    private val ids = HashMap<String, Int>()
+    private val loaded = HashSet<Int>()
+    private val handler = Handler(Looper.getMainLooper())
+    private val FILES = listOf(
+        "chip-lay-1", "chip-lay-2", "chip-lay-3", "chips-collide-1", "chips-collide-2", "chips-collide-3", "chips-collide-4", "chips-handle-1", "chips-handle-2", "chips-handle-3",
+        "chips-handle-4", "chips-handle-5", "chips-handle-6", "chips-stack-1", "chips-stack-2", "chips-stack-3", "chips-stack-4", "chips-stack-5", "chips-stack-6", "card-slide-2",
+        "card-slide-6", "card-place-1", "card-place-2", "card-place-4", "card-fan-1", "card-fan-2", "card-shove-2", "card-shove-4", "cards-pack-open-1",
+    )
+    private class Hit(val file: String, val at: Double, val vol: Float)
+    private fun h(file: String, at: Double, vol: Float) = Hit(file, at, vol)
+    private fun recipe(kind: String): List<Hit>? = when (kind) {
+        "step" -> listOf(h(listOf("chip-lay-1", "chip-lay-2", "chip-lay-3").random(), 0.0, 0.22f))
+        "coin" -> listOf(h("chips-collide-1", 0.0, 0.5f), h("chips-handle-4", 0.1, 0.45f))
+        "pay" -> listOf(h("chips-handle-2", 0.0, 0.55f), h("chips-stack-1", 0.14, 0.45f))
+        "buy" -> listOf(h("chips-stack-3", 0.0, 0.65f), h("card-place-2", 0.2, 0.45f))
+        "build" -> listOf(h("chips-collide-3", 0.0, 0.5f), h("chip-lay-2", 0.1, 0.8f))
+        "card" -> listOf(h("card-slide-2", 0.0, 0.65f), h("card-place-1", 0.17, 0.45f))
+        "chest" -> listOf(h("cards-pack-open-1", 0.0, 0.65f), h("chips-handle-6", 0.5, 0.5f), h("chips-stack-2", 0.85, 0.45f))
+        "turn" -> listOf(h("card-place-4", 0.0, 0.45f))
+        "win" -> listOf(h("card-fan-1", 0.0, 0.65f), h("chips-stack-5", 0.25, 0.55f), h("chips-stack-6", 0.45, 0.55f), h("chips-collide-4", 0.7, 0.55f), h("chips-handle-5", 0.95, 0.5f), h("chips-stack-4", 1.2, 0.55f))
+        "swap" -> listOf(h("card-shove-2", 0.0, 0.65f), h("card-shove-4", 0.14, 0.65f))
+        "fence" -> listOf(h("chips-collide-3", 0.0, 0.55f), h("chip-lay-2", 0.12, 0.8f), h("chips-collide-4", 0.26, 0.55f))
+        "train" -> listOf(h("card-slide-6", 0.0, 0.55f), h("chips-handle-1", 0.25, 0.4f), h("chips-handle-3", 0.5, 0.4f), h("chips-handle-1", 0.75, 0.4f), h("chips-handle-3", 1.0, 0.4f))
+        "hammer" -> listOf(h("chip-lay-3", 0.0, 0.85f))
+        "confetti" -> listOf(h("card-fan-2", 0.0, 0.65f), h("chips-handle-6", 0.2, 0.45f))
+        "bounce" -> listOf(h("chips-collide-2", 0.0, 0.45f))
+        else -> null
+    }
+    private fun ensurePool() {
+        val c = app ?: return
+        if (pool != null) return
+        val p = SoundPool.Builder().setMaxStreams(12)
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).build()
+        p.setOnLoadCompleteListener { _, id, status -> if (status == 0) loaded.add(id) }
+        for (n in FILES) runCatching { c.assets.openFd("evapoly-s-$n.mp3").use { fd -> ids[n] = p.load(fd, 1) } }
+        pool = p
+    }
+    /** Reproduce la receta de `kind` con los sonidos grabados; devuelve false si aún no están cargados. */
+    private fun layered(kind: String): Boolean {
+        val r = recipe(kind) ?: return false
+        ensurePool()
+        val p = pool ?: return false
+        if (!r.all { ids[it.file]?.let { id -> id in loaded } == true }) return false
+        for (x in r) {
+            val id = ids[x.file] ?: continue
+            val rate = 0.96f + Random.nextFloat() * 0.08f
+            if (x.at <= 0.0) p.play(id, x.vol, x.vol, 1, 0, rate) else handler.postDelayed({ p.play(id, x.vol, x.vol, 1, 0, rate) }, (x.at * 1000).toLong())
+        }
+        return true
+    }
 
     /** Reproduce un sonido grabado (assets) una vez. */
     private fun clip(file: String, vol: Float) {
@@ -129,6 +183,8 @@ object PolySound {
     fun play(kind: String) {
         if (kind == "dice") { clip("evapoly-dados.mp3", 0.55f); return }
         if (kind == "siren") { clip("evapoly-policia.mp3", 0.8f); return }
+        if (layered(kind)) return
+        if (kind !in setOf("chest", "step", "coin", "pay", "buy", "build", "jail", "card", "turn", "win")) return // los efectos nuevos no tienen tono de reserva
         runCatching {
             val data = synth(kind).map { (it.coerceIn(-1f, 1f) * 32000).toInt().toShort() }.toShortArray()
             val track = AudioTrack.Builder()

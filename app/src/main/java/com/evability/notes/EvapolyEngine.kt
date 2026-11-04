@@ -18,7 +18,7 @@ object Poly {
     const val MAX_HOUSES = 32 // límite de casas y de hoteles de CADA jugador (no se comparte)
     const val MAX_HOTELS = 12
     /** Tienda de La Peza (regla opcional): objeto → (nombre, precio). No salen en Suerte ni en Caja. */
-    val SHOP = mapOf(1 to ("la carta Maricarmen" to 450), 2 to ("el dado triple" to 100), 3 to ("la doble condena" to 250))
+    val SHOP = mapOf(1 to ("la carta Maricarmen" to 450), 2 to ("el dado triple" to 100), 3 to ("la doble condena" to 250), 4 to ("el billete de tren" to 50), 5 to ("las obras" to 100), 6 to ("el intercambio" to 250))
 
     class Sq(val n: String, val t: String, val g: String?, val p: Int, val r: IntArray, val i: String? = null)
     class Card(val x: String, val e: String)
@@ -69,6 +69,11 @@ object Poly {
         val railCd = IntArray(n) // turnos que faltan para poder volver a viajar en tren
         val tri = IntArray(n) // dados triples comprados en la tienda
         val dj = IntArray(n) // dobles condenas compradas en la tienda
+        val tk = IntArray(n) // billetes de tren
+        val ob = IntArray(n) // cartas de obras
+        val sw = IntArray(n) // intercambios
+        val sh = IntArray(n) // 1 si ya compró en la tienda en esta visita
+        val fence = IntArray(40) { -1 } // vallas de obras: quién la puso
         val jmax = IntArray(n) { 3 } // turnos máximos en la cárcel de cada jugador (6 con la doble condena)
         var turn = 0
         var phase = "roll"
@@ -115,7 +120,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -192,11 +197,20 @@ object Poly {
     }
 
     private fun moveDice(s: State, seat: Int, total: Int) {
-        val from = s.pos[seat]; val raw = from + total; val to = raw % 40
-        if (raw >= 40) goPay(s, seat, to == 0)
-        s.pos[seat] = to
-        say(s, "@$seat avanza $total y cae en ${s.sq(to).n}", "move", seat = seat, from = from, to = to, dir = 1)
-        land(s, seat, to, dice = total, utilRoll = false, double = false)
+        // casilla a casilla: al llegar a unas obras (valla) se da la vuelta; la Salida se cobra una vez si se cruza hacia delante
+        val from = s.pos[seat]
+        val segs = ArrayList<IntArray>()
+        var pos = from; var dir = 1; var seg = from; var pass = false
+        for (k in 1..total) {
+            pos = (pos + dir + 40) % 40
+            if (dir == 1 && pos == 0) pass = true
+            if (k < total && s.fence[pos] >= 0) { segs.add(intArrayOf(seg, pos, dir)); seg = pos; dir = -dir }
+        }
+        if (pass) goPay(s, seat, pos == 0)
+        s.pos[seat] = pos
+        for (g in segs) say(s, "@$seat llega a las obras de ${s.sq(g[1]).n} y da la vuelta", "move", seat = seat, from = g[0], to = g[1], dir = g[2], sq = g[1])
+        say(s, "@$seat avanza $total y cae en ${s.sq(pos).n}", "move", seat = seat, from = seg, to = pos, dir = dir)
+        land(s, seat, pos, dice = total, utilRoll = false, double = false)
     }
 
     private fun sendJail(s: State, seat: Int, why: String) {
@@ -231,7 +245,7 @@ object Poly {
                 val v = s.pot
                 s.pot = 0
                 s.cash[seat] += v
-                s.ev.add(Ev("card", "La Peza: Tito Pepe te ha soltado unos fajos de billetes", seat = seat, text = "Tito Pepe te ha soltado unos fajos de billetes", sq = 2))
+                s.ev.add(Ev("card", "La Peza: Tito Pepe te ha soltado unos fajos de billetes", seat = seat, text = "Tito Pepe te ha soltado unos fajos de billetes", sq = 2, amt = 1))
                 say(s, "@$seat se lleva ${eur(v)} de los impuestos de ${q.n}", "gain", seat = seat, amt = v)
             }
             "chance" -> draw(s, seat, 0)
@@ -250,7 +264,9 @@ object Poly {
         val parts = cards[idx].e.split(":")
         val kind = parts[0]
         val a = parts.getOrNull(1); val b = parts.getOrNull(2)
-        say(s, "${if (which == 0) "Suerte" else "Caja"}: ${cards[idx].x}", "card", seat = seat, text = cards[idx].x, sq = which)
+        // ánimo de la carta (amt): 1 buena, -1 mala, 0 neutra; solo sirve para la animación
+        val mood = when (kind) { "cash" -> if (a!!.toInt() >= 0) 1 else -1; "eachget", "mc", "free" -> 1; "jail", "repair", "eachpay" -> -1; else -> 0 }
+        say(s, "${if (which == 0) "Suerte" else "Caja"}: ${cards[idx].x}", "card", seat = seat, text = cards[idx].x, sq = which, amt = mood)
         when (kind) {
             "to" -> { moveTo(s, seat, a!!.toInt(), true); land(s, seat, a.toInt()) }
             "near" -> {
@@ -295,10 +311,11 @@ object Poly {
     private fun bankrupt(s: State, seat: Int, to: Int, why: String) {
         liquidate(s, seat)
         for (i in 0 until 40) if (s.own[i] == seat) { s.own[i] = to; if (to < 0) s.mort[i] = false }
-        if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] += s.tri[seat]; s.dj[to] += s.dj[seat]; if (s.mcBy == seat) s.mcBy = to }
+        if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = minOf(1, s.tri[to] + s.tri[seat]); s.dj[to] = minOf(1, s.dj[to] + s.dj[seat]); s.tk[to] = minOf(1, s.tk[to] + s.tk[seat]); s.ob[to] = minOf(1, s.ob[to] + s.ob[seat]); s.sw[to] = minOf(1, s.sw[to] + s.sw[seat]); if (s.mcBy == seat) s.mcBy = to }
         else if (s.mcBy == seat) { s.deckC.held2 = -1; s.mcBy = -1 }
         else for (w in 0..1) if (s.deck(w).held >= 0 && s.heldBy[w] == seat) { s.deck(w).held = -1; s.heldBy[w] = -1 }
-        s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.bk[seat] = true; s.jail[seat] = false
+        s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.bk[seat] = true; s.jail[seat] = false
+        for (i in 0 until 40) if (s.fence[i] == seat) s.fence[i] = -1
         val rest = ArrayList<Debt>()
         for (d in s.debts) { if (d.seat == seat) continue; if (d.to == seat) d.to = to; rest.add(d) }
         s.debts = rest
@@ -313,6 +330,7 @@ object Poly {
         s.turn = nextAlive(s, s.turn)
         s.phase = "roll"; s.dbl = 0; s.again = false; s.buy = -1
         if (s.railCd[s.turn] > 0) s.railCd[s.turn]--
+        s.sh[s.turn] = 0
     }
 
     private fun settle(s: State) {
@@ -524,7 +542,7 @@ object Poly {
                 if (au.active.isEmpty() || (au.active.size == 1 && au.bidder == au.active[0])) {
                     if (au.bidder >= 0) {
                         s.cash[au.bidder] -= au.bid; s.own[au.sq] = au.bidder
-                        say(s, "@${au.bidder} gana la subasta de ${s.sq(au.sq).n} por ${eur(au.bid)}", "buy", seat = au.bidder, sq = au.sq, amt = au.bid)
+                        say(s, "@${au.bidder} gana la subasta de ${s.sq(au.sq).n} por ${eur(au.bid)}", "buy", seat = au.bidder, sq = au.sq, amt = au.bid, dir = 0)
                     } else say(s, "Nadie puja por ${s.sq(au.sq).n}")
                     s.auction = null; settle(s)
                 } else au.cur = au.active[(if (op == 'f') pos else pos + 1) % au.active.size]
@@ -593,11 +611,64 @@ object Poly {
                 if (!s.cfg.shop || !(mine && free) || s.pos[seat] != 20 || s.jail[seat]) return "La tienda está en La Peza"
                 val k = arg.toIntOrNull() ?: return "Objeto no válido"
                 val item = SHOP[k] ?: return "Objeto no válido"
+                if (s.sh[seat] != 0) return "Solo puedes comprar un objeto por visita"
+                val have = when (k) { 1 -> s.mc[seat]; 2 -> s.tri[seat]; 3 -> s.dj[seat]; 4 -> s.tk[seat]; 5 -> s.ob[seat]; else -> s.sw[seat] }
+                if (have > 0) return "Ya tienes ese objeto"
                 if (s.cash[seat] < item.second) return "No tienes dinero"
                 if (dry) return null
-                s.cash[seat] -= item.second
-                if (k == 1) s.mc[seat]++ else if (k == 2) s.tri[seat]++ else s.dj[seat]++
+                s.cash[seat] -= item.second; s.sh[seat] = 1
+                when (k) { 1 -> s.mc[seat]++; 2 -> s.tri[seat]++; 3 -> s.dj[seat]++; 4 -> s.tk[seat]++; 5 -> s.ob[seat]++; else -> s.sw[seat]++ }
                 say(s, "@$seat compra ${item.first} en la tienda por ${eur(item.second)}", "buy", seat = seat, amt = item.second)
+                return ok()
+            }
+            'B' -> {
+                // billete de tren (tienda): desde una estación (tuya o no) viajas a la siguiente, en vez de tirar
+                if (!mine || s.phase != "roll" || s.dbl > 0 || s.again || s.tk[seat] < 1) return "Ahora no puedes usar el billete"
+                if (s.jail[seat]) return "Estás en la cárcel"
+                val st = listOf(5, 15, 25, 35)
+                val from = s.pos[seat]
+                val k = st.indexOf(from)
+                if (k < 0) return "Tienes que estar en una estación"
+                if (dry) return null
+                val to = st[(k + 1) % 4]
+                s.tk[seat]--
+                say(s, "@$seat usa el billete y viaja en tren hasta ${s.sq(to).n}", "rail", seat = seat, from = from, to = to, amt = 0)
+                if (to < from) goPay(s, seat, false)
+                s.pos[seat] = to; s.again = false; s.dbl = 0
+                land(s, seat, to, dice = 0, utilRoll = false, double = false)
+                settle(s)
+                return ok()
+            }
+            'O' -> {
+                // obras (tienda): una valla en cualquier casilla; quien llega a ella da la vuelta. Cada jugador tiene como mucho una valla puesta
+                if (!(mine && free) || s.ob[seat] < 1) return "No puedes poner obras ahora"
+                if (arg.isEmpty() || !arg.all { it in '0'..'9' } || arg.length > 2 || arg.toInt() > 39) return "Casilla no válida"
+                val i = arg.toInt()
+                if (s.fence[i] >= 0) return "Ya hay obras ahí"
+                if (dry) return null
+                s.ob[seat]--
+                val old = s.fence.indexOf(seat); if (old >= 0) s.fence[old] = -1
+                s.fence[i] = seat
+                say(s, "@$seat pone obras en ${s.sq(i).n}", "fence", seat = seat, sq = i)
+                return ok()
+            }
+            'X' -> {
+                // intercambio (tienda): cambias tu casilla con la de otro jugador en vez de tirar; si llegas a la Salida cobras 200
+                if (!mine || s.phase != "roll" || s.dbl > 0 || s.again || s.sw[seat] < 1 || s.jail[seat]) return "Ahora no puedes intercambiar"
+                if (arg.isEmpty() || !arg.all { it in '0'..'9' } || arg.length > 2) return "Jugador no válido"
+                val t = arg.toInt()
+                if (t >= s.n || t == seat || s.bk[t]) return "Jugador no válido"
+                if (s.jail[t]) return "Está en la cárcel"
+                if (s.pos[t] == s.pos[seat]) return "Estáis en la misma casilla"
+                if (dry) return null
+                s.sw[seat]--
+                val a = s.pos[seat]; val b = s.pos[t]
+                s.pos[seat] = b; s.pos[t] = a
+                say(s, "@$seat cambia de sitio con @$t", "swap", seat = seat, to = t, from = a, sq = b)
+                if (b == 0) { s.cash[seat] += GO_SALARY; say(s, "@$seat cae en la Salida por el intercambio y cobra ${eur(GO_SALARY)}", "go", seat = seat, amt = GO_SALARY) }
+                s.again = false; s.dbl = 0
+                land(s, seat, b, dice = 0, utilRoll = false, double = false)
+                settle(s)
                 return ok()
             }
             'x' -> {

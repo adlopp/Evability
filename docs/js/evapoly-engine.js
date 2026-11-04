@@ -7,7 +7,7 @@
 //   r tirar · p pagar multa de cárcel · c usar carta de cárcel · b comprar · n no comprar · a subastar
 //   i<cantidad> pujar · f retirarse de la subasta · e terminar turno
 //   h<casilla> construir · s<casilla> vender edificio · m<casilla> hipotecar · u<casilla> deshipotecar
-//   x<estación> viajar en tren a otra estación tuya (regla opcional) · k usar la carta Maricarmen (te libra de un alquiler) · d pagar la deuda · q declararse en quiebra · z abandonar la partida
+//   B billete de tren · O<casilla> poner obras · X<jugador> intercambiar posición · x<estación> viajar en tren a otra estación tuya (regla opcional) · k usar la carta Maricarmen (te libra de un alquiler) · d pagar la deuda · q declararse en quiebra · z abandonar la partida
 //   T<a>|<doy €>|<pido €>|<doy casillas>|<pido casillas>|<doy cartas>|<pido cartas> proponer un trato · Y aceptar · N rechazar/cancelar
 
 export const GO_SALARY = 200;
@@ -15,7 +15,7 @@ export const JAIL_FINE = 50;
 export const JAIL = 10;
 export const MAX_HOUSES = 32, MAX_HOTELS = 12; // límite de casas y de hoteles de CADA jugador (no se comparte)
 /** Tienda de La Peza (regla opcional): objetos que no salen en Suerte ni en Caja. */
-export const SHOP = { 1: { n: 'la carta Maricarmen', p: 450 }, 2: { n: 'el dado triple', p: 100 }, 3: { n: 'la doble condena', p: 250 } };
+export const SHOP = { 1: { n: 'la carta Maricarmen', p: 450 }, 2: { n: 'el dado triple', p: 100 }, 3: { n: 'la doble condena', p: 250 }, 4: { n: 'el billete de tren', p: 50 }, 5: { n: 'las obras', p: 100 }, 6: { n: 'el intercambio', p: 250 } };
 
 export const eur = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' €';
 
@@ -44,6 +44,7 @@ export function initGame(data, n, cfg, seed) {
     deck: { c: { order: [], i: 0, held: -1, held2: -1 }, h: { order: [], i: 0, held: -1, held2: -1 } }, mc: Array(n).fill(0), mcBy: -1, pot: 0,
     turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, trade: null,
     heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0), tri: Array(n).fill(0), dj: Array(n).fill(0), jmax: Array(n).fill(3),
+    tk: Array(n).fill(0), ob: Array(n).fill(0), sw: Array(n).fill(0), sh: Array(n).fill(0), fence: Array(40).fill(-1),
   };
   s.deck.c.order = shuffled(s, data.cards.chance.length);
   s.deck.h.order = shuffled(s, data.cards.chest.length);
@@ -117,11 +118,19 @@ function moveTo(s, seat, to, collect) {
 }
 
 function moveDice(s, seat, total) {
-  const from = s.pos[seat], raw = from + total, to = raw % 40;
-  if (raw >= 40) goPay(s, seat, to === 0);
-  s.pos[seat] = to;
-  say(s, `@${seat} avanza ${total} y cae en ${sq(s, to).n}`, 'move', { seat, from, to, dir: 1 });
-  land(s, seat, to, { dice: total });
+  // se avanza casilla a casilla: al llegar a unas obras (valla) se da la vuelta; la Salida se cobra una vez si se cruza hacia delante
+  const from = s.pos[seat], segs = [];
+  let pos = from, dir = 1, seg = from, pass = false;
+  for (let k = 1; k <= total; k++) {
+    pos = (pos + dir + 40) % 40;
+    if (dir === 1 && pos === 0) pass = true;
+    if (k < total && s.fence[pos] >= 0) { segs.push({ from: seg, to: pos, dir }); seg = pos; dir = -dir; }
+  }
+  if (pass) goPay(s, seat, pos === 0);
+  s.pos[seat] = pos;
+  for (const g of segs) say(s, `@${seat} llega a las obras de ${sq(s, g.to).n} y da la vuelta`, 'move', { seat, from: g.from, to: g.to, dir: g.dir, sq: g.to });
+  say(s, `@${seat} avanza ${total} y cae en ${sq(s, pos).n}`, 'move', { seat, from: seg, to: pos, dir });
+  land(s, seat, pos, { dice: total });
 }
 
 function sendJail(s, seat, why) {
@@ -156,7 +165,7 @@ function land(s, seat, i, ctx) {
     case 'parking':
       if (s.cfg.pot && s.pot > 0) {
         const v = s.pot; s.pot = 0; s.cash[seat] += v;
-        s.ev.push({ k: 'card', m: 'La Peza: Tito Pepe te ha soltado unos fajos de billetes', seat, text: 'Tito Pepe te ha soltado unos fajos de billetes', deck: 'p' });
+        s.ev.push({ k: 'card', m: 'La Peza: Tito Pepe te ha soltado unos fajos de billetes', seat, text: 'Tito Pepe te ha soltado unos fajos de billetes', deck: 'p', amt: 1 });
         say(s, `@${seat} se lleva ${eur(v)} de los impuestos de ${q.n}`, 'gain', { seat, amt: v });
       }
       break;
@@ -173,7 +182,9 @@ function draw(s, seat, which) {
   let idx;
   do { idx = d.order[d.i % d.order.length]; d.i++; } while (idx === d.held || idx === d.held2);
   const [kind, a, b] = cards[idx].e.split(':');
-  say(s, `${which === 'c' ? 'Suerte' : 'Caja'}: ${cards[idx].x}`, 'card', { seat, text: cards[idx].x, deck: which });
+  // ánimo de la carta (amt): 1 buena, -1 mala, 0 neutra; solo sirve para la animación
+  const mood = ({ cash: Number(a) >= 0 ? 1 : -1, eachget: 1, mc: 1, free: 1, jail: -1, repair: -1, eachpay: -1 })[kind] || 0;
+  say(s, `${which === 'c' ? 'Suerte' : 'Caja'}: ${cards[idx].x}`, 'card', { seat, text: cards[idx].x, deck: which, amt: mood });
   switch (kind) {
     case 'to': moveTo(s, seat, Number(a), true); land(s, seat, Number(a), {}); break;
     case 'near': {
@@ -218,10 +229,11 @@ function liquidate(s, seat) {
 function bankrupt(s, seat, to, why) {
   liquidate(s, seat);
   for (let i = 0; i < 40; i++) if (s.own[i] === seat) { s.own[i] = to; if (to < 0) s.mort[i] = false; }
-  if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] += s.tri[seat]; s.dj[to] += s.dj[seat]; if (s.mcBy === seat) s.mcBy = to; }
+  if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = Math.min(1, s.tri[to] + s.tri[seat]); s.dj[to] = Math.min(1, s.dj[to] + s.dj[seat]); s.tk[to] = Math.min(1, s.tk[to] + s.tk[seat]); s.ob[to] = Math.min(1, s.ob[to] + s.ob[seat]); s.sw[to] = Math.min(1, s.sw[to] + s.sw[seat]); if (s.mcBy === seat) s.mcBy = to; }
   else if (s.mcBy === seat) { s.deck.c.held2 = -1; s.mcBy = -1; }
   else for (const w of ['c', 'h']) if (s.deck[w].held >= 0 && s.heldBy[w] === seat) { s.deck[w].held = -1; s.heldBy[w] = -1; }
-  s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.bk[seat] = true; s.jail[seat] = false;
+  s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.bk[seat] = true; s.jail[seat] = false;
+  for (let i = 0; i < 40; i++) if (s.fence[i] === seat) s.fence[i] = -1;
   s.debts = s.debts.filter((d) => d.seat !== seat).map((d) => (d.to === seat ? { ...d, to } : d));
   if (s.trade && (s.trade.from === seat || s.trade.to === seat)) s.trade = null;
   say(s, `@${seat} ${why}${to >= 0 ? `: todo pasa a @${to}` : ': todo vuelve al banco'}`, 'bankrupt', { seat });
@@ -233,6 +245,7 @@ function nextTurn(s) {
   s.turn = nextAlive(s, s.turn);
   s.phase = 'roll'; s.dbl = 0; s.again = false; s.buy = -1;
   if (s.railCd[s.turn] > 0) s.railCd[s.turn]--;
+  s.sh[s.turn] = 0; // una nueva visita a La Peza: otra compra en la tienda
 }
 
 /** Decide en qué fase queda la partida cuando una acción termina de resolverse. */
@@ -434,7 +447,7 @@ export function act(s, seat, code, dry = false) {
       if (au.active.length === 0 || (au.active.length === 1 && au.bidder === au.active[0])) {
         if (au.bidder >= 0) {
           s.cash[au.bidder] -= au.bid; s.own[au.sq] = au.bidder;
-          say(s, `@${au.bidder} gana la subasta de ${sq(s, au.sq).n} por ${eur(au.bid)}`, 'buy', { seat: au.bidder, sq: au.sq, amt: au.bid });
+          say(s, `@${au.bidder} gana la subasta de ${sq(s, au.sq).n} por ${eur(au.bid)}`, 'buy', { seat: au.bidder, sq: au.sq, amt: au.bid, dir: 0 });
         } else say(s, `Nadie puja por ${sq(s, au.sq).n}`);
         s.auction = null; settle(s);
       } else au.cur = au.active[(op === 'f' ? pos : pos + 1) % au.active.length];
@@ -495,13 +508,64 @@ export function act(s, seat, code, dry = false) {
     case 'o': {
       // tienda de La Peza (regla opcional): se compra estando en La Peza
       if (!s.cfg.shop || !(mine && free) || s.pos[seat] !== 20 || s.jail[seat]) return 'La tienda está en La Peza';
-      const item = SHOP[Number(arg)];
+      const k = Number(arg), item = SHOP[k];
       if (!item) return 'Objeto no válido';
+      if (s.sh[seat]) return 'Solo puedes comprar un objeto por visita';
+      const have = [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw][k][seat];
+      if (have > 0) return 'Ya tienes ese objeto';
       if (s.cash[seat] < item.p) return 'No tienes dinero';
       if (dry) return OK;
-      s.cash[seat] -= item.p;
-      if (Number(arg) === 1) s.mc[seat]++; else if (Number(arg) === 2) s.tri[seat]++; else s.dj[seat]++;
+      s.cash[seat] -= item.p; s.sh[seat] = 1;
+      if (k === 1) s.mc[seat]++; else if (k === 2) s.tri[seat]++; else if (k === 3) s.dj[seat]++; else if (k === 4) s.tk[seat]++; else if (k === 5) s.ob[seat]++; else s.sw[seat]++;
       say(s, `@${seat} compra ${item.n} en la tienda por ${eur(item.p)}`, 'buy', { seat, amt: item.p });
+      return ok();
+    }
+    case 'B': {
+      // billete de tren (tienda): desde una estación (tuya o no) viajas a la siguiente, en vez de tirar
+      if (!mine || s.phase !== 'roll' || s.dbl > 0 || s.again || s.tk[seat] < 1) return 'Ahora no puedes usar el billete';
+      if (s.jail[seat]) return 'Estás en la cárcel';
+      const st = [5, 15, 25, 35], from = s.pos[seat], k = st.indexOf(from);
+      if (k < 0) return 'Tienes que estar en una estación';
+      if (dry) return OK;
+      const to = st[(k + 1) % 4];
+      s.tk[seat]--;
+      say(s, `@${seat} usa el billete y viaja en tren hasta ${sq(s, to).n}`, 'rail', { seat, from, to, amt: 0 });
+      if (to < from) goPay(s, seat, false);
+      s.pos[seat] = to; s.again = false; s.dbl = 0;
+      land(s, seat, to, {});
+      settle(s);
+      return ok();
+    }
+    case 'O': {
+      // obras (tienda): una valla en cualquier casilla; quien llega a ella da la vuelta. Cada jugador tiene como mucho una valla puesta
+      if (!(mine && free) || s.ob[seat] < 1) return 'No puedes poner obras ahora';
+      if (!/^\d+$/.test(arg) || Number(arg) > 39) return 'Casilla no válida';
+      const i = Number(arg);
+      if (s.fence[i] >= 0) return 'Ya hay obras ahí';
+      if (dry) return OK;
+      s.ob[seat]--;
+      const old = s.fence.indexOf(seat); if (old >= 0) s.fence[old] = -1;
+      s.fence[i] = seat;
+      say(s, `@${seat} pone obras en ${sq(s, i).n}`, 'fence', { seat, sq: i });
+      return ok();
+    }
+    case 'X': {
+      // intercambio (tienda): cambias tu casilla con la de otro jugador en vez de tirar; si llegas a la Salida cobras 200
+      if (!mine || s.phase !== 'roll' || s.dbl > 0 || s.again || s.sw[seat] < 1 || s.jail[seat]) return 'Ahora no puedes intercambiar';
+      if (!/^\d+$/.test(arg)) return 'Jugador no válido';
+      const t = Number(arg);
+      if (t >= s.n || t === seat || s.bk[t]) return 'Jugador no válido';
+      if (s.jail[t]) return 'Está en la cárcel';
+      if (s.pos[t] === s.pos[seat]) return 'Estáis en la misma casilla';
+      if (dry) return OK;
+      s.sw[seat]--;
+      const a = s.pos[seat], b = s.pos[t];
+      s.pos[seat] = b; s.pos[t] = a;
+      say(s, `@${seat} cambia de sitio con @${t}`, 'swap', { seat, to: t, from: a, sq: b });
+      if (b === 0) { s.cash[seat] += GO_SALARY; say(s, `@${seat} cae en la Salida por el intercambio y cobra ${eur(GO_SALARY)}`, 'go', { seat, amt: GO_SALARY }); }
+      s.again = false; s.dbl = 0;
+      land(s, seat, b, {});
+      settle(s);
       return ok();
     }
     case 'x': {
@@ -615,4 +679,4 @@ export function applyText(s, text) {
 }
 
 /** Resumen del estado, para comparar partidas entre JS y Kotlin. */
-export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
+export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.tk, s.ob, s.sw, s.sh, s.fence, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);

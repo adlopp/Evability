@@ -6,6 +6,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowCompat
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.graphicsLayer
@@ -14,6 +15,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.animation.core.spring
+import kotlin.math.PI
+import kotlin.math.sin
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -132,6 +135,91 @@ private fun cellOf(i: Int): FloatArray {
 private fun sideOf(i: Int) = if (i % 10 == 0) "corner" else if (i < 10) "bot" else if (i < 20) "left" else if (i < 30) "top" else "right"
 
 private class DiceView(val d1: Int, val d2: Int, val rolling: Boolean, val d3: Int = 0)
+/** Efecto visual sobre el tablero: coordenadas en % del tablero (x0,y0 → x1,y1). */
+private class Fx(val id: Long, val kind: String, val x0: Float, val y0: Float, val x1: Float = x0, val y1: Float = y0, val n: Int = 5, val color: Color = Color.White, val ms: Int = 900)
+
+private fun bounceOut(t: Float): Float = when {
+    t < 1f / 2.75f -> 7.5625f * t * t
+    t < 2f / 2.75f -> { val u = t - 1.5f / 2.75f; 7.5625f * u * u + 0.75f }
+    t < 2.5f / 2.75f -> { val u = t - 2.25f / 2.75f; 7.5625f * u * u + 0.9375f }
+    else -> { val u = t - 2.625f / 2.75f; 7.5625f * u * u + 0.984375f }
+}
+
+@Composable
+private fun FxView(f: Fx, g: Dp) {
+    val t = remember(f.id) { Animatable(0f) }
+    LaunchedEffect(f.id) { t.animateTo(1f, tween(f.ms, easing = LinearEasing)) }
+    val p = t.value
+    val rs = remember(f.id) { val r = java.util.Random(f.id); FloatArray(f.n * 4 + 4) { r.nextFloat() } }
+    fun lerp(a: Float, b: Float, q: Float) = a + (b - a) * q
+    when (f.kind) {
+        "train" -> {
+            val q = FastOutSlowInEasing.transform(p)
+            Canvas(Modifier.size(g)) {
+                for (j in 0..9) {
+                    val at = j / 10f * 0.9f
+                    val age = p - at
+                    if (age in 0f..0.28f) {
+                        val a = age / 0.28f
+                        drawCircle(Color.White.copy(alpha = 0.8f * (1 - a)), size.minDimension * (0.012f + 0.045f * a), Offset(size.width * lerp(f.x0, f.x1, FastOutSlowInEasing.transform(at)) / 100f, size.height * (lerp(f.y0, f.y1, FastOutSlowInEasing.transform(at)) - 3f - a * 4f) / 100f))
+                    }
+                }
+            }
+            val sz = g * 0.09f
+            PolyIcon("train", sz, Modifier.offset(g * (lerp(f.x0, f.x1, q) / 100f) - sz / 2, g * (lerp(f.y0, f.y1, q) / 100f) - sz / 2).graphicsLayer { alpha = minOf(1f, p / 0.12f, (1f - p) / 0.12f).coerceIn(0f, 1f) })
+        }
+        "hammer" -> {
+            val sz = g * 0.22f
+            val ang = when { p < 0.33f -> -60f + 72f * (p / 0.33f) * (p / 0.33f); p < 0.42f -> 12f - 18f * ((p - 0.33f) / 0.09f); p < 0.55f -> -6f + 10f * ((p - 0.42f) / 0.13f); else -> 4f * (1f - (p - 0.55f) / 0.45f) }
+            PolyIcon("hammer", sz, Modifier.offset(g * 0.5f - sz / 2, g * 0.46f - sz / 2).graphicsLayer {
+                rotationZ = ang; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.8f, 0.85f)
+                alpha = minOf(1f, p / 0.15f, (1f - p) / 0.2f).coerceIn(0f, 1f)
+            })
+        }
+        "drop" -> {
+            val sz = g * 0.075f
+            val q = bounceOut((p / 0.6f).coerceIn(0f, 1f))
+            PolyIcon(if (f.n == 5) "hotel" else "house", sz, Modifier.offset(g * (f.x0 / 100f) - sz / 2, g * ((f.y0 - 14f * (1f - q)) / 100f) - sz / 2).graphicsLayer { alpha = if (p < 0.7f) 1f else ((1f - p) / 0.3f).coerceIn(0f, 1f) })
+        }
+        else -> Canvas(Modifier.size(g)) {
+            val m = size.minDimension
+            fun px(v: Float) = m * v / 100f
+            when (f.kind) {
+                "puff" -> for (k in 0 until f.n) {
+                    val dx = (rs[k * 4] - 0.5f) * 7f; val dy = -rs[k * 4 + 1] * 4f
+                    val q = ((p - k * 0.05f) / (1f - k * 0.05f)).coerceIn(0f, 1f)
+                    if (q > 0f) drawCircle(Color(0xFFEDE6DB).copy(alpha = 0.9f * (1f - q)), px(2f * (0.3f + 1.5f * q)), Offset(px(f.x0 + dx * q), px(f.y0 + dy * q - 2.5f * q)))
+                }
+                "spark" -> for (k in 0 until f.n) {
+                    val a = k.toFloat() / f.n * 2f * PI.toFloat()
+                    drawCircle(f.color.copy(alpha = 1f - p), px(0.8f * (1f - p) + 0.2f), Offset(px(f.x0 + kotlin.math.cos(a) * 5f * p), px(f.y0 + sin(a) * 5f * p)))
+                }
+                "ghost" -> drawCircle(f.color.copy(alpha = 0.45f * (1f - p)), px(1.7f * (1f - 0.7f * p)), Offset(px(f.x0), px(f.y0)))
+                "coins" -> for (k in 0 until f.n) {
+                    val q = ((p - k * 0.1f) / 0.6f).coerceIn(0f, 1f)
+                    if (q > 0f && q < 1f) {
+                        val c = Offset(px(lerp(f.x0, f.x1, q)), px(lerp(f.y0, f.y1, q) - 8f * sin(PI.toFloat() * q)))
+                        drawCircle(Color(0xFFB8860B), px(1.4f), c)
+                        drawCircle(Color(0xFFF4B400), px(1.15f), c)
+                        drawCircle(Color(0xFFFFF3B0), px(0.45f), c + Offset(-px(0.3f), -px(0.3f)))
+                    }
+                }
+                "confetti" -> {
+                    val cols = listOf(Color(0xFFE0483F), Color(0xFFF4B400), Color(0xFF3AA8E8), Color(0xFF4CC06A), Color(0xFFB25BD8), Color(0xFFFF8A1F))
+                    for (k in 0 until f.n) {
+                        val q = ((p - rs[k * 4 + 2] * 0.25f) / 0.75f).coerceIn(0f, 1f)
+                        if (q > 0f && q < 1f) {
+                            val x = rs[k * 4] * 100f + (rs[k * 4 + 1] - 0.5f) * 24f * q
+                            val y = -4f + 108f * q
+                            withTransform({ rotate(360f * q * (1f + rs[k * 4 + 3]), Offset(px(x), px(y))) }) { drawRect(cols[k % cols.size], Offset(px(x) - px(0.7f), px(y) - px(1.2f)), androidx.compose.ui.geometry.Size(px(1.4f), px(2.4f))) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private class MoneyPop(val text: String, val seat: Int, val kind: Int, val id: Long)
 private class CardFx(val kind: String, val title: String, val who: String, val text: String)
 private class BannerInfo(val text: String, val seat: Int)
@@ -311,7 +399,9 @@ private fun SquareView(
                 if (where == "top") { ownPart(); bodyPart(); bandPart() } else { bandPart(); bodyPart(); ownPart() }
             }
         }
+        if (st.mort[i]) Box(Modifier.fillMaxSize().background(Color(0x99E02020)))
         if (ownable) Box(Modifier.fillMaxSize().border(uu * (if (owner >= 0) 0.34f else 0.2f), band ?: Color(0xFF7D8791)))
+        if (st.fence[i] >= 0) PolyIcon("fence", minOf(ow, oh) * 0.85f, Modifier.align(Alignment.Center))
         if (hl) {
             val pulse = rememberInfiniteTransition(label = "ruta")
             val a by pulse.animateFloat(0.32f, 0.6f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "ruta")
@@ -394,14 +484,16 @@ private fun BannerView(b: BannerInfo, side: Dp) {
 @Composable
 private fun PolyBoard(
     side: Dp, data: Poly.Data, st: Poly.State, viewPos: List<Int>, tokenOf: (Int) -> Int, dice: DiceView?, pathSet: Set<Int>, slowSeat: Int, police: Boolean, landing: Int?,
-    cardFx: CardFx?, banner: BannerInfo?, pops: List<MoneyPop>, onCardDone: () -> Unit, onSquare: (Int) -> Unit,
+    cardFx: CardFx?, banner: BannerInfo?, pops: List<MoneyPop>, fxs: List<Fx>, hopSeat: Int, poof: List<Int>, shakeKey: Int, onCardDone: () -> Unit, onSquare: (Int) -> Unit,
 ) {
+    val shakeX = remember { Animatable(0f) }
+    LaunchedEffect(shakeKey) { if (shakeKey > 0) { for (v in listOf(7f, -7f, 5f, -4f, 2f, 0f)) shakeX.animateTo(v, tween(55)) } }
     val density = LocalDensity.current
     val u = side / 62f
     val g = side * 0.97f
     val frame = RoundedCornerShape(14.dp)
     Box(
-        Modifier.size(side).clip(frame)
+        Modifier.size(side).graphicsLayer { translationX = shakeX.value }.clip(frame)
             .background(Brush.radialGradient(listOf(Color(0xFFDCEFDD), Color(0xFFC6E1CA), Color(0xFFB3D3B8)), center = Offset.Unspecified, radius = with(density) { side.toPx() } * 0.75f))
             .border(2.dp, Ink, frame),
     ) {
@@ -449,8 +541,26 @@ private fun PolyBoard(
                 val ms = if (slowSeat == s) 2600 else 150
                 val x by animateDpAsState(g * ((ci[0] + ci[2] / 2f + dx) / 100f) - tk / 2f, tween(ms, easing = if (slowSeat == s) FastOutSlowInEasing else LinearEasing), label = "x$s")
                 val y by animateDpAsState(g * ((ci[1] + ci[3] / 2f + dy) / 100f) - tk / 2f, tween(ms, easing = if (slowSeat == s) FastOutSlowInEasing else LinearEasing), label = "y$s")
-                TokenView(tokenOf(s), tk, PolyData.colors[s], Modifier.offset(x, y))
+                // saltito en cada paso, desaparecer y reaparecer al cambiar de sitio, halo del turno y campeón
+                val hy = remember(s) { Animatable(0f) }
+                LaunchedEffect(viewPos[s]) { if (hopSeat == s) { hy.snapTo(0f); hy.animateTo(1f, tween(150)); hy.snapTo(0f) } }
+                val poofed = s in poof
+                val sc by animateFloatAsState(if (poofed) 0.05f else 1f, if (poofed) tween(380) else spring(0.45f, 300f), label = "poof$s")
+                val champ = st.phase == "over" && st.winner == s
+                val ptr = rememberInfiniteTransition(label = "halo$s")
+                val pulse by ptr.animateFloat(0f, 1f, infiniteRepeatable(tween(1500, easing = LinearEasing)), label = "pulso")
+                val cs by ptr.animateFloat(1.6f, 2f, infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "campeon")
+                if (st.turn == s && st.phase != "order" && st.phase != "over") {
+                    val rs2 = tk * (0.8f + 1.1f * pulse)
+                    Box(Modifier.offset(x + tk / 2f - rs2 / 2f, y + tk / 2f - rs2 / 2f).size(rs2).border(tk * 0.07f, PolyData.colors[s].copy(alpha = 0.85f * (1f - pulse)), CircleShape))
+                }
+                val scale = sc * (if (champ) cs else 1f)
+                TokenView(
+                    tokenOf(s), tk, PolyData.colors[s],
+                    Modifier.offset(x, y - tk * 0.55f * sin(PI.toFloat() * hy.value)).graphicsLayer { scaleX = scale; scaleY = scale; alpha = sc.coerceIn(0f, 1f); rotationZ = (1f - sc) * 180f },
+                )
             }
+            for (f in fxs) FxView(f, g)
             (zoom ?: landing)?.let { SquareView(it, data.squares[it], g, u, st, data, false, zoomed = true) }
         }
         if (police) {
@@ -515,6 +625,13 @@ fun PolyCard(m: Social.ChatMessage, fg: Color, onOpen: (String) -> Unit) {
 @Composable
 fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var fullScreen by remember { mutableStateOf(false) }
+    var dark by remember { mutableStateOf(Prefs.gameDark) }
+    // fondo oscuro como en el Evadrez: mientras está activo todo el tema pasa a negro
+    DisposableEffect(dark) {
+        val prev = Bg
+        if (dark) Bg = Color.Black
+        onDispose { Bg = prev }
+    }
     BackHandler(onBack = { if (fullScreen) fullScreen = false else onClose() })
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -543,6 +660,17 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var landing by remember { mutableStateOf<Int?>(null) }
     val deltas = remember { mutableStateListOf<Delta>() }
     val pops = remember { mutableStateListOf<MoneyPop>() }
+    val fxs = remember { mutableStateListOf<Fx>() }
+    val poof = remember { mutableStateListOf<Int>() }
+    var hopSeat by remember { mutableStateOf(-1) }
+    var shakeKey by remember { mutableStateOf(0) }
+    fun pct(i: Int): FloatArray = cellOf(i).let { floatArrayOf(it[0] + it[2] / 2f, it[1] + it[3] / 2f) }
+    fun fxAt(kind: String, from: FloatArray, to: FloatArray = from, n: Int = 5, color: Color = Color.White, ms: Int = 900) {
+        val f = Fx(System.nanoTime() + fxs.size, kind, from[0], from[1], to[0], to[1], n, color, ms)
+        fxs.add(f)
+        scope.launch { delay(ms + 400L); fxs.remove(f) }
+    }
+    fun fx(kind: String, sq: Int, n: Int = 5, color: Color = Color.White, ms: Int = 900) = fxAt(kind, pct(sq), pct(sq), n, color, ms)
     var lastCash by remember { mutableStateOf<IntArray?>(null) }
     var shownCash by remember { mutableStateOf<IntArray?>(null) }
     var shownTurn by remember { mutableIntStateOf(0) }
@@ -610,6 +738,9 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 val xfer = e.k == "pay" && e.to >= 0
                 val mp = MoneyPop(if (xfer) "${seatName(e.seat)} → ${seatName(e.to)} · $amt" else if (incoming) "${seatName(e.seat)} +$amt" else "${seatName(e.seat)} −$amt", e.seat, if (xfer) 2 else if (incoming) 0 else 1, System.nanoTime())
                 pops.add(mp); while (pops.size > 4) pops.removeAt(0)
+                val nc = if (kotlin.math.abs(e.amt) >= 300) 6 else if (kotlin.math.abs(e.amt) >= 100) 4 else 3
+                val mid = floatArrayOf(50f, 50f)
+                if (xfer) fxAt("coins", pct(viewPos[e.seat]), pct(viewPos[e.to]), nc, ms = 1200) else if (incoming) fxAt("coins", mid, pct(viewPos[e.seat]), nc, ms = 1200) else fxAt("coins", pct(viewPos[e.seat]), mid, nc, ms = 1200)
                 scope.launch { delay(2300); pops.remove(mp) }
             }
             when (e.k) {
@@ -632,25 +763,57 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                     val from = viewPos[e.seat]
                     pathSet = (0..steps).map { (from + dir * it + 80) % 40 }.toSet()
                     var p = from
+                    hopSeat = e.seat
                     repeat(steps) {
+                        fx("ghost", p, color = PolyData.colors[e.seat], ms = 650)
                         p = (p + dir + 40) % 40
                         viewPos[e.seat] = p
                         PolySound.play("step")
                         delay(if (e.seat == mySeat() || steps < 8) 160 else 120)
                     }
-                    // al caer, la casilla se ve ampliada en el centro unos segundos (la ven todos)
-                    landing = e.to
-                    val shown = e.to
+                    hopSeat = -1
+                    if (e.sq >= 0) {
+                        // choca con unas obras: polvo, golpe y sacudida
+                        fx("puff", e.to, 6); PolySound.play("bounce"); shakeKey++
+                        delay(250)
+                    } else {
+                        // al caer, la casilla se ve ampliada en el centro unos segundos (la ven todos)
+                        landing = e.to
+                        val shown = e.to
+                        scope.launch { delay(2400); if (landing == shown) landing = null }
+                    }
+                }
+                "swap" -> {
+                    landing = null
+                    PolySound.play("swap")
+                    fx("spark", e.from, 10, Color(0xFFB25BD8)); fx("spark", e.sq, 10, Color(0xFFB25BD8))
+                    poof.add(e.seat); poof.add(e.to)
+                    delay(400)
+                    viewPos[e.seat] = e.sq; viewPos[e.to] = e.from
+                    poof.clear()
+                    fx("spark", e.from, 10, Color(0xFFFFD84A)); fx("spark", e.sq, 10, Color(0xFFFFD84A))
+                    delay(700)
+                    landing = e.sq
+                    val shown = e.sq
                     scope.launch { delay(2400); if (landing == shown) landing = null }
+                }
+                "fence" -> {
+                    PolySound.play("fence")
+                    fx("puff", e.sq, 6); fx("spark", e.sq, 6, Color(0xFFFF8A1F))
+                    ver++
+                    landing = e.sq
+                    val shown = e.sq
+                    scope.launch { delay(2400); if (landing == shown) landing = null }
+                    delay(1200)
                 }
                 "rail" -> {
                     landing = null
-                    slowSeat = e.seat
-                    delay(60)
+                    fxAt("train", pct(e.from), pct(e.to), ms = 1500)
+                    PolySound.play("train")
+                    delay(1500)
                     viewPos[e.seat] = e.to
-                    PolySound.play("coin")
-                    delay(1600)
-                    slowSeat = -1
+                    fx("puff", e.to, 4)
+                    delay(300)
                     landing = e.to
                     val shown = e.to
                     scope.launch { delay(2400); if (landing == shown) landing = null }
@@ -666,19 +829,37 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 }
                 "pay", "debt" -> PolySound.play("pay")
                 "go", "gain" -> PolySound.play("coin")
-                "buy" -> PolySound.play("buy")
-                "build" -> PolySound.play("build")
+                "buy" -> {
+                    PolySound.play("buy")
+                    if (e.dir == 0) {
+                        // subasta cerrada: golpe de martillo
+                        ver++
+                        fxAt("hammer", floatArrayOf(50f, 46f), ms = 1000)
+                        delay(330)
+                        PolySound.play("hammer"); fx("puff", e.sq, 5); fx("spark", e.sq, 8, Color(0xFFFFD84A))
+                        delay(650)
+                    }
+                }
+                "build" -> {
+                    PolySound.play("build")
+                    if (e.sq >= 0 && e.amt < 0) { fx("drop", e.sq, if (s.lvl[e.sq] == 5) 5 else 1, ms = 800); fx("puff", e.sq, 3) }
+                }
                 "card" -> {
                     landing = null
                     PolySound.play(if (e.sq == 1) "chest" else "card")
                     val fx = CardFx(if (e.sq == 1) "chest" else if (e.sq == 0) "chance" else "peza", if (e.sq == 1) "Caja de comunidad" else if (e.sq == 0) "Suerte" else "La Peza", seatName(e.seat), e.text)
                     cardFx = fx
                     ver++
+                    scope.launch { delay(900); if (e.amt > 0) { fxAt("confetti", floatArrayOf(50f, 50f), n = 36, ms = 2800); PolySound.play("confetti") } else if (e.amt < 0) shakeKey++ }
                     var waited = 0
                     while (cardFx === fx && waited < 5800) { delay(100); waited += 100 }
                     cardFx = null
                 }
-                "win" -> PolySound.play("win")
+                "win" -> {
+                    PolySound.play("win")
+                    fxAt("confetti", floatArrayOf(50f, 50f), n = 70, ms = 3400)
+                    scope.launch { delay(1500); fxAt("confetti", floatArrayOf(50f, 50f), n = 60, ms = 3400); delay(1500); fxAt("confetti", floatArrayOf(50f, 50f), n = 60, ms = 3400) }
+                }
             }
             if (e.m.isNotEmpty()) { log.add(say(e.m)); if (log.size > 40) log.removeAt(0) }
             ver++
@@ -793,6 +974,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         if (!fullScreen) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
             Text("Evapoly", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, modifier = Modifier.weight(1f))
+            IconButton(onClick = { dark = !dark; Prefs.gameDark = dark }) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
             IconButton(onClick = { fullScreen = true }) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = OnSurface) }
             IconButton(onClick = {
                 musicOn = !musicOn; Prefs.polyMusic = musicOn
@@ -838,7 +1020,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                     PositionStrip(s, my, data, if (my >= 0) viewPos[my] else 0, ::tokenOf, fullScreen, { squareSel = it })
                 }
                 val board: @Composable () -> Unit = {
-                    PolyBoard(side, data, s, viewPos, ::tokenOf, dice, pathSet, slowSeat, police, landing, cardFx, banner, pops, { cardFx = null }) { squareSel = it }
+                    PolyBoard(side, data, s, viewPos, ::tokenOf, dice, pathSet, slowSeat, police, landing, cardFx, banner, pops, fxs, hopSeat, poof, shakeKey, { cardFx = null }) { squareSel = it }
                 }
                 if (land) {
                     Row(
@@ -871,6 +1053,10 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         onClick = { fullScreen = false },
                         modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape),
                     ) { Icon(Icons.Default.FullscreenExit, "Salir de pantalla completa", tint = OnSurface) }
+                    IconButton(
+                        onClick = { dark = !dark; Prefs.gameDark = dark },
+                        modifier = Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 54.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape),
+                    ) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
                 }
             }
         }
@@ -1115,7 +1301,7 @@ private fun GamePanel(
                         } else {
                             val extra = if (s.bk[i]) "Quiebra"
                             else if (s.phase == "order") (if (s.ordRolls[i] > 0) "Sacó ${s.ordRolls[i]}" else "")
-                            else listOfNotNull(if (s.jail[i]) "Cárcel" else null, if (s.jf[i] > 0) "Carta ×${s.jf[i]}" else null, if (s.mc[i] > 0) "Maricarmen" + (if (s.mc[i] > 1) " ×${s.mc[i]}" else "") else null, if (s.tri[i] > 0) "Dado triple" + (if (s.tri[i] > 1) " ×${s.tri[i]}" else "") else null, if (s.dj[i] > 0) "Doble condena" + (if (s.dj[i] > 1) " ×${s.dj[i]}" else "") else null, "$owned calles").joinToString(" · ")
+                            else listOfNotNull(if (s.jail[i]) "Cárcel" else null, if (s.jf[i] > 0) "Carta ×${s.jf[i]}" else null, if (s.mc[i] > 0) "Maricarmen" + (if (s.mc[i] > 1) " ×${s.mc[i]}" else "") else null, if (s.tri[i] > 0) "Dado triple" + (if (s.tri[i] > 1) " ×${s.tri[i]}" else "") else null, if (s.dj[i] > 0) "Doble condena" else null, if (s.tk[i] > 0) "Billete de tren" else null, if (s.ob[i] > 0) "Obras" else null, if (s.sw[i] > 0) "Intercambio" else null, "$owned calles").joinToString(" · ")
                             Text(extra, color = OnSurfaceDim, fontSize = 12.sp)
                         }
                     }
@@ -1135,6 +1321,17 @@ private fun GamePanel(
         fun androidx.compose.foundation.layout.RowScope.B(label: String, code: String, primary: Boolean = true, enabled: Boolean = true, cta: Boolean = false) =
             PolyButton(label, primary, enabled && !locked, Modifier.weight(1f), cta, compact) { onSend(code) }
 
+        var showSwap by remember { mutableStateOf(false) }
+        if (showSwap && my >= 0) AlertDialog(
+            onDismissRequest = { showSwap = false }, title = { Text("Intercambio") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (p in 0 until s.n) if (p != my && !s.bk[p])
+                        PolyButton("${seatName(p)} · ${data.squares[s.pos[p]].n}", true, Poly.act(s, my, "X$p", true) == null && !locked) { showSwap = false; onSend("X$p") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSwap = false }) { Text("Cerrar") } },
+        )
         val t = s.trade
         if (frozen) Spacer(Modifier.height(if (compact) 40.dp else 58.dp))
         else if (my < 0) Status("Espectador")
@@ -1168,8 +1365,12 @@ private fun GamePanel(
                 if (s.jail[my]) { B("Pagar ${Poly.eur(Poly.JAIL_FINE)}", "p", false, s.cash[my] >= Poly.JAIL_FINE); if (s.jf[my] > 0) B("Usar carta", "c", false) }
                 B("Tirar dados", "r", cta = true)
             }
-            if ((s.tri[my] > 0 && !s.jail[my]) || (s.jail[my] && s.dj[my] > 0 && s.jmax[my] == 3)) Btns {
+            val canTicket = Poly.act(s, my, "B", true) == null
+            val canSwap = s.sw[my] > 0 && !s.jail[my] && !s.again && s.dbl == 0
+            if ((s.tri[my] > 0 && !s.jail[my]) || (s.jail[my] && s.dj[my] > 0 && s.jmax[my] == 3) || canTicket || canSwap) Btns {
                 if (s.tri[my] > 0 && !s.jail[my]) B("Dado triple", "R", false)
+                if (canTicket) B("Billete de tren", "B", false)
+                if (canSwap) PolyButton("Intercambio", false, !locked, Modifier.weight(1f), false, compact) { showSwap = true }
                 if (s.jail[my] && s.dj[my] > 0 && s.jmax[my] == 3) B("Doble condena", "w", false)
             }
             // regla opcional: viajar en tren a otra estación tuya en vez de tirar
@@ -1199,7 +1400,11 @@ private fun GamePanel(
                 onDismissRequest = { showShop = false }, title = { Text("Tienda") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for ((k, it) in Poly.SHOP) PolyButton("${it.first.removePrefix("la ").removePrefix("el ").replaceFirstChar { c -> c.uppercase() }} · ${Poly.eur(it.second)}", true, s.cash[my] >= it.second && !locked) { onSend("o$k") }
+                        val names = mapOf(1 to "Maricarmen", 2 to "Dado triple", 3 to "Doble condena", 4 to "Billete de tren", 5 to "Obras", 6 to "Intercambio")
+                        for ((k, it) in Poly.SHOP) {
+                            val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; else -> s.sw[my] } > 0
+                            PolyButton("${names[k]} · " + (if (have) "Ya lo tienes" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !locked) { showShop = false; onSend("o$k") }
+                        }
                     }
                 },
                 confirmButton = { TextButton(onClick = { showShop = false }) { Text("Cerrar") } },
@@ -1264,6 +1469,7 @@ private fun SquareDialog(i: Int, s: Poly.State, data: Poly.Data, my: Int, seatNa
                     if (can("m$i")) PolyButton("Hipotecar ${Poly.eur(q.p / 2)}", false, true) { onSend("m$i") }
                     if (can("u$i")) PolyButton("Deshipotecar ${Poly.eur(s.unmortgageCost(i))}", true, true) { onSend("u$i") }
                 }
+                if (my >= 0 && !locked && can("O$i")) PolyButton("Poner obras aquí", false, true) { onSend("O$i") }
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text("Cerrar") } },
