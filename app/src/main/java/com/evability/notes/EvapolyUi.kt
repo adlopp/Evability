@@ -310,6 +310,7 @@ private fun SquareView(
                 if (where == "top") { ownPart(); bodyPart(); bandPart() } else { bandPart(); bodyPart(); ownPart() }
             }
         }
+        if (ownable) Box(Modifier.fillMaxSize().border(uu * (if (owner >= 0) 0.34f else 0.2f), band ?: Color(0xFF7D8791)))
         if (hl) {
             val pulse = rememberInfiniteTransition(label = "ruta")
             val a by pulse.animateFloat(0.32f, 0.6f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "ruta")
@@ -554,7 +555,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     }
 
     fun buildState(r: Social.PolyRoom) {
-        val s = Poly.initGame(data, r.players.size, Poly.Cfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus, r.rails), r.seed)
+        val s = Poly.initGame(data, r.players.size, Poly.Cfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus, r.rails, r.ownerFree, r.buildAll), r.seed)
         acts.clear()
         for (a in r.acts) { Poly.applyText(s, a); acts.add(a) }
         st = s
@@ -788,7 +789,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 onLeave = { scope.launch { try { Social.polyLeave(r); onClose() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onRemove = { scope.launch { runCatching { Social.polyRemove(roomId) }; onClose() } },
                 onTok = { t -> scope.launch { try { Social.polyTok(r, t); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
-                onCfg = { money, go, auc, pot, dbl, rails -> scope.launch { try { Social.polyCfg(r, money, go, auc, pot, dbl, rails); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
+                onCfg = { cfg -> scope.launch { try { Social.polyCfg(r, cfg); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onStart = { scope.launch { try { Social.polyStart(r, kotlin.random.Random.nextInt(Int.MAX_VALUE)); room = Social.polyRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onInvite = { scope.launch { try { inviteList = Social.overview().friends.map { it.profile } } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
             )
@@ -903,7 +904,7 @@ private fun firstFreeToken(r: Social.PolyRoom, n: Int): Int {
 @Composable
 private fun PolyLobby(
     r: Social.PolyRoom, me: String, names: Map<String, String>, photos: Map<String, String>, tokenCount: Int, onToast: (String) -> Unit,
-    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onTok: (Int) -> Unit, onCfg: (Int, Boolean, Boolean, Boolean, Boolean, Boolean) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
+    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onTok: (Int) -> Unit, onCfg: (Social.RoomCfg) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
 ) {
     val isHost = r.host == me
     val inRoom = me in r.players
@@ -971,31 +972,25 @@ private fun PolyLobby(
                     Text("Dinero inicial", color = OnSurface)
                     Text(Poly.eur(money.toInt()), color = OnSurface, fontWeight = FontWeight.Bold)
                 }
+                fun cfg(money: Int = r.money, goBonus: Boolean = r.goBonus, auction: Boolean = r.auction, pot: Boolean = r.pot, dbl: Boolean = r.dblBonus, rails: Boolean = r.rails, ownerFree: Boolean = r.ownerFree, buildAll: Boolean = r.buildAll) =
+                    Social.RoomCfg(money, goBonus, auction, pot, dbl, rails, ownerFree, buildAll)
                 Slider(
                     value = money, onValueChange = { money = it }, valueRange = 500f..2500f, steps = 39, enabled = isHost,
-                    onValueChangeFinished = { onCfg(money.toInt(), r.goBonus, r.auction, r.pot, r.dblBonus, r.rails) },
+                    onValueChangeFinished = { onCfg(cfg(money = money.toInt())) },
                     colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
                 )
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("400 € al caer en la Salida", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.goBonus, { onCfg(r.money, it, r.auction, r.pot, r.dblBonus, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                @Composable
+                fun Opt(label: String, on: Boolean, change: (Boolean) -> Unit) = Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, color = OnSurface, modifier = Modifier.weight(1f))
+                    Switch(on, change, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Subastas", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.auction, { onCfg(r.money, r.goBonus, it, r.pot, r.dblBonus, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Bote en La Peza", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.pot, { onCfg(r.money, r.goBonus, r.auction, it, r.dblBonus, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Premio por dobles (50 € y 100 €)", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.dblBonus, { onCfg(r.money, r.goBonus, r.auction, r.pot, it, r.rails) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Viaje en tren entre estaciones (50 € y 150 €)", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.rails, { onCfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus, it) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
-                }
+                Opt("400 € al caer en la Salida", r.goBonus) { onCfg(cfg(goBonus = it)) }
+                Opt("Subastas", r.auction) { onCfg(cfg(auction = it)) }
+                Opt("Bote en La Peza", r.pot) { onCfg(cfg(pot = it)) }
+                Opt("Premio por dobles (50 € y 100 €)", r.dblBonus) { onCfg(cfg(dbl = it)) }
+                Opt("Viaje en tren entre estaciones (50 € y 150 €)", r.rails) { onCfg(cfg(rails = it)) }
+                Opt("Sin alquiler si el dueño está en la casilla", r.ownerFree) { onCfg(cfg(ownerFree = it)) }
+                Opt("Una casa en cada calle del grupo", r.buildAll) { onCfg(cfg(buildAll = it)) }
             }
             // botones
             if (invitedOnly) PolyButton("Unirse", true, true) { onJoin() }
@@ -1022,7 +1017,7 @@ private fun PolyButton(label: String, primary: Boolean, enabled: Boolean, modifi
     }
 }
 
-/** Tira lineal con tu posición, siempre en línea aunque el tablero gire: la casilla de detrás, la tuya y la de delante. */
+/** Tira lineal con tu posición, siempre en línea aunque el tablero gire: la casilla de delante a la izquierda, la tuya en medio y la de detrás a la derecha. */
 @Composable
 private fun PositionStrip(s: Poly.State, my: Int, data: Poly.Data, myPos: Int, tokenOf: (Int) -> Int, compact: Boolean, onSquare: (Int) -> Unit, modifier: Modifier = Modifier) {
     if (my < 0 || s.bk[my]) return
@@ -1031,7 +1026,7 @@ private fun PositionStrip(s: Poly.State, my: Int, data: Poly.Data, myPos: Int, t
         val cardW = ((maxWidth - 6.dp * 2 - 12.dp) / 3).coerceAtMost(if (compact) 80.dp else 96.dp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
             for (k in 0 until 3) {
-                val idx = (myPos - 1 + k + 40) % 40
+                val idx = (myPos + 1 - k + 40) % 40
                 val now = k == 1
                 Box(contentAlignment = Alignment.TopCenter) {
                     Box(Modifier.graphicsLayer { scaleX = if (now) 1.16f else 1f; scaleY = if (now) 1.16f else 1f; alpha = if (now) 1f else 0.88f }.then(if (now) Modifier.border(3.dp, col, RoundedCornerShape(6.dp)) else Modifier)) {
@@ -1225,7 +1220,9 @@ private fun SquareDialog(i: Int, s: Poly.State, data: Poly.Data, my: Int, seatNa
                 if (q.p > 0 && q.t != "tax") { Line("Precio", Poly.eur(q.p)); Line("Hipoteca", Poly.eur(q.p / 2)) }
                 if (o >= 0) Line("Dueño", seatName(o) + if (s.mort[i]) " · hipotecada" else "", color = PolyData.colors[o])
                 if (o == my && my >= 0 && !locked) {
-                    if (can("h$i")) PolyButton("Construir ${Poly.eur(s.houseCost(i))}", true, true) { onSend("h$i") }
+                    val all = s.cfg.buildAll
+                    val gcost = if (all && q.g != null) s.groupOf(q.g).let { g -> val mn = g.minOf { s.lvl[it] }; g.count { s.lvl[it] == mn } * s.houseCost(i) } else s.houseCost(i)
+                    if (can(if (all) "g$i" else "h$i")) PolyButton(if (all) "Construir en cada calle ${Poly.eur(gcost)}" else "Construir ${Poly.eur(s.houseCost(i))}", true, true) { onSend(if (all) "g$i" else "h$i") }
                     if (can("s$i")) PolyButton("Vender ${Poly.eur(s.houseCost(i) / 2)}", false, true) { onSend("s$i") }
                     if (can("m$i")) PolyButton("Hipotecar ${Poly.eur(q.p / 2)}", false, true) { onSend("m$i") }
                     if (can("u$i")) PolyButton("Deshipotecar ${Poly.eur(s.unmortgageCost(i))}", true, true) { onSend("u$i") }

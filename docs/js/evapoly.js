@@ -159,7 +159,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── sala de espera ─────
   let lobbySig = '';
-  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.status]);
+  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.ownerFree, room.buildAll, room.status]);
   function renderLobby() {
     lobbySig = sigOf();
     const isHost = room.host === me, inRoom = room.players.includes(me), invitedOnly = !inRoom && room.invited.includes(me);
@@ -203,7 +203,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(body, h('div', { class: 'poly-lobby' }, seats, tokRow,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Dinero inicial'), moneyOut), slider,
-        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails')),
+        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails'), toggle('Sin alquiler si el dueño está en la casilla', 'ownerFree'), toggle('Una casa en cada calle del grupo', 'buildAll')),
       h('div', { class: 'pbtns' }, buttons)));
   }
   const firstFreeTok = () => { const used = new Set(Object.values(room.tok)); return toks.findIndex((_, i) => !used.has(i)); };
@@ -220,7 +220,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── partida ─────
-  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus, rails: room.rails });
+  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus, rails: room.rails, ownerFree: room.ownerFree, buildAll: room.buildAll });
   function startState() {
     state = initGame(data, room.players.length, cfgOf(), room.seed);
     acts = [];
@@ -389,7 +389,7 @@ export function openEvapoly({ roomId, api, onClose }) {
           h('span', { class: 'nm' + (one && !special ? ' one' : ''), style: { fontSize: fs + 'em' } }, q2.n),
           q2.p && !g ? h('span', { class: 'pr2' + (q2.t === 'station' ? ' zoomonly' : '') }, eur(q2.p)) : null),
         ownable ? h('div', { class: 'pown' }, h('span', { class: 'bld' })) : null);
-      const el = h('div', { class: `psq t-${q2.t} s-${side}`, 'data-i': i, style: { left: c.l + '%', top: c.t + '%', width: c.w + '%', height: c.h + '%' } }, pin);
+      const el = h('div', { class: `psq t-${q2.t} s-${side}` + (ownable ? ' ownable' : ''), 'data-i': i, style: `left:${c.l}%;top:${c.t}%;width:${c.w}%;height:${c.h}%;--gc:${g || '#7d8791'}` }, pin);
       // mantener pulsado: la casilla se agranda mientras se sigue pulsando; un toque corto abre su ficha
       let timer, held = false, zoom = null;
       el.addEventListener('pointerdown', () => {
@@ -469,7 +469,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     return z;
   }
 
-  /** Tira lineal de tu posición: la casilla de detrás, la tuya y la de delante, siempre en línea aunque el tablero gire. */
+  /** Tira lineal de tu posición: la casilla de delante a la izquierda, la tuya en medio y la de detrás a la derecha, siempre en línea aunque el tablero gire. */
   function paintStrip() {
     if (!stripEl || !state || !gridEl) return;
     const my = mySeat();
@@ -477,7 +477,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     const full = root.classList.contains('full'), n = 3, pos = view.pos[my];
     const w = Math.max(46, Math.min(full ? 80 : 96, ((stripEl.clientWidth || 320) - (n - 1) * 6 - 10) / n));
     fill(stripEl, Array.from({ length: n }, (_, k) => {
-      const i = (pos - 1 + k + 40) % 40, now = k === 1, card = cardCopy(i, w);
+      const i = (pos + 1 - k + 40) % 40, now = k === 1, card = cardCopy(i, w);
       card.addEventListener('click', () => openSquare(i));
       return h('div', { class: 'pslot' + (now ? ' now' : ''), style: `--c:${COLORS[my]}` }, card, now ? tokEl(my, 'mini on-strip') : null);
     }));
@@ -601,7 +601,10 @@ export function openEvapoly({ roomId, api, onClose }) {
       const buttons = [];
       const can = (code) => act(s, my, code, true) === null;
       if (my >= 0 && o === my && !running) {
-        if (can('h' + i)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send('h' + i); draw(); } }, `Construir ${eur(houseCost(s, i))}`));
+        const all = s.cfg.buildAll, code = (all ? 'g' : 'h') + i;
+        let cost = houseCost(s, i);
+        if (all && q2.g) { const g = groupOf(s, q2.g), mn = Math.min(...g.map((j) => s.lvl[j])); cost = g.filter((j) => s.lvl[j] === mn).length * houseCost(s, i); }
+        if (can(code)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send(code); draw(); } }, all ? `Construir en cada calle ${eur(cost)}` : `Construir ${eur(houseCost(s, i))}`));
         if (can('s' + i)) buttons.push(h('button', { class: 'btn outline', onclick: async () => { await send('s' + i); draw(); } }, `Vender ${eur(houseCost(s, i) / 2)}`));
         if (can('m' + i)) buttons.push(h('button', { class: 'btn outline', onclick: async () => { await send('m' + i); draw(); } }, `Hipotecar ${eur(q2.p / 2)}`));
         if (can('u' + i)) buttons.push(h('button', { class: 'btn', onclick: async () => { await send('u' + i); draw(); } }, `Deshipotecar ${eur(unmortgageCost(s, i))}`));

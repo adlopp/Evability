@@ -21,7 +21,7 @@ object Poly {
     class Sq(val n: String, val t: String, val g: String?, val p: Int, val r: IntArray, val i: String? = null)
     class Card(val x: String, val e: String)
     class Data(val squares: List<Sq>, val groups: Map<String, String>, val house: Map<String, Int>, val chance: List<Card>, val chest: List<Card>)
-    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false, val rails: Boolean = false)
+    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false, val rails: Boolean = false, val ownerFree: Boolean = false, val buildAll: Boolean = false)
     class Deck(var order: List<Int> = emptyList(), var i: Int = 0, var held: Int = -1, var held2: Int = -1)
     class Auction(val sq: Int, var bid: Int, var bidder: Int, val active: MutableList<Int>, var cur: Int)
     class Debt(val seat: Int, val amt: Int, var to: Int, val why: String, val rent: Boolean = false, val tax: Boolean = false)
@@ -66,6 +66,7 @@ object Poly {
         var pot = 0 // impuestos acumulados en La Peza
         var ordCand = BooleanArray(n) { true } // quién tira para decidir quién empieza
         var ordRolls = IntArray(n)
+        val railCd = IntArray(n) // turnos que faltan para poder volver a viajar en tren
         var turn = 0
         var phase = "roll"
         var dbl = 0
@@ -109,7 +110,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, hs.toString(), ht.toString(), heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -208,7 +209,7 @@ object Poly {
                 if (o < 0) {
                     if (s.cash[seat] >= q.p || s.cfg.auction) s.buy = i
                     else say(s, "@$seat no tiene dinero para comprar ${q.n} (${eur(q.p)})")
-                } else if (o != seat && !s.mort[i] && s.pos[o] == i) {
+                } else if (s.cfg.ownerFree && o != seat && !s.mort[i] && s.pos[o] == i) {
                     say(s, "@$o está en ${q.n}: @$seat no paga alquiler")
                 } else if (o != seat && !s.mort[i]) {
                     val rent: Int
@@ -307,6 +308,7 @@ object Poly {
     private fun nextTurn(s: State) {
         s.turn = nextAlive(s, s.turn)
         s.phase = "roll"; s.dbl = 0; s.again = false; s.buy = -1
+        if (s.railCd[s.turn] > 0) s.railCd[s.turn]--
     }
 
     private fun settle(s: State) {
@@ -563,10 +565,34 @@ object Poly {
                 }
                 return ok()
             }
+            'g' -> {
+                // opción: una casa en cada calle del grupo de una vez (las que van más atrás; se paga por todas)
+                if (!s.cfg.buildAll || !(mine && free)) return "Ahora no puedes construir"
+                val i = arg.toIntOrNull()
+                if (i == null || i < 0 || i > 39 || s.sq(i).t != "street" || s.own[i] != seat) return "No es tuya"
+                val q = s.sq(i)
+                val g = s.groupOf(q.g)
+                if (!s.ownsAll(seat, q.g)) return "Necesitas todo el grupo"
+                if (g.any { s.mort[it] }) return "Hay una hipotecada en el grupo"
+                val min = g.minOf { s.lvl[it] }
+                if (min >= 5) return "Ya tiene hotel"
+                val todo = g.filter { s.lvl[it] == min }
+                val cost = todo.size * s.houseCost(i)
+                var hs = s.hs
+                var ht = s.ht
+                for (j in todo) { if (s.lvl[j] == 4) { if (ht < 1) return "No quedan hoteles en el banco"; ht--; hs += 4 } else { if (hs < 1) return "No quedan casas en el banco"; hs-- } }
+                if (s.cash[seat] < cost) return "No tienes dinero"
+                if (dry) return null
+                s.cash[seat] -= cost
+                for (j in todo) { if (s.lvl[j] == 4) { s.ht--; s.hs += 4 } else s.hs--; s.lvl[j]++ }
+                say(s, "@$seat construye ${if (min == 4) "un hotel" else "una casa"} en cada calle del grupo (${todo.size}) por ${eur(cost)}", "build", seat = seat, sq = i)
+                return ok()
+            }
             'x' -> {
                 // movimiento por raíles: en vez de tirar, pagas y viajas a otra estación tuya (la siguiente 50 €, la de enfrente 150 €); solo hacia delante
                 if (!s.cfg.rails || !mine || s.phase != "roll" || s.dbl > 0 || s.again) return "Ahora no puedes viajar en tren"
                 if (s.jail[seat]) return "Estás en la cárcel"
+                if (s.railCd[seat] > 0) return "Tras viajar en tren, el turno siguiente toca tirar los dados"
                 val st = listOf(5, 15, 25, 35)
                 val from = s.pos[seat]
                 val k = st.indexOf(from)
@@ -582,7 +608,7 @@ object Poly {
                 s.cash[seat] -= cost
                 say(s, "@$seat paga ${eur(cost)} y viaja en tren hasta ${s.sq(to).n}", "rail", seat = seat, from = from, to = to, amt = cost)
                 if (to < from) goPay(s, seat, false) // cruza la Salida
-                s.pos[seat] = to; s.again = false; s.dbl = 0
+                s.pos[seat] = to; s.again = false; s.dbl = 0; s.railCd[seat] = 2 // en tu siguiente turno no puedes volver a viajar
                 settle(s)
                 return ok()
             }

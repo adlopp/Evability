@@ -35,13 +35,13 @@ function shuffled(s, n) {
 // ───── estado inicial ─────
 export function initGame(data, n, cfg, seed) {
   const s = {
-    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails }, r: seed | 0,
+    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails, ownerFree: !!cfg.ownerFree, buildAll: !!cfg.buildAll }, r: seed | 0,
     pos: Array(n).fill(0), cash: Array(n).fill(cfg.money), jail: Array(n).fill(false), jt: Array(n).fill(0), jf: Array(n).fill(0),
     bk: Array(n).fill(false),
     own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false), hs: HOUSES, ht: HOTELS,
     deck: { c: { order: [], i: 0, held: -1, held2: -1 }, h: { order: [], i: 0, held: -1, held2: -1 } }, mc: Array(n).fill(0), mcBy: -1, pot: 0,
     turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, trade: null,
-    heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0),
+    heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0),
   };
   s.deck.c.order = shuffled(s, data.cards.chance.length);
   s.deck.h.order = shuffled(s, data.cards.chest.length);
@@ -135,7 +135,7 @@ function land(s, seat, i, ctx) {
       if (o < 0) {
         if (s.cash[seat] >= q.p || s.cfg.auction) s.buy = i;
         else say(s, `@${seat} no tiene dinero para comprar ${q.n} (${eur(q.p)})`);
-      } else if (o !== seat && !s.mort[i] && s.pos[o] === i) {
+      } else if (s.cfg.ownerFree && o !== seat && !s.mort[i] && s.pos[o] === i) {
         say(s, `@${o} está en ${q.n}: @${seat} no paga alquiler`);
       } else if (o !== seat && !s.mort[i]) {
         let rent;
@@ -229,6 +229,7 @@ function bankrupt(s, seat, to, why) {
 function nextTurn(s) {
   s.turn = nextAlive(s, s.turn);
   s.phase = 'roll'; s.dbl = 0; s.again = false; s.buy = -1;
+  if (s.railCd[s.turn] > 0) s.railCd[s.turn]--;
 }
 
 /** Decide en qué fase queda la partida cuando una acción termina de resolverse. */
@@ -469,10 +470,31 @@ export function act(s, seat, code, dry = false) {
       }
       return ok();
     }
+    case 'g': {
+      // opción: una casa en cada calle del grupo de una vez (las que van más atrás; se paga por todas)
+      if (!s.cfg.buildAll || !(mine && free)) return 'Ahora no puedes construir';
+      const i = Number(arg), q = sq(s, i);
+      if (!Number.isInteger(i) || i < 0 || i > 39 || q.t !== 'street' || s.own[i] !== seat) return 'No es tuya';
+      const g = groupOf(s, q.g);
+      if (!ownsAll(s, seat, q.g)) return 'Necesitas todo el grupo';
+      if (g.some((j) => s.mort[j])) return 'Hay una hipotecada en el grupo';
+      const min = Math.min(...g.map((j) => s.lvl[j]));
+      if (min >= 5) return 'Ya tiene hotel';
+      const todo = g.filter((j) => s.lvl[j] === min), cost = todo.length * houseCost(s, i);
+      let hs = s.hs, ht = s.ht;
+      for (const j of todo) { if (s.lvl[j] === 4) { if (ht < 1) return 'No quedan hoteles en el banco'; ht--; hs += 4; } else { if (hs < 1) return 'No quedan casas en el banco'; hs--; } }
+      if (s.cash[seat] < cost) return 'No tienes dinero';
+      if (dry) return OK;
+      s.cash[seat] -= cost;
+      for (const j of todo) { if (s.lvl[j] === 4) { s.ht--; s.hs += 4; } else s.hs--; s.lvl[j]++; }
+      say(s, `@${seat} construye ${min === 4 ? 'un hotel' : 'una casa'} en cada calle del grupo (${todo.length}) por ${eur(cost)}`, 'build', { seat, sq: i });
+      return ok();
+    }
     case 'x': {
       // movimiento por raíles: en vez de tirar, pagas y viajas a otra estación tuya (la siguiente 50 €, la de enfrente 150 €); solo hacia delante
       if (!s.cfg.rails || !mine || s.phase !== 'roll' || s.dbl > 0 || s.again) return 'Ahora no puedes viajar en tren';
       if (s.jail[seat]) return 'Estás en la cárcel';
+      if (s.railCd[seat] > 0) return 'Tras viajar en tren, el turno siguiente toca tirar los dados';
       const st = [5, 15, 25, 35], from = s.pos[seat], k = st.indexOf(from), to = Number(arg), j = st.indexOf(to);
       if (k < 0 || s.own[from] !== seat || s.mort[from]) return 'Tienes que estar en una estación tuya';
       if (j < 0 || s.own[to] !== seat || s.mort[to]) return 'Esa estación no es tuya';
@@ -483,7 +505,7 @@ export function act(s, seat, code, dry = false) {
       s.cash[seat] -= cost;
       say(s, `@${seat} paga ${eur(cost)} y viaja en tren hasta ${sq(s, to).n}`, 'rail', { seat, from, to, amt: cost });
       if (to < from) goPay(s, seat, false); // cruza la Salida
-      s.pos[seat] = to; s.again = false; s.dbl = 0;
+      s.pos[seat] = to; s.again = false; s.dbl = 0; s.railCd[seat] = 2; // en tu siguiente turno no puedes volver a viajar
       settle(s);
       return ok();
     }
@@ -578,4 +600,4 @@ export function applyText(s, text) {
 }
 
 /** Resumen del estado, para comparar partidas entre JS y Kotlin. */
-export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.hs, s.ht, s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
+export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.hs, s.ht, s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);

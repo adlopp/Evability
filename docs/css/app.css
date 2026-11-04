@@ -591,3 +591,7 @@ textarea.field { resize: vertical; }
 @media (orientation: landscape) and (min-width: 800px) { .poly-main .pside { align-self: stretch; } }
 
 .pbody .nm.one { white-space: nowrap; }
+
+/* contorno del color del grupo en todas las propiedades (gris en estaciones y servicios); más grueso cuando ya tienen dueño */
+.psq.ownable::before { content: ''; position: absolute; inset: 0; z-index: 4; pointer-events: none; border: .2em solid var(--gc); }
+.psq.ownable.owned::before { border-width: .34em; }
