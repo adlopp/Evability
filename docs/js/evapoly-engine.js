@@ -156,8 +156,7 @@ function land(s, seat, i, ctx) {
     case 'street': case 'station': case 'utility': {
       const o = s.own[i];
       if (o < 0) {
-        if (s.cash[seat] >= q.p || s.cfg.auction) s.buy = i;
-        else say(s, `@${seat} no tiene dinero para comprar ${q.n} (${eur(q.p)})`);
+        s.buy = i; // aunque falte dinero se ofrece: se puede hipotecar o vender casas para reunirlo antes de decidir
       } else if (s.cfg.ownerFree && o !== seat && !s.mort[i] && s.pos[o] === i) {
         say(s, `@${o} está en ${q.n}: @${seat} no paga alquiler`);
       } else if (o !== seat && !s.mort[i]) {
@@ -167,7 +166,7 @@ function land(s, seat, i, ctx) {
           say(s, `@${seat} tira los dados: ${a} y ${b}`, 'dice', { seat, d1: a, d2: b });
           rent = (a + b) * 10;
         } else rent = rentOf(s, i, ctx.dice || 0) * (ctx.double ? 2 : 1);
-        pay(s, seat, rent, o, ` de alquiler por ${q.n}`, true);
+        pay(s, seat, rent + (s.evk === 'crisis' ? CRISIS_RENT : 0), o, ` de alquiler por ${q.n}`, true);
       }
       break;
     }
@@ -252,9 +251,11 @@ function bankrupt(s, seat, to, why) {
 }
 
 // ───── eventos aleatorios (regla opcional) ─────
-const EV_NAMES = ['dog', 'snow', 'rain', 'quake'], EV_TURNS = 5, DOG_BITE = 150, DOG_STEP = 4, QUAKE_PCT = 15;
-const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más', 'Evento del terremoto: al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador'];
-const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia', 'La tierra ha dejado de temblar'];
+const EV_NAMES = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance'], EV_TURNS = 5, BALANCE_PRIZE = 500, DOG_BITE = 150, DOG_STEP = 4, QUAKE_PCT = 15, EVENT_PCT = 15, CRISIS_PRICE = 50, CRISIS_RENT = 25;
+/** Precio al que se compra una propiedad ahora mismo (con la crisis económica sube). */
+export const buyPrice = (s, i) => sq(s, i).p + (s.evk === 'crisis' ? CRISIS_PRICE : 0);
+const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más', 'Evento del terremoto: al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador', 'Evento de crisis económica: comprar una propiedad cuesta 50 € más y al caer en una ajena se pagan 25 € extra de alquiler', 'Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados'];
+const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia', 'La tierra ha dejado de temblar', 'La crisis económica ha terminado', ''];
 
 // el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
 function dogBite(s, i) {
@@ -264,6 +265,24 @@ function dogBite(s, i) {
 }
 function dogBites(s, squares) {
   for (let i = 0; i < s.n; i++) if (!s.bk[i] && squares.includes(s.pos[i])) dogBite(s, i);
+}
+
+/** Patrimonio: dinero + precio de las propiedades (las hipotecadas, a la mitad) + coste de las casas y hoteles. */
+function fortune(s, seat) {
+  let w = s.cash[seat];
+  for (let i = 0; i < 40; i++) if (s.own[i] === seat) { w += s.mort[i] ? sq(s, i).p / 2 : sq(s, i).p; w += s.lvl[i] * houseCost(s, i); }
+  return w;
+}
+
+/** Equilibrio (evento instantáneo): quien tenga menos patrimonio cobra 500 €; si hay empate, cobran todos los empatados. */
+function balance(s, seat) {
+  say(s, EV_TEXT[5], 'evt', { seat, amt: 1, sq: 5 });
+  const left = alive(s), f = left.map((i) => fortune(s, i)), low = Math.min(...f);
+  left.forEach((i, k) => {
+    if (f[k] !== low) return;
+    s.cash[i] += BALANCE_PRIZE;
+    say(s, `Equilibrio: @${i} recibe ${eur(BALANCE_PRIZE)}`, 'gain', { seat: i, amt: BALANCE_PRIZE });
+  });
 }
 
 /** Terremoto: derrumba una casa al azar de cada jugador (los hoteles no se tocan; sin casas, se libra). */
@@ -280,12 +299,13 @@ function quake(s) {
   }
 }
 
-/** Una vez por turno, tras tirar: un 10 % de que se active un evento (si no hay otro activo ni son los dos primeros turnos del jugador). */
+/** Una vez por turno, tras tirar: un 15 % de que se active un evento (si no hay otro activo ni son los dos primeros turnos del jugador). */
 function maybeEvent(s, seat) {
   if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase === 'over') return;
   s.evChk = true;
-  if (s.evk || s.tc[seat] < 2 || rint(s, 10) !== 0) return;
-  const kind = rint(s, 4);
+  if (s.evk || s.tc[seat] < 2 || rint(s, 100) >= EVENT_PCT) return;
+  const kind = rint(s, 6);
+  if (kind === 5) { balance(s, seat); return; }
   s.evk = EV_NAMES[kind]; s.evf = true;
   for (let i = 0; i < s.n; i++) s.evl[i] = s.bk[i] ? 0 : EV_TURNS;
   say(s, EV_TEXT[kind], 'evt', { seat, amt: 1, sq: kind });
@@ -479,11 +499,11 @@ export function act(s, seat, code, dry = false) {
       return ok();
     case 'b': {
       if (!mine || s.phase !== 'buy') return 'No puedes comprar ahora';
-      const q = sq(s, s.buy);
-      if (s.cash[seat] < q.p) return 'No tienes dinero';
+      const q = sq(s, s.buy), price = buyPrice(s, s.buy);
+      if (s.cash[seat] < price) return 'No tienes dinero';
       if (dry) return OK;
-      s.cash[seat] -= q.p; s.own[s.buy] = seat;
-      say(s, `@${seat} compra ${q.n} por ${eur(q.p)}`, 'buy', { seat, sq: s.buy, amt: q.p });
+      s.cash[seat] -= price; s.own[s.buy] = seat;
+      say(s, `@${seat} compra ${q.n} por ${eur(price)}`, 'buy', { seat, sq: s.buy, amt: price });
       s.buy = -1; settle(s);
       return ok();
     }
@@ -536,7 +556,8 @@ export function act(s, seat, code, dry = false) {
       const i = Number(arg);
       if (!Number.isInteger(i) || i < 0 || i > 39) return 'Casilla no válida';
       const inDebt = s.phase === 'debt' && s.debts[0]?.seat === seat && (op === 's' || op === 'm');
-      if (!inDebt && !(mine && free)) return 'Ahora no puedes';
+      const inBuy = s.phase === 'buy' && mine && (op === 's' || op === 'm'); // al decidir una compra se puede reunir dinero
+      if (!inDebt && !inBuy && !(mine && free)) return 'Ahora no puedes';
       const err = op === 'h' ? canBuild(s, seat, i) : op === 's' ? canSell(s, seat, i) : op === 'm' ? canMortgage(s, seat, i) : canUnmortgage(s, seat, i);
       if (err) return err;
       if (dry) return OK;

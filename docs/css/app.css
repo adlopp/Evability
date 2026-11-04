@@ -355,8 +355,8 @@ textarea.field { resize: vertical; }
 .psq.t-go { background: #F6E3B4; } .psq.t-gotojail { background: #F4C7C3; } .psq.t-jail { background: #F1E1C9; } .psq.t-parking { background: #D9E8F5; }
 .psq.mort .pin { filter: grayscale(1); opacity: .6; }
 /* recorrido de la última tirada, en amarillo */
-.psq.hl::after { content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none; background: rgba(255, 240, 180, .2); box-shadow: inset 0 0 0 .12em rgba(255, 221, 120, .6); animation: hlpulse 1.2s ease-in-out infinite alternate; }
-@keyframes hlpulse { from { background: rgba(255, 240, 180, .1); } to { background: rgba(255, 240, 180, .26); } }
+.psq.hl::after { content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none; background: rgba(255, 214, 0, .5); box-shadow: inset 0 0 0 .28em #FFC400; animation: hlpulse .9s ease-in-out infinite alternate; }
+@keyframes hlpulse { from { background: rgba(255, 214, 0, .32); } to { background: rgba(255, 214, 0, .6); } }
 .psq.pzoom { z-index: 300; pointer-events: none; box-shadow: 0 10px 40px rgba(0,0,0,.6); border-radius: 6px; border-width: 2px; color: #1c1b22; }
 .psq.pzoom::after { display: none; }
 
@@ -692,7 +692,7 @@ textarea.field { resize: vertical; }
 .pomo.poly.full .pfull-eye { top: 122px; }
 .pboard .psq { transition: opacity .3s, filter .3s; }
 .pboard.focus .psq.fo-dim { opacity: .4; filter: saturate(.3); }
-.pboard .psq.fo-mine { z-index: 7; animation: fomine 1.7s ease-in-out infinite alternate; }
+.pboard .psq.fo-mine { z-index: 7; filter: brightness(1.07) saturate(1.1); }
 @keyframes fomine { from { box-shadow: 0 0 .35em .1em rgba(255, 196, 0, .55), inset 0 0 .5em rgba(255, 220, 90, .3); } to { box-shadow: 0 0 1.1em .35em rgba(255, 196, 0, 1), inset 0 0 1.2em rgba(255, 220, 90, .7); } }
 .pboard .psq.fo-miss { outline: .34em dashed var(--oc, #fff); outline-offset: -.4em; z-index: 6; animation: fomiss 1.1s ease-in-out infinite alternate; }
 @keyframes fomiss { from { outline-color: transparent; } to { outline-color: var(--oc, #fff); } }
@@ -719,3 +719,8 @@ textarea.field { resize: vertical; }
 .pboard.quake { animation: pquake 1.2s linear; }
 @keyframes pquake { 0%, 100% { transform: translate(0, 0); } 8% { transform: translate(-6px, 3px); } 16% { transform: translate(6px, -4px); } 24% { transform: translate(-5px, -3px); } 32% { transform: translate(5px, 4px); } 40% { transform: translate(-4px, 2px); } 50% { transform: translate(4px, -2px); } 62% { transform: translate(-3px, 2px); } 75% { transform: translate(2px, -1px); } 88% { transform: translate(-1px, 1px); } }
 .pboard.ev-quake { box-shadow: inset 0 0 5em rgba(120, 80, 30, .2); }
+
+/* crisis económica: precios en rojo */
+.pboard.ev-crisis { box-shadow: inset 0 0 5em rgba(150, 40, 40, .16); }
+.pboard .psq.crisis .pr, .pboard .psq.crisis .pr2 { color: #C62828; }
+.pboard .psq.crisis .pband .pr { color: inherit; text-decoration: underline wavy rgba(255, 90, 90, .9) .08em; }

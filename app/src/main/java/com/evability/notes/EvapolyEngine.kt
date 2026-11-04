@@ -99,6 +99,8 @@ object Poly {
         var acts = 0
 
         fun sq(i: Int) = data.squares[i]
+        /** Precio al que se compra una propiedad ahora mismo (con la crisis económica sube). */
+        fun buyPrice(i: Int) = sq(i).p + if (evk == "crisis") 50 else 0
         fun deck(w: Int) = if (w == 0) deckC else deckH
         fun alive(): List<Int> = (0 until n).filter { !bk[it] }
         fun groupOf(g: String?): List<Int> = (0 until 40).filter { sq(it).g == g }
@@ -242,8 +244,7 @@ object Poly {
             "street", "station", "utility" -> {
                 val o = s.own[i]
                 if (o < 0) {
-                    if (s.cash[seat] >= q.p || s.cfg.auction) s.buy = i
-                    else say(s, "@$seat no tiene dinero para comprar ${q.n} (${eur(q.p)})")
+                    s.buy = i // aunque falte dinero se ofrece: se puede hipotecar o vender casas para reunirlo antes de decidir
                 } else if (s.cfg.ownerFree && o != seat && !s.mort[i] && s.pos[o] == i) {
                     say(s, "@$o está en ${q.n}: @$seat no paga alquiler")
                 } else if (o != seat && !s.mort[i]) {
@@ -253,7 +254,7 @@ object Poly {
                         say(s, "@$seat tira los dados: $a y $b", "dice", seat = seat, d1 = a, d2 = b)
                         rent = (a + b) * 10
                     } else rent = s.rentOf(i, dice) * (if (double) 2 else 1)
-                    pay(s, seat, rent, o, " de alquiler por ${q.n}", true)
+                    pay(s, seat, rent + (if (s.evk == "crisis") CRISIS_RENT else 0), o, " de alquiler por ${q.n}", true)
                 }
             }
             "tax" -> pay(s, seat, q.p, -1, " de ${q.n.lowercase()}", false, true)
@@ -343,13 +344,17 @@ object Poly {
     }
 
     // ───── eventos aleatorios (regla opcional) ─────
-    private val EV_NAMES = listOf("dog", "snow", "rain", "quake")
+    private val EV_NAMES = listOf("dog", "snow", "rain", "quake", "crisis", "balance")
+    private const val BALANCE_PRIZE = 500
     private const val QUAKE_PCT = 15
+    private const val EVENT_PCT = 15
+    private const val CRISIS_PRICE = 50
+    private const val CRISIS_RENT = 25
     private const val EV_TURNS = 5
     private const val DOG_BITE = 150
     private const val DOG_STEP = 4
-    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella", "Evento de nieve: está nevando, así que solo se tira un dado", "Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más", "Evento del terremoto: al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador")
-    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia", "La tierra ha dejado de temblar")
+    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella", "Evento de nieve: está nevando, así que solo se tira un dado", "Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más", "Evento del terremoto: al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador", "Evento de crisis económica: comprar una propiedad cuesta 50 € más y al caer en una ajena se pagan 25 € extra de alquiler", "Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados")
+    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia", "La tierra ha dejado de temblar", "La crisis económica ha terminado", "")
 
     // el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
     private fun dogBite(s: State, i: Int) {
@@ -360,6 +365,25 @@ object Poly {
 
     private fun dogBites(s: State, squares: List<Int>) {
         for (i in 0 until s.n) if (!s.bk[i] && s.pos[i] in squares) dogBite(s, i)
+    }
+
+    /** Patrimonio: dinero + precio de las propiedades (las hipotecadas, a la mitad) + coste de las casas y hoteles. */
+    private fun fortune(s: State, seat: Int): Int {
+        var w = s.cash[seat]
+        for (i in 0 until 40) if (s.own[i] == seat) { w += if (s.mort[i]) s.sq(i).p / 2 else s.sq(i).p; w += s.lvl[i] * s.houseCost(i) }
+        return w
+    }
+
+    /** Equilibrio (evento instantáneo): quien tenga menos patrimonio cobra 500 €; si hay empate, cobran todos los empatados. */
+    private fun balance(s: State, seat: Int) {
+        say(s, EV_TEXT[5], "evt", seat = seat, amt = 1, sq = 5)
+        val left = s.alive()
+        val low = left.minOf { fortune(s, it) }
+        for (i in left) {
+            if (fortune(s, i) != low) continue
+            s.cash[i] += BALANCE_PRIZE
+            say(s, "Equilibrio: @$i recibe ${eur(BALANCE_PRIZE)}", "gain", seat = i, amt = BALANCE_PRIZE)
+        }
     }
 
     /** Terremoto: derrumba una casa al azar de cada jugador (los hoteles no se tocan; sin casas, se libra). */
@@ -375,12 +399,13 @@ object Poly {
         }
     }
 
-    /** Una vez por turno, tras tirar: un 10 % de que se active un evento (si no hay otro activo ni son los dos primeros turnos del jugador). */
+    /** Una vez por turno, tras tirar: un 15 % de que se active un evento (si no hay otro activo ni son los dos primeros turnos del jugador). */
     private fun maybeEvent(s: State, seat: Int) {
         if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase == "over") return
         s.evChk = true
-        if (s.evk != "" || s.tc[seat] < 2 || rint(s, 10) != 0) return
-        val kind = rint(s, 4)
+        if (s.evk != "" || s.tc[seat] < 2 || rint(s, 100) >= EVENT_PCT) return
+        val kind = rint(s, 6)
+        if (kind == 5) { balance(s, seat); return }
         s.evk = EV_NAMES[kind]; s.evf = true
         for (i in 0 until s.n) s.evl[i] = if (s.bk[i]) 0 else EV_TURNS
         say(s, EV_TEXT[kind], "evt", seat = seat, amt = 1, sq = kind)
@@ -587,10 +612,11 @@ object Poly {
             'b' -> {
                 if (!mine || s.phase != "buy") return "No puedes comprar ahora"
                 val q = s.sq(s.buy)
-                if (s.cash[seat] < q.p) return "No tienes dinero"
+                val price = s.buyPrice(s.buy)
+                if (s.cash[seat] < price) return "No tienes dinero"
                 if (dry) return null
-                s.cash[seat] -= q.p; s.own[s.buy] = seat
-                say(s, "@$seat compra ${q.n} por ${eur(q.p)}", "buy", seat = seat, sq = s.buy, amt = q.p)
+                s.cash[seat] -= price; s.own[s.buy] = seat
+                say(s, "@$seat compra ${q.n} por ${eur(price)}", "buy", seat = seat, sq = s.buy, amt = price)
                 s.buy = -1; settle(s)
                 return ok()
             }
@@ -645,7 +671,8 @@ object Poly {
                 val i = arg.toIntOrNull()
                 if (i == null || i < 0 || i > 39) return "Casilla no válida"
                 val inDebt = s.phase == "debt" && s.debts.firstOrNull()?.seat == seat && (op == 's' || op == 'm')
-                if (!inDebt && !(mine && free)) return "Ahora no puedes"
+                val inBuy = s.phase == "buy" && mine && (op == 's' || op == 'm') // al decidir una compra se puede reunir dinero
+                if (!inDebt && !inBuy && !(mine && free)) return "Ahora no puedes"
                 val err = when (op) { 'h' -> canBuild(s, seat, i); 's' -> canSell(s, seat, i); 'm' -> canMortgage(s, seat, i); else -> canUnmortgage(s, seat, i) }
                 if (err != null) return err
                 if (dry) return null

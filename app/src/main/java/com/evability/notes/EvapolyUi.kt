@@ -251,13 +251,15 @@ private class Delta(val seat: Int, val text: String, val up: Boolean, val id: Lo
 
 // ───── eventos aleatorios ─────
 private class EvCard(val kind: Int, val start: Boolean, val peek: Boolean = false, val hold: Boolean = false)
-private val EV_IDS = listOf("dog", "snow", "rain", "quake")
-private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto")
+private val EV_IDS = listOf("dog", "snow", "rain", "quake", "crisis", "balance")
+private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto", "Crisis económica", "Equilibrio")
 private val EV_DESC = listOf(
     "Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.",
     "Está nevando, así que te mueves más lento: durante 5 turnos de cada jugador solo se tira un dado en lugar de dos.",
     "Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.",
     "Durante 5 turnos de cada jugador, al acabar cada turno hay un 15 % de que tiemble la tierra y se derrumbe una casa de cada jugador. Los hoteles se salvan, y quien no tenga casas se libra.",
+    "Durante 5 turnos de cada jugador, todas las propiedades suben 50 € para comprarlas (Calle Pollo pasa de 220 € a 270 €) y, al caer en una de otro jugador, pagas 25 € extra de alquiler.",
+    "El jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €. Si hay empate, cobran todos los empatados.",
 )
 
 /** Nieve o lluvia suaves sobre el tablero: el mapa se vuelve invernal o mojado. */
@@ -307,9 +309,9 @@ private fun EventCardView(c: EvCard, side: Dp, onDone: () -> Unit) {
                 .border(side * 0.007f, Color.White.copy(alpha = 0.4f), shape).padding(side * 0.04f),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else if (c.kind == 3) "quake" else "sun", side * 0.17f)
+            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else if (c.kind == 3) "quake" else if (c.kind == 4) "crisis" else "sun", side * 0.17f)
             Text(if (c.peek) "EVENTO ACTIVO" else if (c.start) "EVENTO ACTIVADO" else "EVENTO TERMINADO", color = fg.copy(alpha = 0.92f), fontSize = fsz * 0.9f, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else if (c.kind == 3) "La tierra ha dejado de temblar" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
+            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else if (c.kind == 3) "La tierra ha dejado de temblar" else if (c.kind == 4) "La crisis económica ha terminado" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
             if (c.start) Text(EV_DESC[c.kind], color = fg, fontSize = fsz * 0.95f, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, lineHeight = fsz * 1.3f, modifier = Modifier.padding(top = side * 0.01f))
         }
     }
@@ -457,7 +459,7 @@ private fun SquareView(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        Poly.eur(q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.9f, fontWeight = FontWeight.ExtraBold, maxLines = 1,
+                        Poly.eur(if (ownable) st.buyPrice(i) else q.p), color = if (lum(band) > 0.62f) Ink else Color.White, fontSize = fs * 0.9f, fontWeight = FontWeight.ExtraBold, maxLines = 1,
                         style = androidx.compose.ui.text.TextStyle(
                             platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false), lineHeight = fs * 0.9f,
                             lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both),
@@ -474,7 +476,7 @@ private fun SquareView(
                         q.n, color = Ink, fontSize = fs * nameEm, fontWeight = if (special) FontWeight.Medium else FontWeight.ExtraBold,
                         textAlign = TextAlign.Center, lineHeight = fs * nameEm * 1.1f, maxLines = if (oneWord) 1 else Int.MAX_VALUE, softWrap = !oneWord,
                     )
-                    if (prEm > 0f) Text(Poly.eur(q.p), color = Ink, fontSize = fs * 0.92f, fontWeight = FontWeight.SemiBold)
+                    if (prEm > 0f) Text(Poly.eur(if (ownable) st.buyPrice(i) else q.p), color = if (ownable && st.evk == "crisis") Color(0xFFC62828) else Ink, fontSize = fs * 0.92f, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -509,15 +511,15 @@ private fun SquareView(
         }
         if (fIsMine) {
             val ft = rememberInfiniteTransition(label = "foco")
-            val fp by ft.animateFloat(0.35f, 1f, infiniteRepeatable(tween(1700), RepeatMode.Reverse), label = "brillo")
-            Box(Modifier.fillMaxSize().background(Color(0xFFFFDC5A).copy(alpha = 0.28f * fp)).border(uu * 0.5f, Color(0xFFFFC400).copy(alpha = 0.55f + 0.45f * fp)))
+            val fp by ft.animateFloat(0f, 1f, infiniteRepeatable(tween(1700), RepeatMode.Reverse), label = "brillo")
+            Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.1f + 0.1f * fp)))
         }
         if (ownable) Box(Modifier.fillMaxSize().border(uu * (if (owner >= 0) 0.34f else 0.2f), band ?: Color(0xFF7D8791)))
         if (st.fence[i] >= 0) PolyIcon("fence", minOf(ow, oh) * 0.85f, Modifier.align(Alignment.Center))
         if (hl) {
             val pulse = rememberInfiniteTransition(label = "ruta")
-            val a by pulse.animateFloat(0.1f, 0.26f, infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "ruta")
-            Box(Modifier.fillMaxSize().background(Color(0xFFFFF0B4).copy(alpha = a)).border(uu * 0.12f, Color(0xFFFFDD78).copy(alpha = 0.6f)))
+            val a by pulse.animateFloat(0.32f, 0.6f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "ruta")
+            Box(Modifier.fillMaxSize().background(Color(0xFFFFD600).copy(alpha = a)).border(uu * 0.28f, Color(0xFFFFC400)))
         }
     }
 }
@@ -910,6 +912,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         delay(if (e.seat == mySeat() || steps < 8) 160 else 120)
                     }
                     hopSeat = -1
+                    pathSet = emptySet()
                     if (e.sq >= 0) {
                         // choca con unas obras: polvo, golpe y sacudida
                         fx("puff", e.to, 6); PolySound.play("bounce"); shakeKey++
@@ -937,7 +940,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 }
                 "evt" -> {
                     landing = null
-                    if (e.amt != 0) { viewEvk = EV_IDS[e.sq]; viewDog = if (e.sq == 0) 0 else -1; PolySound.play("card") }
+                    if (e.amt != 0) { if (e.sq < 5) { viewEvk = EV_IDS[e.sq]; viewDog = if (e.sq == 0) 0 else -1 }; PolySound.play("card") }
                     else { viewEvk = ""; viewDog = -1; PolySound.play("turn") }
                     val c = EvCard(e.sq, e.amt != 0)
                     evCard = c
@@ -1567,8 +1570,8 @@ private fun GamePanel(
             }
         } else if (s.phase == "buy") {
             val q = data.squares[s.buy]
-            Status("${q.n} · ${Poly.eur(q.p)}")
-            Btns { B("Comprar", "b", true, s.cash[my] >= q.p, cta = true) }
+            Status("${q.n} · ${Poly.eur(s.buyPrice(s.buy))}")
+            Btns { B("Comprar", "b", true, s.cash[my] >= s.buyPrice(s.buy), cta = true) }
             Btns { if (s.cfg.auction) B("Subastar", "a", false); B("No comprar", "n", false) }
         } else if (s.phase == "end") Btns { B("Terminar turno", "e", cta = true) }
 
@@ -1645,7 +1648,7 @@ private fun SquareDialog(i: Int, s: Poly.State, data: Poly.Data, my: Int, seatNa
                     "utility" -> { Line("1 servicio", "4 × dados"); Line("2 servicios", "10 × dados") }
                     "tax" -> Line("Pagas", Poly.eur(q.p))
                 }
-                if (q.p > 0 && q.t != "tax") { Line("Precio", Poly.eur(q.p)); Line("Hipoteca", Poly.eur(q.p / 2)) }
+                if (q.p > 0 && q.t != "tax") { Line("Precio", Poly.eur(if (q.t == "street" || q.t == "station" || q.t == "utility") s.buyPrice(i) else q.p)); Line("Hipoteca", Poly.eur(q.p / 2)) }
                 if (o >= 0) Line("Dueño", seatName(o) + if (s.mort[i]) " · hipotecada" else "", color = PolyData.colors[o])
                 if (o == my && my >= 0 && !locked) {
                     if (can("h$i")) PolyButton("Construir ${Poly.eur(s.houseCost(i))}", true, true) { onSend("h$i") }

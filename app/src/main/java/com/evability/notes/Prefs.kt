@@ -38,9 +38,13 @@ object Prefs {
     private lateinit var sp: SharedPreferences
 
     fun init(context: Context) {
+        val first = !::sp.isInitialized
         sp = context.getSharedPreferences("evability", Context.MODE_PRIVATE)
-        AccentBase = Color(sp.getLong("accent", ACCENTS[0].second))
-        Bg = Color(sp.getLong("bg", BACKGROUNDS[0].second))
+        // los servicios en segundo plano también llaman a init: solo la primera vez se leen los colores, para no apagar el fondo oscuro de un minijuego abierto
+        if (first) {
+            AccentBase = Color(sp.getLong("accent", ACCENTS[0].second))
+            Bg = Color(sp.getLong("bg", BACKGROUNDS[0].second))
+        }
     }
 
     fun setBackground(argb: Long) {
