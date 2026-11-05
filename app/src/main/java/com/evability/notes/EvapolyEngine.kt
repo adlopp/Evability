@@ -18,12 +18,17 @@ object Poly {
     const val MAX_HOUSES = 32 // límite de casas y de hoteles de CADA jugador (no se comparte)
     const val MAX_HOTELS = 12
     /** Tienda de La Peza (regla opcional): objeto → (nombre, precio). No salen en Suerte ni en Caja. */
-    val SHOP = mapOf(1 to ("la carta Maricarmen" to 450), 2 to ("el dado triple" to 100), 3 to ("la doble condena" to 250), 4 to ("el billete de tren" to 50), 5 to ("las obras" to 100), 6 to ("el intercambio" to 250), 7 to ("el desatascador" to 150))
+    val SHOP = mapOf(1 to ("la carta Maricarmen" to 400), 2 to ("el dado triple" to 100), 3 to ("la doble condena" to 100), 4 to ("el billete de tren" to 50), 5 to ("las obras" to 100), 6 to ("el intercambio" to 100), 7 to ("el desatascador" to 100))
+    const val MAX_ITEMS = 2
+    const val GOAL_PRIZE = 300
+    const val RAIN_SLIP = 20
+    const val SLIP_COST = 50
+    const val CARD_ITEM_REFUND = 50
 
     class Sq(val n: String, val t: String, val g: String?, val p: Int, val r: IntArray, val i: String? = null)
     class Card(val x: String, val e: String)
     class Data(val squares: List<Sq>, val groups: Map<String, String>, val house: Map<String, Int>, val chance: List<Card>, val chest: List<Card>)
-    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false, val rails: Boolean = false, val ownerFree: Boolean = false, val shop: Boolean = false, val events: Boolean = false)
+    class Cfg(val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean = true, val dblBonus: Boolean = false, val rails: Boolean = false, val ownerFree: Boolean = false, val shop: Boolean = false, val events: Boolean = false, val goals: Boolean = false)
     class Deck(var order: List<Int> = emptyList(), var i: Int = 0, var held: Int = -1, var held2: Int = -1)
     class Auction(val sq: Int, var bid: Int, var bidder: Int, val active: MutableList<Int>, var cur: Int)
     class Debt(val seat: Int, val amt: Int, var to: Int, val why: String, val rent: Boolean = false, val tax: Boolean = false)
@@ -75,6 +80,14 @@ object Poly {
         val sh = IntArray(n) // 1 si ya compró en la tienda en esta visita
         val fence = IntArray(40) { -1 } // vallas de obras: quién la puso
         val pl = IntArray(n) // desatascadores
+        var imm = -1 // jugador con el escudo de inmunidad
+        val jc = IntArray(n) // veces que ha ido a la cárcel
+        val gt = IntArray(n) // objetivo secreto: 0 ninguno, 1 conseguir una casilla, 2 caer en la cárcel, 3 conseguir un objeto
+        val ga = IntArray(n) // dato del objetivo (casilla, veces u objeto)
+        val gd = IntArray(n) // 1 si ya lo ha cumplido
+        val gx = IntArray(n) // objetos de la tienda que ha conseguido (un bit por objeto)
+        var snowman = -1 // casilla del muñeco de nieve
+        val frz = IntArray(n) // 1 si está congelado (pierde su próximo turno)
         val sb = IntArray(n) // objetos de la tienda que ya ha comprado cada jugador (un bit por objeto): solo se compra una vez
         var evk = "" // evento activo: dog, snow o rain
         var evl = IntArray(n) // turnos que le quedan a cada jugador con el evento activo
@@ -99,15 +112,20 @@ object Poly {
         var acts = 0
 
         fun sq(i: Int) = data.squares[i]
+        /** Objetos que cuentan para el límite de 2 (la doble condena no cuenta). */
+        fun heldItems(seat: Int) = mc[seat] + tri[seat] + tk[seat] + ob[seat] + sw[seat] + pl[seat]
+        /** Cuántos de ese objeto de la tienda lleva (1 Maricarmen … 7 desatascador). */
+        fun itemHeld(k: Int, seat: Int) = when (k) { 1 -> mc[seat]; 2 -> tri[seat]; 3 -> dj[seat]; 4 -> tk[seat]; 5 -> ob[seat]; 6 -> sw[seat]; else -> pl[seat] }
+        fun shielded(seat: Int) = evk == "shield" && imm == seat && evl[seat] > 0
         /** Precio al que se compra una propiedad ahora mismo (con la crisis económica sube). */
-        fun buyPrice(i: Int) = sq(i).p + if (evk == "crisis") 50 else 0
+        fun buyPrice(i: Int) = sq(i).p
         fun deck(w: Int) = if (w == 0) deckC else deckH
         fun alive(): List<Int> = (0 until n).filter { !bk[it] }
         fun groupOf(g: String?): List<Int> = (0 until 40).filter { sq(it).g == g }
         /** Coste base de una casa u hotel (lo que se recupera a medias al venderlo). */
         fun houseBase(i: Int) = data.house[sq(i).g] ?: 0
         /** Coste de construir ahora mismo: con el boom inmobiliario cuesta la mitad. */
-        fun houseCost(i: Int) = if (evk == "boom") houseBase(i) / 2 else houseBase(i)
+        fun houseCost(i: Int) = if (evk == "boom") houseBase(i) / 2 else if (evk == "crisis") houseBase(i) * 2 else houseBase(i)
         fun ownsAll(seat: Int, g: String?) = groupOf(g).all { own[it] == seat }
         fun countOwned(seat: Int, t: String) = (0 until 40).count { own[it] == seat && sq(it).t == t }
         fun housesOf(seat: Int) = (0 until 40).filter { own[it] == seat && lvl[it] in 1..4 }.sumOf { lvl[it] }
@@ -133,7 +151,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), sb.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), sb.joinToString(",", "[", "]"), imm.toString(), jc.joinToString(",", "[", "]"), gt.joinToString(",", "[", "]"), ga.joinToString(",", "[", "]"), gd.joinToString(",", "[", "]"), gx.joinToString(",", "[", "]"), snowman.toString(), frz.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -164,6 +182,7 @@ object Poly {
         val s = State(data, n, cfg, seed)
         s.deckC.order = shuffled(s, data.chance.size)
         s.deckH.order = shuffled(s, data.chest.size)
+        if (s.cfg.goals) assignGoals(s)
         s.phase = "order"
         say(s, "Todos tiran los dados: empieza el que saque más", "start")
         return s
@@ -181,6 +200,7 @@ object Poly {
     // ───── dinero ─────
     private fun pay(s: State, seat: Int, amt: Int, to: Int, why: String, rent: Boolean = false, tax: Boolean = false) {
         if (amt <= 0) return
+        if (s.shielded(seat)) { say(s, "@$seat está protegido por el escudo y no paga ${eur(amt)}", "shield", seat = seat, amt = amt); return }
         if (rent && s.mc[seat] > 0) {
             s.debts.add(Debt(seat, amt, to, why, true))
             say(s, "@$seat debe ${eur(amt)} a @$to$why", "debt", seat = seat)
@@ -233,15 +253,40 @@ object Poly {
         land(s, seat, pos, dice = total, utilRoll = false, double = false)
     }
 
+    /** Objetivo secreto de cada jugador: conseguir una calle, servicio o estación en concreto, caer 2 veces en la cárcel o conseguir un objeto de la tienda. */
+    private fun assignGoals(s: State) {
+        val props = (0 until 40).filter { s.sq(it).t == "street" || s.sq(it).t == "station" || s.sq(it).t == "utility" }
+        for (seat in 0 until s.n) {
+            val t = rint(s, 3)
+            if (t == 0) { s.gt[seat] = 1; s.ga[seat] = props[rint(s, props.size)] }
+            else if (t == 1) { s.gt[seat] = 2; s.ga[seat] = 2 }
+            else { s.gt[seat] = 3; s.ga[seat] = listOf(2, 3, 4, 5, 6, 7)[rint(s, 6)] }
+        }
+    }
+
+    /** Comprueba si alguien ha cumplido su objetivo secreto: cobra 300 €. */
+    private fun checkGoals(s: State) {
+        if (!s.cfg.goals) return
+        for (seat in 0 until s.n) {
+            if (s.bk[seat] || s.gd[seat] != 0 || s.gt[seat] == 0) continue
+            val t = s.gt[seat]; val a = s.ga[seat]
+            val done = if (t == 1) s.own[a] == seat else if (t == 2) s.jc[seat] >= a else ((s.gx[seat] shr a) and 1) == 1
+            if (!done) continue
+            s.gd[seat] = 1; s.cash[seat] += GOAL_PRIZE
+            say(s, "@$seat cumple su objetivo secreto y cobra ${eur(GOAL_PRIZE)}", "gain", seat = seat, amt = GOAL_PRIZE)
+        }
+    }
+
     private fun sendJail(s: State, seat: Int, why: String) {
         val from = s.pos[seat]
         s.pos[seat] = JAIL; s.jail[seat] = true; s.jt[seat] = 0; s.jmax[seat] = 3
-        s.again = false; s.dbl = 0
+        s.again = false; s.dbl = 0; s.jc[seat]++
         say(s, "@$seat va a la cárcel$why", "jail", seat = seat, from = from, to = JAIL)
     }
 
     private fun land(s: State, seat: Int, i: Int, dice: Int = 0, utilRoll: Boolean = false, double: Boolean = false) {
         if (s.evk == "dog" && s.dog == i && !s.bk[seat]) dogBite(s, seat)
+        if (s.evk == "snow" && s.snowman == i && !s.bk[seat] && s.frz[seat] == 0) { s.frz[seat] = 1; say(s, "@$seat choca con el muñeco de nieve y se queda congelado: perderá su próximo turno", "freeze", seat = seat, sq = i) }
         val q = s.sq(i)
         when (q.t) {
             "street", "station", "utility" -> {
@@ -257,7 +302,7 @@ object Poly {
                         say(s, "@$seat tira los dados: $a y $b", "dice", seat = seat, d1 = a, d2 = b)
                         rent = (a + b) * 10
                     } else rent = s.rentOf(i, dice) * (if (double) 2 else 1)
-                    pay(s, seat, rent + (if (s.evk == "crisis") CRISIS_RENT else 0), o, " de alquiler por ${q.n}", true)
+                    pay(s, seat, rent, o, " de alquiler por ${q.n}", true)
                 }
             }
             "tax" -> pay(s, seat, q.p, -1, " de ${q.n.lowercase()}", false, true)
@@ -285,7 +330,7 @@ object Poly {
         val kind = parts[0]
         val a = parts.getOrNull(1); val b = parts.getOrNull(2)
         // ánimo de la carta (amt): 1 buena, -1 mala, 0 neutra; solo sirve para la animación
-        val mood = when (kind) { "cash" -> if (a!!.toInt() >= 0) 1 else -1; "eachget", "mc", "free" -> 1; "jail", "repair", "eachpay" -> -1; else -> 0 }
+        val mood = when (kind) { "cash" -> if (a!!.toInt() >= 0) 1 else -1; "eachget", "mc", "free", "item" -> 1; "jail", "repair", "eachpay" -> -1; else -> 0 }
         say(s, "${if (which == 0) "Suerte" else "Caja"}: ${cards[idx].x}", "card", seat = seat, text = cards[idx].x, sq = which, amt = mood)
         when (kind) {
             "to" -> { moveTo(s, seat, a!!.toInt(), true); land(s, seat, a.toInt()) }
@@ -303,7 +348,22 @@ object Poly {
                 land(s, seat, to)
             }
             "jail" -> sendJail(s, seat, "")
-            "mc" -> { d.held2 = idx; s.mc[seat]++; s.mcBy = seat }
+            "mc" -> {
+                if (s.mc[seat] > 0 || s.heldItems(seat) >= MAX_ITEMS) { s.cash[seat] += CARD_ITEM_REFUND; say(s, "@$seat no puede llevar más objetos: se destruye y cobra ${eur(CARD_ITEM_REFUND)}", "gain", seat = seat, amt = CARD_ITEM_REFUND) }
+                else { d.held2 = idx; s.mc[seat]++; s.mcBy = seat }
+            }
+            "item" -> {
+                // objeto de la tienda encontrado en una carta: si no cabe (ya lo lleva o lleva dos), se destruye y cobra 50 €
+                val k = a!!.toInt()
+                if (s.itemHeld(k, seat) > 0 || (k != 3 && s.heldItems(seat) >= MAX_ITEMS)) {
+                    s.cash[seat] += CARD_ITEM_REFUND
+                    say(s, "@$seat no puede llevar ${SHOP[k]!!.first}: se destruye y cobra ${eur(CARD_ITEM_REFUND)}", "gain", seat = seat, amt = CARD_ITEM_REFUND)
+                } else {
+                    when (k) { 2 -> s.tri[seat]++; 3 -> s.dj[seat]++; 4 -> s.tk[seat]++; 5 -> s.ob[seat]++; 6 -> s.sw[seat]++; else -> s.pl[seat]++ }
+                    s.gx[seat] = s.gx[seat] or (1 shl k)
+                    say(s, "@$seat se queda con ${SHOP[k]!!.first}", "msg", seat = seat)
+                }
+            }
             "free" -> { d.held = idx; s.jf[seat]++; s.heldBy[which] = seat }
             "cash" -> {
                 val v = a!!.toInt()
@@ -328,12 +388,23 @@ object Poly {
         }
     }
 
+    /** Solo se pueden llevar dos objetos (la doble condena aparte): si sobran, se quedan los primeros. */
+    private fun trimItems(s: State, seat: Int) {
+        var kept = 0
+        val arrs = listOf(s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl)
+        for ((k, a) in arrs.withIndex()) {
+            if (a[seat] <= 0) continue
+            if (k != 2 && kept >= MAX_ITEMS) { a[seat] = 0; if (k == 0 && s.mcBy == seat) { s.deckC.held2 = -1; s.mcBy = -1 } } else { a[seat] = 1; if (k != 2) kept++ }
+        }
+    }
+
     private fun bankrupt(s: State, seat: Int, to: Int, why: String) {
         liquidate(s, seat)
         for (i in 0 until 40) if (s.own[i] == seat) { s.own[i] = to; if (to < 0) s.mort[i] = false }
         if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = minOf(1, s.tri[to] + s.tri[seat]); s.dj[to] = minOf(1, s.dj[to] + s.dj[seat]); s.tk[to] = minOf(1, s.tk[to] + s.tk[seat]); s.ob[to] = minOf(1, s.ob[to] + s.ob[seat]); s.sw[to] = minOf(1, s.sw[to] + s.sw[seat]); s.pl[to] = minOf(1, s.pl[to] + s.pl[seat]); if (s.mcBy == seat) s.mcBy = to }
         else if (s.mcBy == seat) { s.deckC.held2 = -1; s.mcBy = -1 }
         else for (w in 0..1) if (s.deck(w).held >= 0 && s.heldBy[w] == seat) { s.deck(w).held = -1; s.heldBy[w] = -1 }
+        if (to >= 0) trimItems(s, to)
         s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.pl[seat] = 0; s.evl[seat] = 0; s.bk[seat] = true; s.jail[seat] = false
         for (i in 0 until 40) if (s.fence[i] == seat) s.fence[i] = -1
         val rest = ArrayList<Debt>()
@@ -347,7 +418,8 @@ object Poly {
     }
 
     // ───── eventos aleatorios (regla opcional) ─────
-    private val EV_NAMES = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush")
+    private val EV_NAMES = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush", "shield")
+    private const val SHIELD_TURNS = 3
     private const val RUSH_STEPS = 2
     private const val BALANCE_PRIZE = 500
     private const val QUAKE_PCT = 20
@@ -357,11 +429,12 @@ object Poly {
     private const val EV_TURNS = 5
     private const val DOG_BITE = 150
     private const val DOG_STEP = 4
-    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella", "Evento de nieve: está nevando, así que solo se tira un dado", "Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más", "Evento del terremoto: al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador (un hotel se queda en 3 casas)", "Evento de crisis económica: comprar una propiedad cuesta 50 € más y al caer en una ajena se pagan 25 € extra de alquiler", "Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados", "Evento de Hacienda: cada jugador paga el 5 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote)", "Evento del ladrón: el jugador con más dinero pierde 100 € y se los lleva el que menos tiene", "Evento de boom inmobiliario: construir casas y hoteles cuesta la mitad", "Evento de hora punta: los dados suman 2 casillas más y las estaciones cobran el doble de alquiler")
-    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia", "La tierra ha dejado de temblar", "La crisis económica ha terminado", "", "", "", "El boom inmobiliario ha terminado", "Ha pasado la hora punta")
+    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella", "Evento de nieve: está nevando, solo se tira un dado y un muñeco de nieve congela un turno a quien caiga en su casilla", "Evento de lluvia: el suelo está mojado y al tirar hay un 20 % de resbalar y perder 50 €", "Evento del terremoto: al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador (un hotel se queda en 3 casas)", "Evento de crisis económica: construir casas y hoteles cuesta el doble", "Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados", "Evento de Hacienda: cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote)", "Evento del ladrón: el jugador con más dinero pierde 100 € y se los lleva el que menos tiene", "Evento de boom inmobiliario: construir casas y hoteles cuesta la mitad", "Evento de hora punta: los dados suman 2 casillas más y las estaciones cobran el doble de alquiler", "Evento de inmunidad: el jugador que va peor tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos")
+    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia", "La tierra ha dejado de temblar", "La crisis económica ha terminado", "", "", "", "El boom inmobiliario ha terminado", "Ha pasado la hora punta", "El escudo se ha desvanecido")
 
     // el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
     private fun dogBite(s: State, i: Int) {
+        if (s.shielded(i)) { say(s, "El escudo protege a @$i del perro", "shield", seat = i, amt = 0); return }
         val v = minOf(DOG_BITE, s.cash[i])
         s.cash[i] -= v
         say(s, "El perro muerde a @$i y le quita ${eur(v)}", "bite", seat = i, amt = v, sq = s.pos[i])
@@ -390,12 +463,12 @@ object Poly {
         }
     }
 
-    /** Hacienda (evento instantáneo): cada jugador paga el 5 % de su dinero al bote de La Peza (o a la banca). */
+    /** Hacienda (evento instantáneo): cada jugador paga el 10 % de su dinero al bote de La Peza (o a la banca). */
     private fun hacienda(s: State, seat: Int) {
         say(s, EV_TEXT[6], "evt", seat = seat, amt = 1, sq = 6)
         for (i in s.alive()) {
-            val v = s.cash[i] * 5 / 100
-            if (v <= 0) continue
+            val v = s.cash[i] * 10 / 100
+            if (v <= 0 || s.shielded(i)) continue
             s.cash[i] -= v; if (s.cfg.pot) s.pot += v
             say(s, "Hacienda: @$i paga ${eur(v)}", "pay", seat = i, to = -1, amt = v)
         }
@@ -407,12 +480,15 @@ object Poly {
         val left = s.alive()
         var rich = left[0]; var poor = left[0]
         for (i in left) { if (s.cash[i] > s.cash[rich]) rich = i; if (s.cash[i] < s.cash[poor]) poor = i }
-        if (rich == poor) { say(s, "El ladrón no encuentra a quién robar"); return }
+        if (rich == poor || s.shielded(rich)) { say(s, "El ladrón no encuentra a quién robar"); return }
         val v = minOf(100, s.cash[rich])
         if (v <= 0) return
         s.cash[rich] -= v; s.cash[poor] += v
         say(s, "El ladrón le quita ${eur(v)} a @$rich y se los da a @$poor", "pay", seat = rich, to = poor, amt = v)
     }
+
+    /** Construcciones en el tablero (un hotel cuenta como una). */
+    private fun constructions(s: State): Int { var n = 0; for (i in 0 until 40) n += if (s.lvl[i] == 5) 1 else s.lvl[i]; return n }
 
     /** Terremoto: derrumba una casa al azar de cada jugador (los hoteles no se tocan; sin casas, se libra). */
     private fun quake(s: State) {
@@ -423,7 +499,7 @@ object Poly {
             if (houses.isEmpty()) continue
             val i = houses[rint(s, houses.size)]
             val hotel = s.lvl[i] == 5
-            s.lvl[i] = if (hotel) 3 else s.lvl[i] - 1
+            s.lvl[i] = if (hotel) maxOf(0, minOf(3, MAX_HOUSES - s.housesOf(seat))) else s.lvl[i] - 1 // el hotel pasa a 3 casas si caben en el límite del jugador
             say(s, if (hotel) "El terremoto derrumba el hotel de @$seat en ${s.sq(i).n}: se queda en 3 casas" else "El terremoto derrumba una casa de @$seat en ${s.sq(i).n}", "crumble", seat = seat, sq = i, amt = if (hotel) 1 else 0)
         }
     }
@@ -433,13 +509,25 @@ object Poly {
         if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase == "over") return
         s.evChk = true
         if (s.evk != "" || s.tc[seat] < 2 || rint(s, 100) >= EVENT_PCT) return
-        val kind = rint(s, 10)
+        var kind = rint(s, 11)
+        while (kind == 3 && constructions(s) < 3) kind = rint(s, 11) // el terremoto solo sale si hay al menos 3 construcciones
         if (kind == 5) { balance(s, seat); return }
         if (kind == 6) { hacienda(s, seat); return }
         if (kind == 7) { thief(s, seat); return }
         s.evk = EV_NAMES[kind]; s.evf = true
-        for (i in 0 until s.n) s.evl[i] = if (s.bk[i]) 0 else EV_TURNS
-        say(s, EV_TEXT[kind], "evt", seat = seat, amt = 1, sq = kind)
+        for (i in 0 until s.n) s.evl[i] = if (s.bk[i]) 0 else if (kind == 1 || kind == 2) 4 else EV_TURNS // nieve y lluvia duran 4 turnos
+        if (kind == 1) {
+            // el muñeco de nieve aparece en una casilla en la que no haya nadie
+            val cand = (0 until 40).filter { c -> (0 until s.n).none { j -> !s.bk[j] && s.pos[j] == c } }
+            s.snowman = cand[rint(s, cand.size)]
+        }
+        if (kind == 10) {
+            // inmunidad: escudo de 3 turnos para el jugador que va peor (menos patrimonio)
+            val left = s.alive()
+            val w = left.minByOrNull { fortune(s, it) }!!
+            s.imm = w; s.evl = IntArray(s.n); s.evl[w] = SHIELD_TURNS
+        }
+        say(s, EV_TEXT[kind], "evt", seat = if (kind == 10) s.imm else seat, amt = 1, sq = kind)
         if (kind == 0) { s.dog = 0; dogBites(s, listOf(0)) }
     }
 
@@ -461,7 +549,7 @@ object Poly {
             if ((0 until s.n).all { s.bk[it] || s.evl[it] <= 0 }) {
                 val kind = EV_NAMES.indexOf(s.evk)
                 say(s, EV_END[kind], "evt", amt = 0, sq = kind)
-                s.evk = ""; s.dog = -1; s.evl = IntArray(s.n)
+                s.evk = ""; s.dog = -1; s.imm = -1; s.snowman = -1; s.evl = IntArray(s.n)
             }
         }
         s.evChk = false
@@ -469,6 +557,7 @@ object Poly {
         s.phase = "roll"; s.dbl = 0; s.again = false; s.buy = -1
         if (s.railCd[s.turn] > 0) s.railCd[s.turn]--
         s.sh[s.turn] = 0
+        if (s.frz[s.turn] > 0) { s.frz[s.turn]--; say(s, "@${s.turn} está congelado y pierde el turno", "freezeskip", seat = s.turn); nextTurn(s) }
     }
 
     private fun settle(s: State) {
@@ -564,7 +653,15 @@ object Poly {
         val op = code[0]; val arg = code.substring(1)
         val mine = seat == s.turn
         val free = s.phase == "roll" || s.phase == "end"
-        fun ok(): String? { if (!dry) s.acts++; return null }
+        fun ok(): String? { if (!dry) { s.acts++; checkGoals(s) }; return null }
+
+        // emoticonos: no cambian el juego, los puede enviar cualquiera en cualquier momento
+        if (op == 'E') {
+            if (arg.length != 1 || arg[0] !in '0'..'2') return "Emoticono no válido"
+            if (dry) return null
+            say(s, "", "emote", seat = seat, sq = arg.toInt())
+            return ok()
+        }
 
         // al principio todos tiran para ver quién empieza
         if (s.phase == "order") {
@@ -594,11 +691,11 @@ object Poly {
             'r' -> {
                 if (!mine || s.phase != "roll") return "No puedes tirar ahora"
                 if (dry) return null
-                // eventos: con nieve solo se tira un dado; con lluvia cada dado saca de 4 a 6
+                // eventos: con nieve solo se tira un dado; con lluvia hay un 20 % de resbalar y perder 50 €
                 val snow = s.evk == "snow" && s.evl[seat] > 0 && !s.jail[seat]
-                val rain = s.evk == "rain" && s.evl[seat] > 0
-                val a = if (rain) rint(s, 3) + 4 else rint(s, 6) + 1
-                val b = if (snow) 0 else if (rain) rint(s, 3) + 4 else rint(s, 6) + 1
+                val a = rint(s, 6) + 1
+                val b = if (snow) 0 else rint(s, 6) + 1
+                val slip = s.evk == "rain" && s.evl[seat] > 0 && rint(s, 100) < RAIN_SLIP
                 s.d1 = a; s.d2 = b
                 val rush = if (s.evk == "rush" && s.evl[seat] > 0) RUSH_STEPS else 0 // hora punta: los dados llevan más lejos
                 if (rush > 0) say(s, "@$seat avanza $rush casillas más por la hora punta")
@@ -622,6 +719,7 @@ object Poly {
                         moveDice(s, seat, a + b + rush)
                     }
                 } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b + rush) }
+                if (slip && !s.bk[seat] && s.phase != "over") { say(s, "@$seat resbala en el suelo mojado", "slip", seat = seat); pay(s, seat, SLIP_COST, -1, " por resbalar") }
                 maybeEvent(s, seat)
                 settle(s)
                 return ok()
@@ -762,9 +860,10 @@ object Poly {
                 if (s.sh[seat] != 0) return "Solo puedes comprar un objeto por visita"
                 val have = when (k) { 1 -> s.mc[seat]; 2 -> s.tri[seat]; 3 -> s.dj[seat]; 4 -> s.tk[seat]; 5 -> s.ob[seat]; 6 -> s.sw[seat]; else -> s.pl[seat] }
                 if (have > 0 || (s.sb[seat] shr k) and 1 == 1) return "Ya has comprado ese objeto"
+                if (k != 3 && s.heldItems(seat) >= MAX_ITEMS) return "Solo puedes llevar dos objetos a la vez"
                 if (s.cash[seat] < item.second) return "No tienes dinero"
                 if (dry) return null
-                s.cash[seat] -= item.second; s.sh[seat] = 1; s.sb[seat] = s.sb[seat] or (1 shl k)
+                s.cash[seat] -= item.second; s.sh[seat] = 1; s.sb[seat] = s.sb[seat] or (1 shl k); s.gx[seat] = s.gx[seat] or (1 shl k)
                 when (k) { 1 -> s.mc[seat]++; 2 -> s.tri[seat]++; 3 -> s.dj[seat]++; 4 -> s.tk[seat]++; 5 -> s.ob[seat]++; 6 -> s.sw[seat]++; else -> s.pl[seat]++ }
                 say(s, "@$seat compra ${item.first} en la tienda por ${eur(item.second)}", "buy", seat = seat, amt = item.second)
                 return ok()

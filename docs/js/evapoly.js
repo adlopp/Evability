@@ -2,7 +2,7 @@
 // evapoly-engine.js en cada dispositivo con la misma semilla, así todos ven lo mismo. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggle, darkBars } from './ui.js';
-import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase } from './evapoly-engine.js';
+import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase, heldItems, itemHeld, MAX_ITEMS } from './evapoly-engine.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
 const MONEY_MIN = 500, MONEY_MAX = 2500, MONEY_STEP = 50;
@@ -213,7 +213,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── sala de espera ─────
   let lobbySig = '';
-  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.ownerFree, room.shop, room.events, room.status]);
+  const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.ownerFree, room.shop, room.events, room.goals, room.status]);
   function renderLobby() {
     lobbySig = sigOf();
     const isHost = room.host === me, inRoom = room.players.includes(me), invitedOnly = !inRoom && room.invited.includes(me);
@@ -257,7 +257,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(body, h('div', { class: 'poly-lobby' }, seats, tokRow,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Dinero inicial'), moneyOut), slider,
-        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails'), toggle('Sin alquiler si el dueño está en la casilla', 'ownerFree'), toggle('Tienda en La Peza', 'shop'), toggle('Eventos aleatorios', 'events')),
+        toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails'), toggle('Sin alquiler si el dueño está en la casilla', 'ownerFree'), toggle('Tienda en La Peza', 'shop'), toggle('Eventos aleatorios', 'events'), toggle('Objetivos secretos', 'goals')),
       h('div', { class: 'pbtns' }, buttons)));
   }
   const firstFreeTok = () => { const used = new Set(Object.values(room.tok)); return toks.findIndex((_, i) => !used.has(i)); };
@@ -274,19 +274,19 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── partida ─────
-  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus, rails: room.rails, ownerFree: room.ownerFree, shop: room.shop, events: room.events });
+  const cfgOf = () => ({ money: room.money, goBonus: room.goBonus, auction: room.auction, pot: room.pot, dblBonus: room.dblBonus, rails: room.rails, ownerFree: room.ownerFree, shop: room.shop, events: room.events, goals: room.goals });
   function startState() {
-    state = initGame(data, room.players.length, cfgOf(), room.seed);
+    state = initGame(data, room.players.length, cfgOf(), room.seed); stats = newStats();
     acts = [];
-    for (const a of room.acts) { applyText(state, a); acts.push(a); }
+    for (const a of room.acts) { applyText(state, a); acts.push(a); tally(state.ev); }
     view = { pos: state.pos.slice() };
     log = []; q.length = 0; dice = null; seen = state.turn; pathSet = new Set(); slowSeat = -1; lastCash = null; deltas.length = 0;
     buildBoard();
   }
   function rebuild() {
-    state = initGame(data, room.players.length, cfgOf(), room.seed);
+    state = initGame(data, room.players.length, cfgOf(), room.seed); stats = newStats();
     acts = [];
-    for (const a of room.acts) { applyText(state, a); acts.push(a); }
+    for (const a of room.acts) { applyText(state, a); acts.push(a); tally(state.ev); }
     view = { pos: state.pos.slice() };
     q.length = 0; running = false; viewEvk = state.evk; viewDog = state.dog;
     renderGame();
@@ -296,7 +296,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     for (let i = 0; i < acts.length; i++) if (serverActs[i] !== acts[i]) { rebuild(); return; }
     if (serverActs.length === acts.length) return;
     for (let i = acts.length; i < serverActs.length; i++) {
-      applyText(state, serverActs[i]); acts.push(serverActs[i]);
+      applyText(state, serverActs[i]); acts.push(serverActs[i]); tally(state.ev);
       q.push(...state.ev);
     }
     play();
@@ -307,7 +307,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     const seat = mySeat();
     const err = act(state, seat, code, true);
     if (err) { toast(err); return; }
-    applyText(state, `${seat}.${code}`);
+    applyText(state, `${seat}.${code}`); tally(state.ev);
     const text = `${seat}.${code}`;
     acts.push(text);
     q.push(...state.ev);
@@ -372,6 +372,16 @@ export function openEvapoly({ roomId, api, onClose }) {
         clearLanding(); SFX.bounce(); fxCracks(); quakeShake(); await wait(1500);
       } else if (e.k === 'crumble') {
         paintBoard(); fxPuff(e.sq, 8); SFX.bounce(); await wait(500);
+      } else if (e.k === 'freeze') {
+        const sqi = e.sq; fxSparkle(sqi, 14, '#BFEFFF'); fxPuff(sqi, 5); SFX.bounce(); paintTokens();
+      } else if (e.k === 'freezeskip') {
+        fxSparkle(view.pos[e.seat] ?? state.pos[e.seat], 12, '#BFEFFF'); SFX.turn();
+      } else if (e.k === 'slip') {
+        fxPuff(view.pos[e.seat] ?? state.pos[e.seat], 4); SFX.bounce(); shake();
+      } else if (e.k === 'emote') {
+        fxEmote(e.seat, e.sq);
+      } else if (e.k === 'shield') {
+        fxSparkle(view.pos[e.seat] ?? state.pos[e.seat], 10, '#7FD8FF'); SFX.coin();
       } else if (e.k === 'bite') {
         fxPuff(e.sq, 5); SFX.bounce(); shake();
       } else if (e.k === 'pull') {
@@ -399,6 +409,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       else if (e.k === 'buy') { SFX.buy(); if (e.dir === 0) { paintBoard(); await fxHammer(e.sq); } }
       else if (e.k === 'build') SFX.build();
       else if (e.k === 'win') { SFX.win(); fxConfetti(70); setTimeout(() => fxConfetti(60), 1500); setTimeout(() => fxConfetti(60), 3000); }
+      if (e.k === 'gain' && /objetivo secreto/.test(e.m || '')) { fxConfetti(40); SFX.confetti(); }
       moneyPop(e);
       if (e.k === 'buy' || e.k === 'build' || e.k === 'mort' || e.k === 'swap') paintBoard();
       if (e.k === 'card') { clearLanding(); await showCard(e); }
@@ -451,19 +462,115 @@ export function openEvapoly({ roomId, api, onClose }) {
     });
   }
 
+  // ───── estadísticas, emoticonos y objetivo secreto ─────
+  const EMOJIS = ['😊', '😂', '😭'];
+  let stats = null;
+  const newStats = () => { const z = () => Array(4).fill(0); return { rentGot: z(), rentPaid: z(), props: z(), built: z(), jail: z(), doubles: z(), cards: z(), bites: z() }; };
+  /** Cuenta lo que pasa en cada acción para el resumen final. */
+  function tally(evs) {
+    stats ||= newStats();
+    for (const e of evs || []) {
+      const sd = e.seat;
+      if (e.k === 'pay' && /de alquiler/.test(e.m || '')) { stats.rentPaid[sd] += e.amt; if (e.to >= 0) stats.rentGot[e.to] += e.amt; }
+      else if (e.k === 'jail') stats.jail[sd]++;
+      else if (e.k === 'buy' && e.sq >= 0) stats.props[sd]++;
+      else if (e.k === 'build' && e.sq >= 0 && e.amt < 0) stats.built[sd]++;
+      else if (e.k === 'dice' && e.d2 > 0 && e.d1 === e.d2 && sd >= 0) stats.doubles[sd]++;
+      else if (e.k === 'card') stats.cards[sd]++;
+      else if (e.k === 'bite') stats.bites[sd]++;
+    }
+  }
+  /** Resumen de la partida: una tabla con lo que ha hecho cada jugador y quién destaca en cada cosa. */
+  function openSummary() {
+    const s = state, st = stats || newStats(), n = room.players.length;
+    const fortuneOf = (i) => { let w = s.cash[i]; for (let q = 0; q < 40; q++) if (s.own[q] === i) { w += s.mort[q] ? data.squares[q].p / 2 : data.squares[q].p; w += s.lvl[q] * houseBase(s, q); } return w; };
+    const rows = [
+      ['Patrimonio final', (i) => fortuneOf(i), eur], ['Dinero final', (i) => s.cash[i], eur],
+      ['Alquileres cobrados', (i) => st.rentGot[i], eur], ['Alquileres pagados', (i) => st.rentPaid[i], eur],
+      ['Calles compradas', (i) => st.props[i]], ['Edificios construidos', (i) => st.built[i]],
+      ['Veces en la cárcel', (i) => st.jail[i]], ['Dobles sacados', (i) => st.doubles[i]], ['Cartas robadas', (i) => st.cards[i]],
+    ];
+    const idx = Array.from({ length: n }, (_, i) => i);
+    const table = h('table', { class: 'psum' },
+      h('thead', {}, h('tr', {}, h('th', {}), ...idx.map((i) => h('th', { style: `color:${COLORS[i]}` }, (s.winner === i ? '👑 ' : '') + seatName(i))))),
+      h('tbody', {}, rows.map(([label, f, fmt]) => {
+        const vals = idx.map(f), best = Math.max(...vals);
+        return h('tr', {}, h('td', {}, label), ...idx.map((i) => h('td', { class: vals[i] === best && best > 0 ? 'top' : '' }, fmt ? fmt(vals[i]) : String(vals[i]))));
+      })));
+    modal({ title: s.winner >= 0 ? `Gana ${seatName(s.winner)}` : 'Resumen', content: h('div', { class: 'psum-wrap' }, table), actions: [{ label: 'Cerrar' }] });
+  }
+  let summaryShown = false;
+  try { if (localStorage.getItem('ev.dbg')) window.__evapoly = { openSummary }; } catch { /* sin almacenamiento */ }
+  // emoticonos: un botón con tres caras que salen un momento sobre tu ficha, y las ven todos
+  let lastEmote = 0;
+  async function sendEmote(n) {
+    const my = mySeat();
+    if (my < 0 || busy || Date.now() - lastEmote < 2000) return;
+    const code = 'E' + n;
+    if (act(state, my, code, true)) return;
+    lastEmote = Date.now();
+    applyText(state, `${my}.${code}`); acts.push(`${my}.${code}`); q.push(...state.ev);
+    busy = true; play();
+    try { await api.act(room, acts.slice(), false); }
+    catch { try { room = await api.get(); } catch { /* sin red */ } if (room) rebuild(); }
+    finally { busy = false; }
+  }
+  function fxEmote(seat, n) {
+    const c = tokPos(seat);
+    const el = fxSpawn(h('span', { class: 'fxemote', style: `left:${c.x}%;top:${c.y - 4}%;--c:${COLORS[seat]}` }, EMOJIS[n] || '🙂'), 2600);
+    el.animate([
+      { transform: 'translate(-50%,-50%) scale(.3)', opacity: 0 },
+      { transform: 'translate(-50%,-90%) scale(1.25)', opacity: 1, offset: 0.18 },
+      { transform: 'translate(-50%,-130%) scale(1)', opacity: 1, offset: 0.75 },
+      { transform: 'translate(-50%,-190%) scale(.9)', opacity: 0 },
+    ], { duration: 2400, easing: 'ease-out', fill: 'both' });
+  }
+  // objetivo secreto: solo lo ve su dueño, manteniendo pulsada la carta amarilla
+  function goalText(s, seat) {
+    const t = s.gt[seat], a = s.ga[seat];
+    if (!t) return '';
+    const done = s.gd[seat] ? '¡Cumplido! ' : '';
+    if (t === 1) return `${done}Consigue ${data.squares[a].n}`;
+    if (t === 2) return `${done}Cae en la cárcel ${a} veces (${Math.min(s.jc[seat], a)}/${a})`;
+    return `${done}Consigue ${SHOP[a].n} (también puedes comprarlo en la tienda)`;
+  }
+  let goalPeek = null, goalEl = null;
+  function peekGoal(show) {
+    goalPeek?.remove(); goalPeek = null;
+    const my = mySeat();
+    if (!show || my < 0 || !boardEl || !state.gt[my] || boardEl.querySelector('.pevt:not(.goalcard)')) return;
+    const el = goalPeek = h('div', { class: 'pevt goalcard' },
+      h('div', { class: 'pevt-art', html: svgOf({ p: icons.target }) }),
+      h('b', { class: 'pevt-title' }, 'Objetivo secreto'),
+      h('span', { class: 'pevt-name goal-name' }, goalText(state, my)),
+      h('p', {}, '(Solo tú puedes ver tu objetivo)'));
+    el.addEventListener('click', () => { if (goalPeek === el) peekGoal(false); });
+    boardEl.append(el);
+    setTimeout(() => { if (goalPeek === el) peekGoal(false); }, 5200);
+  }
+  function wireGoal(el) {
+    let timer = null, held = false;
+    el.addEventListener('pointerdown', () => { held = false; clearTimeout(timer); timer = setTimeout(() => { held = true; peekGoal(true); }, 350); });
+    const end = () => { clearTimeout(timer); if (held) peekGoal(false); };
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => el.addEventListener(t, end));
+    el.addEventListener('click', () => { if (held) { held = false; return; } peekGoal(true); });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
   // ───── eventos aleatorios ─────
-  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush'];
+  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush', 'shield'];
   const EVT = [
     { n: 'Perro sarnoso', ico: 'dog', t: 'Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.' },
-    { n: 'Nieve', ico: 'snow', t: 'Está nevando, así que te mueves más lento: durante 5 turnos de cada jugador solo se tira un dado en lugar de dos.' },
-    { n: 'Lluvia', ico: 'rain', t: 'Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.' },
+    { n: 'Nieve', ico: 'snow', t: 'Está nevando, así que te mueves más lento: durante 4 turnos de cada jugador solo se tira un dado en lugar de dos. Hay un muñeco de nieve en el mapa: si caes en su casilla, te quedas congelado y pierdes tu siguiente turno.' },
+    { n: 'Lluvia', ico: 'rain', t: 'Está lloviendo, el suelo está mojado y te resbalas: durante 4 turnos de cada jugador, cada vez que tires hay un 20 % de resbalar y perder 50 €.' },
     { n: 'Terremoto', ico: 'quake', t: 'Durante 5 turnos de cada jugador, al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas. Quien no tenga edificios se libra.' },
-    { n: 'Crisis económica', ico: 'crisis', t: 'Durante 5 turnos de cada jugador, todas las propiedades suben 50 € para comprarlas (Calle Pollo pasa de 220 € a 270 €) y, al caer en una de otro jugador, pagas 25 € extra de alquiler.' },
+    { n: 'Crisis económica', ico: 'crisis', t: 'Durante 5 turnos de cada jugador, construir casas y hoteles cuesta el doble.' },
     { n: 'Equilibrio', ico: 'balance', t: 'El jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €. Si hay empate, cobran todos los empatados.' },
-    { n: 'Hacienda', ico: 'hacienda', t: 'Cada jugador paga el 5 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).' },
+    { n: 'Hacienda', ico: 'hacienda', t: 'Cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).' },
     { n: 'Ladrón', ico: 'thief', t: 'El jugador con más dinero pierde 100 € y se los lleva el jugador que menos tiene.' },
     { n: 'Boom inmobiliario', ico: 'boom', t: 'Durante 5 turnos de cada jugador, construir casas y hoteles cuesta la mitad.' },
     { n: 'Hora punta', ico: 'rush', t: 'Durante 5 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.' },
+    { n: 'Inmunidad', ico: 'shield', t: 'El jugador que va peor (menos dinero, propiedades y construcciones) tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos. Solo gasta si compra algo él.' },
   ];
   let viewEvk = '', viewDog = -1, wxEl = null, evCardEl = null, dogEl = null;
   function wirePeek(el) {
@@ -487,14 +594,6 @@ export function openEvapoly({ roomId, api, onClose }) {
       evCardEl?.remove(); evCardEl = null;
       if (viewEvk) { const ev = EVT[EV_IDS.indexOf(viewEvk)]; evCardEl = h('div', { class: 'pdeck e', 'data-k': viewEvk }, h('span', { class: 'dk-ico', html: svgOf({ p: icons[ev.ico] }) }), 'Evento'); wirePeek(evCardEl); centerEl.append(evCardEl); }
     }
-    // crisis económica: los precios del tablero suben 50 €
-    for (let i = 0; i < 40; i++) {
-      const q0 = data.squares[i];
-      if (!['street', 'station', 'utility'].includes(q0.t)) continue;
-      const p = q0.p + (viewEvk === 'crisis' ? 50 : 0), el = gridEl.children[i];
-      el.classList.toggle('crisis', viewEvk === 'crisis');
-      el.querySelectorAll('.pr, .pr2').forEach((n) => { if (n.textContent !== eur(p)) n.textContent = eur(p); });
-    }
     if (viewEvk === 'dog' && viewDog >= 0) {
       if (!dogEl) { dogEl = h('span', { class: 'pdog', html: svgOf({ p: icons.dog }) }); gridEl.append(dogEl); }
       const c = centerOf(viewDog); dogEl.style.left = c.x + '%'; dogEl.style.top = c.y + '%';
@@ -504,9 +603,9 @@ export function openEvapoly({ roomId, api, onClose }) {
   function evtCardEl(kind, start, title) {
     const ev = EVT[kind];
     return h('div', { class: 'pevt' + (start ? '' : ' end') },
-      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : kind === 3 ? 'quake' : kind === 4 ? 'crisis' : kind === 8 ? 'boom' : kind === 9 ? 'rush' : 'sun'] }) }),
+      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : kind === 3 ? 'quake' : kind === 4 ? 'crisis' : kind === 8 ? 'boom' : kind === 9 ? 'rush' : kind === 10 ? 'shield' : 'sun'] }) }),
       h('b', { class: 'pevt-title' }, title || (start ? 'Evento activado' : 'Evento terminado')),
-      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : kind === 3 ? 'La tierra ha dejado de temblar' : kind === 4 ? 'La crisis económica ha terminado' : kind === 8 ? 'El boom inmobiliario ha terminado' : kind === 9 ? 'Ha pasado la hora punta' : 'Ha salido el sol'),
+      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : kind === 3 ? 'La tierra ha dejado de temblar' : kind === 4 ? 'La crisis económica ha terminado' : kind === 8 ? 'El boom inmobiliario ha terminado' : kind === 9 ? 'Ha pasado la hora punta' : kind === 10 ? 'El escudo se ha desvanecido' : 'Ha salido el sol'),
       start ? h('p', {}, ev.t) : null);
   }
   /** Tocar la carta de evento del tablero muestra otra vez qué hace; si se mantiene pulsada, se ve mientras dure la pulsación. */
@@ -597,6 +696,8 @@ export function openEvapoly({ roomId, api, onClose }) {
     diceBox = h('div', { class: 'pdice', style: { visibility: 'hidden' } }, dieA.el, dieB.el, dieC.el);
     const deck = (cls, ico, label) => h('div', { class: 'pdeck ' + cls }, h('span', { class: 'dk-ico', html: svgOf({ p: icons[ico] }) }), label);
     centerEl = h('div', { class: 'pcenter' }, deck('c', 'chance', 'Suerte'), deck('h', 'chest', 'Caja'), h('div', { class: 'ptitle' }, 'EVAPOLY'), potEl, diceBox);
+    goalEl = null;
+    if (state.cfg.goals && mySeat() >= 0 && state.gt[mySeat()]) { goalEl = h('div', { class: 'pdeck o' }, h('span', { class: 'dk-ico', html: svgOf({ p: icons.target }) }), 'Objetivo secreto'); wireGoal(goalEl); centerEl.append(goalEl); }
     fxEl = h('div', { class: 'pfx-layer' });
     gridEl.append(centerEl, tokensEl, fxEl);
     moneyBox = h('div', { class: 'pmoneys' });
@@ -607,7 +708,9 @@ export function openEvapoly({ roomId, api, onClose }) {
     actEl = h('div', { class: 'pact' });
     logEl = h('div', { class: 'plog' });
     stripEl = h('div', { class: 'pstrip' });
-    sideBox.append(sideEl, actEl, logEl, stripEl);
+    const emoteBox = h('div', { class: 'pemotes' }, h('button', { class: 'pemote-btn', 'aria-label': 'Emoticonos', onclick: () => emoteBox.classList.toggle('open') }, '🙂'),
+      h('div', { class: 'pemote-pop' }, EMOJIS.map((em, n) => h('button', { onclick: () => { emoteBox.classList.remove('open'); sendEmote(n); } }, em))));
+    sideBox.append(sideEl, emoteBox, actEl, logEl, stripEl);
     fill(body, h('div', { class: 'poly-main' }, boardEl, sideBox));
     paintBoard(); paintTokens(); paintCenter(); paintLog(); paintPath(); paintEvent();
   }
@@ -649,6 +752,8 @@ export function openEvapoly({ roomId, api, onClose }) {
       const mineSq = subj >= 0 && ['street', 'station', 'utility'].includes(q0.t) && o === subj, dim = subj >= 0 && !corner && !mineSq;
       el.classList.toggle('fo-mine', mineSq); el.classList.toggle('fo-dim', dim);
       el.classList.toggle('owned', o >= 0); el.classList.toggle('mort', !!state.mort[i]);
+      let sm = el.querySelector(':scope > .psnowman');
+      if (viewEvk === 'snow' && state.snowman === i) { if (!sm) el.append(h('span', { class: 'psnowman', html: svgOf({ p: icons.snowman }) })); } else if (sm) sm.remove();
       let fe = el.querySelector(':scope > .pfence');
       if (state.fence[i] >= 0) { if (!fe) { fe = h('span', { class: 'pfence', html: svgOf({ p: icons.fence }) }); el.append(fe); } }
       else if (fe) fe.remove();
@@ -745,7 +850,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (state.bk[s]) return null;
       const c = centerOf(view.pos[s]), dx = (s % 2 ? 1 : -1) * 1.6, dy = (s < 2 ? -1 : 1) * 1.6;
       const champ = state.phase === 'over' && state.winner === s;
-      return h('span', { class: 'ptk on-board' + (state.turn === s && state.phase !== 'order' && !champ ? ' turn' : '') + (slowSeat === s ? ' slow' : '') + (hopSeat === s ? ' hop' : '') + (champ ? ' champ' : '') + (poofSeats.has(s) ? ' poof' : '') + (popSeats.has(s) ? ' pop' : ''), style: `--c:${COLORS[s]};left:${c.x + dx}%;top:${c.y + dy}%`, html: svgOf(tokenOf(s)) });
+      return h('span', { class: 'ptk on-board' + (state.turn === s && state.phase !== 'order' && !champ ? ' turn' : '') + (slowSeat === s ? ' slow' : '') + (hopSeat === s ? ' hop' : '') + (champ ? ' champ' : '') + (poofSeats.has(s) ? ' poof' : '') + (popSeats.has(s) ? ' pop' : '') + (viewEvk === 'shield' && state.imm === s ? ' shielded' : '') + (state.frz[s] ? ' frozen' : ''), style: `--c:${COLORS[s]};left:${c.x + dx}%;top:${c.y + dy}%`, html: svgOf(tokenOf(s)) });
     }));
     paintStrip();
   }
@@ -761,6 +866,8 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (!state || !sideEl) return;
     const s = state, my = mySeat();
     paintBoard(); paintTokens(); paintCenter();
+    goalEl?.classList.toggle('done', !!state.gd[mySeat()]);
+    if (state.phase === 'over' && !summaryShown && !running) { summaryShown = true; setTimeout(openSummary, 1800); }
     if (running) return; // durante la animación el panel no se adelanta: se redibuja al terminar
     actEl.classList.remove('locked');
     // variación de dinero de cada jugador (+50, −200…) que sube y se desvanece junto a su nombre
@@ -771,7 +878,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(sideEl, room.players.map((u, i) => {
       const jail = s.jail[i], bk = s.bk[i];
       const turn = s.phase === 'order' ? s.ordCand[i] && !s.ordRolls[i] : s.turn === i && s.phase !== 'over';
-      const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? `Maricarmen${s.mc[i] > 1 ? ' ×' + s.mc[i] : ''}` : null, s.tri[i] ? `Dado triple${s.tri[i] > 1 ? ' ×' + s.tri[i] : ''}` : null, s.dj[i] ? 'Doble condena' : null, s.tk[i] ? 'Billete de tren' : null, s.ob[i] ? 'Obras' : null, s.sw[i] ? 'Intercambio' : null, s.pl[i] ? 'Desatascador' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
+      const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? `Maricarmen${s.mc[i] > 1 ? ' ×' + s.mc[i] : ''}` : null, s.tri[i] ? `Dado triple${s.tri[i] > 1 ? ' ×' + s.tri[i] : ''}` : null, s.dj[i] ? 'Doble condena' : null, s.tk[i] ? 'Billete de tren' : null, s.ob[i] ? 'Obras' : null, s.sw[i] ? 'Intercambio' : null, s.pl[i] ? 'Desatascador' : null, s.evk === 'shield' && s.imm === i ? 'Escudo' : null, s.frz[i] ? 'Congelado' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
       const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : '') + (hiSeat === i ? ' sel' : ''), style: `--c:${COLORS[i]}`, onclick: () => { if (bk) return; hiSeat = hiSeat === i ? -1 : i; paintBoard(); renderGame(); } },
         tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info),
           h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: data.squares[sqi].g ? data.groups[data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
@@ -797,7 +904,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (s.ordCand[my] && !s.ordRolls[my]) out.push(h('div', { class: 'pbtns' }, btn('Tirar dados', 'r', { cls: 'cta' })));
       else status(s.ordRolls[my] ? `Sacaste ${s.ordRolls[my]}` : 'Esperando');
     }
-    else if (s.phase === 'over') status(`Gana ${seatName(s.winner)}`);
+    else if (s.phase === 'over') { status(`Gana ${seatName(s.winner)}`); out.push(h('div', { class: 'pbtns' }, h('button', { class: 'btn', onclick: openSummary }, 'Resumen'))); }
     else if (s.phase === 'debt') {
       const d = s.debts[0];
       if (d.seat === my) {
@@ -885,9 +992,9 @@ export function openEvapoly({ roomId, api, onClose }) {
     const content = h('div', { class: 'stack' });
     let m;
     const draw = () => fill(content, Object.entries(SHOP).map(([k, it]) => h('button', {
-      class: 'game-row', disabled: s.cash[my] < it.p || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || running || busy,
+      class: 'game-row', disabled: s.cash[my] < it.p || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || (Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS) || running || busy,
       onclick: async () => { m.close(); await send('o' + k); },
-    }, h('div', {}, SHOP_NAMES[k], h('small', {}, haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : eur(it.p))))));
+    }, h('div', {}, SHOP_NAMES[k], h('small', {}, haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS ? 'Ya llevas dos objetos' : eur(it.p))))));
     draw();
     m = modal({ title: 'Tienda', content, actions: [{ label: 'Cerrar' }] });
   }

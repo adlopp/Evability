@@ -66,6 +66,8 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -174,6 +176,15 @@ private fun FxView(f: Fx, g: Dp) {
             val q = FastOutSlowInEasing.transform(if (p < 0.45f) p / 0.45f else 1f - (p - 0.45f) / 0.55f)
             PolyIcon("plunger", sz, Modifier.offset(g * (lerp(f.x0, f.x1, q) / 100f) - sz / 2, g * (lerp(f.y0, f.y1, q) / 100f) - sz / 2).graphicsLayer { alpha = minOf(1f, p / 0.12f, (1f - p) / 0.2f).coerceIn(0f, 1f); rotationZ = -20f * q })
         }
+        "emote" -> {
+            val sz = g * 0.1f
+            val q = FastOutSlowInEasing.transform(p)
+            Text(
+                listOf("😊", "😂", "😭")[f.n.coerceIn(0, 2)], fontSize = with(LocalDensity.current) { (g * 0.085f).toSp() },
+                modifier = Modifier.offset(g * (f.x0 / 100f) - sz / 2, g * ((f.y0 - 4f) / 100f) - sz / 2 - g * 0.16f * q)
+                    .graphicsLayer { val sc = 0.6f + 0.7f * minOf(1f, p / 0.2f); scaleX = sc; scaleY = sc; alpha = minOf(1f, p / 0.12f, (1f - p) / 0.3f).coerceIn(0f, 1f) },
+            )
+        }
         "hammer" -> {
             val sz = g * 0.22f
             val ang = when { p < 0.33f -> -60f + 72f * (p / 0.33f) * (p / 0.33f); p < 0.42f -> 12f - 18f * ((p - 0.33f) / 0.09f); p < 0.55f -> -6f + 10f * ((p - 0.42f) / 0.13f); else -> 4f * (1f - (p - 0.55f) / 0.45f) }
@@ -249,21 +260,95 @@ private class CardFx(val kind: String, val title: String, val who: String, val t
 private class BannerInfo(val text: String, val seat: Int)
 private class Delta(val seat: Int, val text: String, val up: Boolean, val id: Long)
 
+/** Lo que va pasando en la partida, para el resumen final. */
+private class PolyStats {
+    val rentGot = IntArray(4); val rentPaid = IntArray(4); val props = IntArray(4); val built = IntArray(4)
+    val jail = IntArray(4); val doubles = IntArray(4); val cards = IntArray(4)
+    fun reset() { for (a in listOf(rentGot, rentPaid, props, built, jail, doubles, cards)) a.fill(0) }
+    fun tally(evs: List<Poly.Ev>) {
+        for (e in evs) when {
+            e.k == "pay" && e.m.contains("de alquiler") && e.seat >= 0 -> { rentPaid[e.seat] += e.amt; if (e.to >= 0) rentGot[e.to] += e.amt }
+            e.k == "jail" && e.seat >= 0 -> jail[e.seat]++
+            e.k == "buy" && e.sq >= 0 && e.seat >= 0 -> props[e.seat]++
+            e.k == "build" && e.sq >= 0 && e.amt < 0 && e.seat >= 0 -> built[e.seat]++
+            e.k == "dice" && e.d2 > 0 && e.d1 == e.d2 && e.seat >= 0 -> doubles[e.seat]++
+            e.k == "card" && e.seat >= 0 -> cards[e.seat]++
+        }
+    }
+}
+
+/** Cartel del objetivo secreto (solo lo ve su dueño): se muestra al tocar o mantener pulsada la carta amarilla. */
+@Composable
+private fun GoalCardView(text: String, done: Boolean, hold: Boolean, side: Dp, onDone: () -> Unit) {
+    val t = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { t.animateTo(1f, spring(0.55f, 300f)); delay(if (hold) 60000L else 5000L); onDone() }
+    val shape = RoundedCornerShape(side * 0.05f)
+    val fg = Color(0xFF4A3300)
+    val fsz = with(LocalDensity.current) { (side / 31f).toSp() }
+    Box(Modifier.fillMaxSize().clickable { onDone() }, contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxWidth(0.74f).graphicsLayer { scaleX = t.value; scaleY = t.value; alpha = t.value.coerceIn(0f, 1f) }
+                .background(Brush.linearGradient(if (done) listOf(Color(0xFFA8E6A3), Color(0xFF4CAF50)) else listOf(Color(0xFFFFD84A), Color(0xFFE0A800))), shape)
+                .border(side * 0.007f, Color.White.copy(alpha = 0.4f), shape).padding(side * 0.04f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            PolyIcon("target", side * 0.17f)
+            Text("OBJETIVO SECRETO", color = fg.copy(alpha = 0.92f), fontSize = fsz * 0.9f, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            Text(text, color = fg, fontSize = fsz * 1.45f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.6f)
+            Text("(Solo tú puedes ver tu objetivo)", color = fg, fontSize = fsz * 0.9f, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.padding(top = side * 0.012f))
+        }
+    }
+}
+
+/** Botón con las tres caras (feliz, risa y llanto). */
+@Composable
+private fun EmoteButton(modifier: Modifier, onPick: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        IconButton(onClick = { open = true }, modifier = Modifier.fillMaxSize()) { Text("🙂", fontSize = 20.sp) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for ((n, em) in listOf("😊", "😂", "😭").withIndex()) DropdownMenuItem(text = { Text(em, fontSize = 28.sp) }, onClick = { open = false; onPick(n) })
+        }
+    }
+}
+
+/** Resumen final: una fila por dato y una columna por jugador; el mejor de cada fila va en dorado. */
+@Composable
+private fun SummaryTable(names: List<String>, rows: List<Triple<String, IntArray, Boolean>>) {
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth()) {
+            Spacer(Modifier.weight(1.5f))
+            for ((i, n) in names.withIndex()) Text(n, color = PolyData.colors[i], fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
+        for ((label, vals, euro) in rows) {
+            val best = (0 until names.size).maxOf { vals[it] }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = OnSurfaceDim, fontSize = 12.sp, modifier = Modifier.weight(1.5f))
+                for (i in names.indices) Text(
+                    if (euro) Poly.eur(vals[i]) else vals[i].toString(), color = if (vals[i] == best && best > 0) Color(0xFFE6A700) else OnSurface,
+                    fontWeight = if (vals[i] == best && best > 0) FontWeight.Black else FontWeight.Normal, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
 // ───── eventos aleatorios ─────
 private class EvCard(val kind: Int, val start: Boolean, val peek: Boolean = false, val hold: Boolean = false)
-private val EV_IDS = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush")
-private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto", "Crisis económica", "Equilibrio", "Hacienda", "Ladrón", "Boom inmobiliario", "Hora punta")
+private val EV_IDS = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush", "shield")
+private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto", "Crisis económica", "Equilibrio", "Hacienda", "Ladrón", "Boom inmobiliario", "Hora punta", "Inmunidad")
 private val EV_DESC = listOf(
     "Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.",
-    "Está nevando, así que te mueves más lento: durante 5 turnos de cada jugador solo se tira un dado en lugar de dos.",
-    "Está lloviendo, el suelo está mojado y te resbalas: durante 5 turnos de cada jugador cada dado saca 4 o más, y llegas más lejos.",
+    "Está nevando, así que te mueves más lento: durante 4 turnos de cada jugador solo se tira un dado en lugar de dos. Hay un muñeco de nieve en el mapa: si caes en su casilla, te quedas congelado y pierdes tu siguiente turno.",
+    "Está lloviendo, el suelo está mojado y te resbalas: durante 4 turnos de cada jugador, cada vez que tires hay un 20 % de resbalar y perder 50 €.",
     "Durante 5 turnos de cada jugador, al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas. Quien no tenga edificios se libra.",
-    "Durante 5 turnos de cada jugador, todas las propiedades suben 50 € para comprarlas (Calle Pollo pasa de 220 € a 270 €) y, al caer en una de otro jugador, pagas 25 € extra de alquiler.",
+    "Durante 5 turnos de cada jugador, construir casas y hoteles cuesta el doble.",
     "El jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €. Si hay empate, cobran todos los empatados.",
-    "Cada jugador paga el 5 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).",
+    "Cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).",
     "El jugador con más dinero pierde 100 € y se los lleva el jugador que menos tiene.",
     "Durante 5 turnos de cada jugador, construir casas y hoteles cuesta la mitad.",
     "Durante 5 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.",
+    "El jugador que va peor (menos dinero, propiedades y construcciones) tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos. Solo gasta si compra algo él.",
 )
 
 /** Nieve o lluvia suaves sobre el tablero: el mapa se vuelve invernal o mojado. */
@@ -313,9 +398,9 @@ private fun EventCardView(c: EvCard, side: Dp, onDone: () -> Unit) {
                 .border(side * 0.007f, Color.White.copy(alpha = 0.4f), shape).padding(side * 0.04f),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else if (c.kind == 3) "quake" else if (c.kind == 4) "crisis" else if (c.kind == 8) "boom" else if (c.kind == 9) "rush" else "sun", side * 0.17f)
+            PolyIcon(if (c.start) EV_IDS[c.kind] else if (c.kind == 0) "dog" else if (c.kind == 3) "quake" else if (c.kind == 4) "crisis" else if (c.kind == 8) "boom" else if (c.kind == 9) "rush" else if (c.kind == 10) "shield" else "sun", side * 0.17f)
             Text(if (c.peek) "EVENTO ACTIVO" else if (c.start) "EVENTO ACTIVADO" else "EVENTO TERMINADO", color = fg.copy(alpha = 0.92f), fontSize = fsz * 0.9f, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else if (c.kind == 3) "La tierra ha dejado de temblar" else if (c.kind == 4) "La crisis económica ha terminado" else if (c.kind == 8) "El boom inmobiliario ha terminado" else if (c.kind == 9) "Ha pasado la hora punta" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
+            Text(if (c.start) EV_NAMES[c.kind] else if (c.kind == 0) "El perro ha desaparecido" else if (c.kind == 3) "La tierra ha dejado de temblar" else if (c.kind == 4) "La crisis económica ha terminado" else if (c.kind == 8) "El boom inmobiliario ha terminado" else if (c.kind == 9) "Ha pasado la hora punta" else if (c.kind == 10) "El escudo se ha desvanecido" else "Ha salido el sol", color = fg, fontSize = fsz * 1.55f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = fsz * 1.7f)
             if (c.start) Text(EV_DESC[c.kind], color = fg, fontSize = fsz * 0.95f, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, lineHeight = fsz * 1.3f, modifier = Modifier.padding(top = side * 0.01f))
         }
     }
@@ -520,6 +605,7 @@ private fun SquareView(
         }
         if (ownable) Box(Modifier.fillMaxSize().border(uu * (if (owner >= 0) 0.34f else 0.2f), band ?: Color(0xFF7D8791)))
         if (st.fence[i] >= 0) PolyIcon("fence", minOf(ow, oh) * 0.85f, Modifier.align(Alignment.Center))
+        if (st.evk == "snow" && st.snowman == i) PolyIcon("snowman", minOf(ow, oh) * 0.8f, Modifier.align(Alignment.Center))
         if (hl) {
             val pulse = rememberInfiniteTransition(label = "ruta")
             val a by pulse.animateFloat(0.32f, 0.6f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "ruta")
@@ -602,7 +688,7 @@ private fun BannerView(b: BannerInfo, side: Dp) {
 @Composable
 private fun PolyBoard(
     side: Dp, data: Poly.Data, st: Poly.State, viewPos: List<Int>, tokenOf: (Int) -> Int, dice: DiceView?, pathSet: Set<Int>, slowSeat: Int, police: Boolean, landing: Int?,
-    cardFx: CardFx?, banner: BannerInfo?, pops: List<MoneyPop>, fxs: List<Fx>, hopSeat: Int, poof: List<Int>, shakeKey: Int, focusSeat: Int, evk: String, dogAt: Int, evCard: EvCard?, onEvDone: () -> Unit, onEvPeek: (Int) -> Unit, onCardDone: () -> Unit, onSquare: (Int) -> Unit,
+    cardFx: CardFx?, banner: BannerInfo?, pops: List<MoneyPop>, fxs: List<Fx>, hopSeat: Int, poof: List<Int>, shakeKey: Int, focusSeat: Int, evk: String, dogAt: Int, evCard: EvCard?, onEvDone: () -> Unit, onEvPeek: (Int) -> Unit, goalText: String?, goalDone: Boolean, goalPeek: Boolean, goalHold: Boolean, onGoal: (Int) -> Unit, onGoalDone: () -> Unit, onCardDone: () -> Unit, onSquare: (Int) -> Unit,
 ) {
     val shakeX = remember { Animatable(0f) }
     LaunchedEffect(shakeKey) { if (shakeKey > 0) { for (v in listOf(7f, -7f, 5f, -4f, 2f, 0f)) shakeX.animateTo(v, tween(55)) } }
@@ -624,6 +710,13 @@ private fun PolyBoard(
             }
             Box(Modifier.offset(g * 0.63f, g * 0.69f).size(g * 0.21f, g * 0.145f).rotate(-35f).background(Brush.linearGradient(listOf(Color(0xFF3F7BD4), Color(0xFF1B3F86))), RoundedCornerShape(u * 0.9f)).border(u * 0.22f, Color.White.copy(alpha = 0.9f), RoundedCornerShape(u * 0.9f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { PolyIcon("chest", g * 0.06f); Text("CAJA", color = Color.White, fontWeight = FontWeight.Black, fontSize = with(density) { (u * 1.05f).toSp() }) }
+            }
+            if (goalText != null) {
+                val gshape = RoundedCornerShape(u * 0.9f)
+                Box(Modifier.offset(g * 0.16f, g * 0.69f).size(g * 0.21f, g * 0.145f).graphicsLayer { rotationZ = 35f }.pointerInput(goalText) { detectTapGestures(onPress = { tryAwaitRelease(); onGoal(3) }, onLongPress = { onGoal(2) }, onTap = { onGoal(1) }) }
+                    .background(Brush.linearGradient(if (goalDone) listOf(Color(0xFFA8E6A3), Color(0xFF4CAF50)) else listOf(Color(0xFFFFD84A), Color(0xFFE0A800))), gshape).border(u * 0.22f, Color.White.copy(alpha = 0.9f), gshape), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) { PolyIcon("target", g * 0.06f); Text("OBJETIVO\nSECRETO", color = Color(0xFF4A3300), fontWeight = FontWeight.Black, textAlign = TextAlign.Center, fontSize = with(density) { (u * 0.85f).toSp() }, lineHeight = with(density) { (u * 0.95f).toSp() }) }
+                }
             }
             if (evk.isNotEmpty()) {
                 val es = remember(evk) { Animatable(0f) }
@@ -680,6 +773,8 @@ private fun PolyBoard(
                     val rs2 = tk * (0.8f + 1.1f * pulse)
                     Box(Modifier.offset(x + tk / 2f - rs2 / 2f, y + tk / 2f - rs2 / 2f).size(rs2).border(tk * 0.07f, PolyData.colors[s].copy(alpha = 0.85f * (1f - pulse)), CircleShape))
                 }
+                if (st.frz[s] > 0) { val rs4 = tk * 1.5f; Box(Modifier.offset(x + tk / 2f - rs4 / 2f, y + tk / 2f - rs4 / 2f).size(rs4).background(Color(0x44BFEFFF), CircleShape).border(tk * 0.09f, Color(0xFFBFEFFF), CircleShape)) }
+                if (evk == "shield" && st.imm == s) { val rs3 = tk * 1.55f; Box(Modifier.offset(x + tk / 2f - rs3 / 2f, y + tk / 2f - rs3 / 2f).size(rs3).background(Color(0x337FD8FF), CircleShape).border(tk * 0.09f, Color(0xFF7FD8FF).copy(alpha = 0.9f), CircleShape)) }
                 val scale = sc * (if (champ) cs else 1f)
                 TokenView(
                     tokenOf(s), tk, PolyData.colors[s],
@@ -719,6 +814,7 @@ private fun PolyBoard(
         }
         if (banner != null) BannerView(banner, side)
         if (evCard != null) EventCardView(evCard, side, onEvDone)
+        if (goalPeek && goalText != null) GoalCardView(goalText, goalDone, goalHold, side, onGoalDone)
     }
 }
 
@@ -805,6 +901,12 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var viewDog by remember { mutableIntStateOf(-1) }
     var evCard by remember { mutableStateOf<EvCard?>(null) }
     var peekHold by remember { mutableStateOf(false) }
+    var goalPeek by remember { mutableStateOf(false) }
+    var goalHold by remember { mutableStateOf(false) }
+    var showSummary by remember { mutableStateOf(false) }
+    var summaryDone by remember { mutableStateOf(false) }
+    val stats = remember { PolyStats() }
+    var lastEmote by remember { mutableStateOf(0L) }
     var focusOn by remember { mutableStateOf(Prefs.polyFocus) }
     var hiSeat by remember { mutableIntStateOf(-1) }
     fun pct(i: Int): FloatArray = cellOf(i).let { floatArrayOf(it[0] + it[2] / 2f, it[1] + it[3] / 2f) }
@@ -826,6 +928,16 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     var loadError by remember { mutableStateOf("") }
 
     fun toast(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+    fun goalTextOf(s: Poly.State, seat: Int): String {
+        val t = s.gt[seat]; val a = s.ga[seat]
+        val done = if (s.gd[seat] != 0) "¡Cumplido! " else ""
+        return when (t) {
+            1 -> "${done}Consigue ${data.squares[a].n}"
+            2 -> "${done}Cae en la cárcel $a veces (${minOf(s.jc[seat], a)}/$a)"
+            else -> "${done}Consigue ${Poly.SHOP[a]!!.first} (también puedes comprarlo en la tienda)"
+        }
+    }
+
     fun seatOf(uid: String) = room?.players?.indexOf(uid) ?: -1
     fun mySeat() = seatOf(me)
     fun nameOf(uid: String) = names[uid] ?: "?"
@@ -841,9 +953,10 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     }
 
     fun buildState(r: Social.PolyRoom) {
-        val s = Poly.initGame(data, r.players.size, Poly.Cfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus, r.rails, r.ownerFree, r.shop, r.events), r.seed)
+        val s = Poly.initGame(data, r.players.size, Poly.Cfg(r.money, r.goBonus, r.auction, r.pot, r.dblBonus, r.rails, r.ownerFree, r.shop, r.events, r.goals), r.seed)
         acts.clear()
-        for (a in r.acts) { Poly.applyText(s, a); acts.add(a) }
+        stats.reset()
+        for (a in r.acts) { Poly.applyText(s, a); acts.add(a); stats.tally(s.ev) }
         st = s
         queue.clear()
         for (i in 0 until s.n) viewPos[i] = s.pos[i]
@@ -962,6 +1075,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                     delay(250)
                 }
                 "crumble" -> { ver++; fx("puff", e.sq, 8); PolySound.play("bounce"); delay(500) }
+                "shield" -> { fx("spark", viewPos[e.seat], 10, Color(0xFF7FD8FF)); PolySound.play("coin") }
                 "bite" -> { fx("puff", e.sq, 5); PolySound.play("bounce"); shakeKey++ }
                 "pull" -> {
                     landing = null
@@ -1005,7 +1119,14 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                     slowSeat = -1; police = false
                 }
                 "pay", "debt" -> PolySound.play("pay")
-                "go", "gain" -> PolySound.play("coin")
+                "go", "gain" -> {
+                    PolySound.play("coin")
+                    if (e.k == "gain" && e.m.contains("objetivo secreto")) { fxAt("confetti", floatArrayOf(50f, 50f), n = 40, ms = 2800); PolySound.play("confetti") }
+                }
+                "emote" -> fxAt("emote", pct(viewPos[e.seat]), n = e.sq, ms = 2400)
+                "freeze" -> { fx("spark", e.sq, 14, Color(0xFFBFEFFF)); fx("puff", e.sq, 5); PolySound.play("bounce") }
+                "freezeskip" -> { fx("spark", viewPos[e.seat], 12, Color(0xFFBFEFFF)); PolySound.play("turn") }
+                "slip" -> { fx("puff", viewPos[e.seat], 4); PolySound.play("bounce"); shakeKey++ }
                 "buy" -> {
                     PolySound.play("buy")
                     if (e.dir == 0) {
@@ -1044,6 +1165,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         for (i in 0 until s.n) viewPos[i] = s.pos[i]
         viewEvk = s.evk; viewDog = s.dog
         running = false
+        if (s.phase == "over" && !summaryDone) { summaryDone = true; scope.launch { delay(1800); showSummary = true } }
         noteCash(s); shownCash = s.cash.copyOf(); shownTurn = s.turn
         if (s.turn != lastTurn) {
             lastTurn = s.turn
@@ -1062,11 +1184,34 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         for (i in acts.indices) if (r.acts[i] != acts[i]) { buildState(r); return }
         if (r.acts.size == acts.size) return
         for (i in acts.size until r.acts.size) {
-            Poly.applyText(s, r.acts[i]); acts.add(r.acts[i])
+            Poly.applyText(s, r.acts[i]); acts.add(r.acts[i]); stats.tally(s.ev)
             queue.addAll(s.ev)
         }
         ver++
         scope.launch { play() }
+    }
+
+    fun sendEmote(n: Int) {
+        val s = st ?: return
+        val seat = mySeat()
+        if (seat < 0 || busy || System.currentTimeMillis() - lastEmote < 2000) return
+        val code = "E$n"
+        if (Poly.act(s, seat, code, true) != null) return
+        lastEmote = System.currentTimeMillis()
+        val text = "$seat.$code"
+        Poly.applyText(s, text)
+        acts.add(text)
+        queue.addAll(s.ev)
+        busy = true
+        kick[0] = true
+        ver++
+        scope.launch { play() }
+        scope.launch {
+            try { Social.polyAct(roomId, acts.toList(), false) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { runCatching { Social.polyRoom(roomId) }.getOrNull()?.let { room = it; buildState(it) } }
+            finally { busy = false; ver++ }
+        }
     }
 
     fun send(code: String) {
@@ -1079,6 +1224,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         val text = "$seat.$code"
         Poly.applyText(s, text)
         acts.add(text)
+        stats.tally(s.ev)
         queue.addAll(s.ev)
         busy = true
         kick[0] = true
@@ -1155,6 +1301,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
             IconButton(onClick = { focusOn = !focusOn; hiSeat = -1; Prefs.polyFocus = focusOn }, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(Icons.Default.Visibility, "Foco en mis calles", tint = if (focusOn) Color(0xFFF0B400) else OnSurface) }
             IconButton(onClick = { dark = !dark; Prefs.gameDark = dark }, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
             IconButton(onClick = { fullScreen = true }, modifier = Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { Icon(Icons.Default.Fullscreen, "Pantalla completa", tint = OnSurface) }
+            EmoteButton(Modifier.size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { sendEmote(it) }
             IconButton(onClick = {
                 musicOn = !musicOn; Prefs.polyMusic = musicOn
                 if (musicOn) PolyMusic.start(ctx) else PolyMusic.stop()
@@ -1192,7 +1339,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 val panel: @Composable (Modifier) -> Unit = { mod ->
                     GamePanel(
                         s, r, my, data, ::seatName, ::tokenOf, log, running || busy, deltas, fullScreen, running, shownCash, shownTurn,
-                        onSend = ::send, onTrade = { showTrade = true }, hiSeat = hiSeat, onPick = { hiSeat = if (hiSeat == it) -1 else it }, modifier = mod,
+                        onSend = ::send, onTrade = { showTrade = true }, onSummary = { showSummary = true }, hiSeat = hiSeat, onPick = { hiSeat = if (hiSeat == it) -1 else it }, modifier = mod,
                     )
                 }
                 val strip: @Composable () -> Unit = {
@@ -1203,7 +1350,10 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         val k = EV_IDS.indexOf(viewEvk)
                         if (m == 3) { if (peekHold) { peekHold = false; evCard = null } }
                         else if (k >= 0 && evCard == null && !running) { peekHold = m == 2; evCard = EvCard(k, true, peek = true, hold = m == 2) }
-                    }, { cardFx = null }) { squareSel = it }
+                    }, if (s.cfg.goals && my >= 0 && s.gt[my] != 0) goalTextOf(s, my) else null, my >= 0 && s.gd[my] != 0, goalPeek, goalHold, { m ->
+                        if (m == 3) { if (goalHold) { goalHold = false; goalPeek = false } }
+                        else if (!running) { goalHold = m == 2; goalPeek = true }
+                    }, { goalPeek = false }, { cardFx = null }) { squareSel = it }
                 }
                 if (land) {
                     Row(
@@ -1240,6 +1390,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                         onClick = { dark = !dark; Prefs.gameDark = dark },
                         modifier = Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 62.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape),
                     ) { Icon(Icons.Default.DarkMode, "Fondo oscuro", tint = if (dark) Accent else OnSurface) }
+                    EmoteButton(Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 174.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape)) { sendEmote(it) }
                     IconButton(
                         onClick = { focusOn = !focusOn; hiSeat = -1; Prefs.polyFocus = focusOn },
                         modifier = Modifier.align(Alignment.TopStart).padding(start = 6.dp, top = 118.dp).size(42.dp).background(Color.White.copy(alpha = 0.14f), CircleShape),
@@ -1252,6 +1403,28 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
     // ───── diálogos ─────
     val s = st
     if (r != null && s != null) {
+        if (showSummary && st != null && room != null) {
+            val s2 = st!!; val r2 = room!!
+            val n2 = r2.players.size
+            fun fortune(i: Int): Int { var w = s2.cash[i]; for (q in 0 until 40) if (s2.own[q] == i) { w += if (s2.mort[q]) data.squares[q].p / 2 else data.squares[q].p; w += s2.lvl[q] * s2.houseBase(q) }; return w }
+            fun arr(f: (Int) -> Int) = IntArray(4) { if (it < n2) f(it) else 0 }
+            AlertDialog(
+                onDismissRequest = { showSummary = false },
+                title = { Text(if (s2.winner >= 0) "Gana ${seatName(s2.winner)}" else "Resumen") },
+                text = {
+                    SummaryTable(
+                        (0 until n2).map { seatName(it) },
+                        listOf(
+                            Triple("Patrimonio final", arr { fortune(it) }, true), Triple("Dinero final", arr { s2.cash[it] }, true),
+                            Triple("Alquileres cobrados", stats.rentGot, true), Triple("Alquileres pagados", stats.rentPaid, true),
+                            Triple("Calles compradas", stats.props, false), Triple("Edificios construidos", stats.built, false),
+                            Triple("Veces en la cárcel", stats.jail, false), Triple("Dobles sacados", stats.doubles, false), Triple("Cartas robadas", stats.cards, false),
+                        ),
+                    )
+                },
+                confirmButton = { TextButton(onClick = { showSummary = false }) { Text("Cerrar") } },
+            )
+        }
         squareSel?.let { i ->
             SquareDialog(i, s, data, mySeat(), ::seatName, running || busy, onSend = { code -> send(code) }, onClose = { squareSel = null })
         }
@@ -1369,8 +1542,8 @@ private fun PolyLobby(
                     Text("Dinero inicial", color = OnSurface)
                     Text(Poly.eur(money.toInt()), color = OnSurface, fontWeight = FontWeight.Bold)
                 }
-                fun cfg(money: Int = r.money, goBonus: Boolean = r.goBonus, auction: Boolean = r.auction, pot: Boolean = r.pot, dbl: Boolean = r.dblBonus, rails: Boolean = r.rails, ownerFree: Boolean = r.ownerFree, shop: Boolean = r.shop, events: Boolean = r.events) =
-                    Social.RoomCfg(money, goBonus, auction, pot, dbl, rails, ownerFree, shop, events)
+                fun cfg(money: Int = r.money, goBonus: Boolean = r.goBonus, auction: Boolean = r.auction, pot: Boolean = r.pot, dbl: Boolean = r.dblBonus, rails: Boolean = r.rails, ownerFree: Boolean = r.ownerFree, shop: Boolean = r.shop, events: Boolean = r.events, goals: Boolean = r.goals) =
+                    Social.RoomCfg(money, goBonus, auction, pot, dbl, rails, ownerFree, shop, events, goals)
                 Slider(
                     value = money, onValueChange = { money = it }, valueRange = 500f..2500f, steps = 39, enabled = isHost,
                     onValueChangeFinished = { onCfg(cfg(money = money.toInt())) },
@@ -1389,6 +1562,7 @@ private fun PolyLobby(
                 Opt("Sin alquiler si el dueño está en la casilla", r.ownerFree) { onCfg(cfg(ownerFree = it)) }
                 Opt("Tienda en La Peza", r.shop) { onCfg(cfg(shop = it)) }
                 Opt("Eventos aleatorios", r.events) { onCfg(cfg(events = it)) }
+                Opt("Objetivos secretos", r.goals) { onCfg(cfg(goals = it)) }
             }
             // botones
             if (invitedOnly) PolyButton("Unirse", true, true) { onJoin() }
@@ -1454,7 +1628,7 @@ private fun DeltaText(d: Delta, modifier: Modifier) {
 private fun GamePanel(
     s: Poly.State, r: Social.PolyRoom, my: Int, data: Poly.Data, seatName: (Int) -> String, tokenOf: (Int) -> Int,
     log: List<String>, locked: Boolean, deltas: List<Delta>, compact: Boolean, frozen: Boolean, shownCash: IntArray?, shownTurn: Int,
-    onSend: (String) -> Unit, onTrade: () -> Unit, hiSeat: Int, onPick: (Int) -> Unit, modifier: Modifier,
+    onSend: (String) -> Unit, onTrade: () -> Unit, onSummary: () -> Unit, hiSeat: Int, onPick: (Int) -> Unit, modifier: Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)) {
         for (i in r.players.indices) {
@@ -1490,7 +1664,7 @@ private fun GamePanel(
                         } else {
                             val extra = if (s.bk[i]) "Quiebra"
                             else if (s.phase == "order") (if (s.ordRolls[i] > 0) "Sacó ${s.ordRolls[i]}" else "")
-                            else listOfNotNull(if (s.jail[i]) "Cárcel" else null, if (s.jf[i] > 0) "Carta ×${s.jf[i]}" else null, if (s.mc[i] > 0) "Maricarmen" + (if (s.mc[i] > 1) " ×${s.mc[i]}" else "") else null, if (s.tri[i] > 0) "Dado triple" + (if (s.tri[i] > 1) " ×${s.tri[i]}" else "") else null, if (s.dj[i] > 0) "Doble condena" else null, if (s.tk[i] > 0) "Billete de tren" else null, if (s.ob[i] > 0) "Obras" else null, if (s.sw[i] > 0) "Intercambio" else null, if (s.pl[i] > 0) "Desatascador" else null, "$owned calles").joinToString(" · ")
+                            else listOfNotNull(if (s.jail[i]) "Cárcel" else null, if (s.jf[i] > 0) "Carta ×${s.jf[i]}" else null, if (s.mc[i] > 0) "Maricarmen" + (if (s.mc[i] > 1) " ×${s.mc[i]}" else "") else null, if (s.tri[i] > 0) "Dado triple" + (if (s.tri[i] > 1) " ×${s.tri[i]}" else "") else null, if (s.dj[i] > 0) "Doble condena" else null, if (s.tk[i] > 0) "Billete de tren" else null, if (s.evk == "shield" && s.imm == i) "Escudo" else null, if (s.frz[i] > 0) "Congelado" else null, if (s.ob[i] > 0) "Obras" else null, if (s.sw[i] > 0) "Intercambio" else null, if (s.pl[i] > 0) "Desatascador" else null, "$owned calles").joinToString(" · ")
                             Text(extra, color = OnSurfaceDim, fontSize = 12.sp)
                         }
                     }
@@ -1536,7 +1710,7 @@ private fun GamePanel(
         } else if (s.phase == "order") {
             if (s.ordCand[my] && s.ordRolls[my] == 0) Btns { B("Tirar dados", "r", cta = true) }
             else Status(if (s.ordRolls[my] > 0) "Sacaste ${s.ordRolls[my]}" else "Esperando")
-        } else if (s.phase == "over") Status("Gana ${seatName(s.winner)}")
+        } else if (s.phase == "over") { Status("Gana ${seatName(s.winner)}"); Btns { PolyButton("Resumen", true, true, Modifier.weight(1f), false, compact) { onSummary() } } }
         else if (s.phase == "debt") {
             val d = s.debts[0]
             if (d.seat == my) {
@@ -1594,7 +1768,7 @@ private fun GamePanel(
                         val names = mapOf(1 to "Maricarmen", 2 to "Dado triple", 3 to "Doble condena", 4 to "Billete de tren", 5 to "Obras", 6 to "Intercambio", 7 to "Desatascador")
                         for ((k, it) in Poly.SHOP) {
                             val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; else -> s.pl[my] } > 0 || (s.sb[my] shr k) and 1 == 1
-                            PolyButton("${names[k]} · " + (if (have) "Ya lo has comprado" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !locked) { showShop = false; onSend("o$k") }
+                            PolyButton("${names[k]} · " + (if (have) "Ya lo has comprado" else if (k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) "Ya llevas dos objetos" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !(k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) && !locked) { showShop = false; onSend("o$k") }
                         }
                     }
                 },

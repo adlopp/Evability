@@ -15,7 +15,8 @@ export const JAIL_FINE = 50;
 export const JAIL = 10;
 export const MAX_HOUSES = 32, MAX_HOTELS = 12; // límite de casas y de hoteles de CADA jugador (no se comparte)
 /** Tienda de La Peza (regla opcional): objetos que no salen en Suerte ni en Caja. */
-export const SHOP = { 1: { n: 'la carta Maricarmen', p: 450 }, 2: { n: 'el dado triple', p: 100 }, 3: { n: 'la doble condena', p: 250 }, 4: { n: 'el billete de tren', p: 50 }, 5: { n: 'las obras', p: 100 }, 6: { n: 'el intercambio', p: 250 }, 7: { n: 'el desatascador', p: 150 } };
+export const SHOP = { 1: { n: 'la carta Maricarmen', p: 400 }, 2: { n: 'el dado triple', p: 100 }, 3: { n: 'la doble condena', p: 100 }, 4: { n: 'el billete de tren', p: 50 }, 5: { n: 'las obras', p: 100 }, 6: { n: 'el intercambio', p: 100 }, 7: { n: 'el desatascador', p: 100 } };
+export const MAX_ITEMS = 2, GOAL_PRIZE = 300, RAIN_SLIP = 20, SLIP_COST = 50, CARD_ITEM_REFUND = 50;
 
 export const eur = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' €';
 
@@ -37,7 +38,7 @@ function shuffled(s, n) {
 // ───── estado inicial ─────
 export function initGame(data, n, cfg, seed) {
   const s = {
-    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails, ownerFree: !!cfg.ownerFree, shop: !!cfg.shop, events: !!cfg.events }, r: seed | 0,
+    data, n, cfg: { money: cfg.money, goBonus: !!cfg.goBonus, auction: !!cfg.auction, pot: !!cfg.pot, dblBonus: !!cfg.dblBonus, rails: !!cfg.rails, ownerFree: !!cfg.ownerFree, shop: !!cfg.shop, events: !!cfg.events, goals: !!cfg.goals }, r: seed | 0,
     pos: Array(n).fill(0), cash: Array(n).fill(cfg.money), jail: Array(n).fill(false), jt: Array(n).fill(0), jf: Array(n).fill(0),
     bk: Array(n).fill(false),
     own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false),
@@ -45,25 +46,56 @@ export function initGame(data, n, cfg, seed) {
     turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, trade: null,
     heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0), tri: Array(n).fill(0), dj: Array(n).fill(0), jmax: Array(n).fill(3),
     tk: Array(n).fill(0), ob: Array(n).fill(0), sw: Array(n).fill(0), sh: Array(n).fill(0), fence: Array(40).fill(-1),
-    pl: Array(n).fill(0), sb: Array(n).fill(0), evk: '', evl: Array(n).fill(0), evf: false, evChk: false, dog: -1, tc: Array(n).fill(0),
+    pl: Array(n).fill(0), sb: Array(n).fill(0), imm: -1, jc: Array(n).fill(0), gt: Array(n).fill(0), ga: Array(n).fill(0), gd: Array(n).fill(0), gx: Array(n).fill(0), snowman: -1, frz: Array(n).fill(0), evk: '', evl: Array(n).fill(0), evf: false, evChk: false, dog: -1, tc: Array(n).fill(0),
   };
   s.deck.c.order = shuffled(s, data.cards.chance.length);
   s.deck.h.order = shuffled(s, data.cards.chest.length);
   // quién empieza: cada jugador tira los dados y empieza el más alto (los empates vuelven a tirar)
+  if (s.cfg.goals) assignGoals(s);
   s.phase = 'order';
   say(s, 'Todos tiran los dados: empieza el que saque más', 'start');
   return s;
 }
 
+/** Objetivo secreto de cada jugador: conseguir una calle, servicio o estación en concreto, caer 2 veces en la cárcel o conseguir un objeto de la tienda. */
+function assignGoals(s) {
+  const props = [];
+  for (let i = 0; i < 40; i++) if (['street', 'station', 'utility'].includes(sq(s, i).t)) props.push(i);
+  for (let seat = 0; seat < s.n; seat++) {
+    const t = rint(s, 3);
+    if (t === 0) { s.gt[seat] = 1; s.ga[seat] = props[rint(s, props.length)]; }
+    else if (t === 1) { s.gt[seat] = 2; s.ga[seat] = 2; }
+    else { s.gt[seat] = 3; s.ga[seat] = [2, 3, 4, 5, 6, 7][rint(s, 6)]; }
+  }
+}
+
+/** Comprueba si alguien ha cumplido su objetivo secreto: cobra 300 €. */
+function checkGoals(s) {
+  if (!s.cfg.goals) return;
+  for (let seat = 0; seat < s.n; seat++) {
+    if (s.bk[seat] || s.gd[seat] || !s.gt[seat]) continue;
+    const t = s.gt[seat], a = s.ga[seat];
+    const done = t === 1 ? s.own[a] === seat : t === 2 ? s.jc[seat] >= a : ((s.gx[seat] >> a) & 1) === 1;
+    if (!done) continue;
+    s.gd[seat] = 1; s.cash[seat] += GOAL_PRIZE;
+    say(s, `@${seat} cumple su objetivo secreto y cobra ${eur(GOAL_PRIZE)}`, 'gain', { seat, amt: GOAL_PRIZE });
+  }
+}
+
 export const sq = (s, i) => s.data.squares[i];
 const say = (s, m, k = 'msg', extra = {}) => s.ev.push({ k, m, ...extra });
+/** Objetos que cuentan para el límite de 2 (la doble condena no cuenta). */
+export const heldItems = (s, seat) => s.mc[seat] + s.tri[seat] + s.tk[seat] + s.ob[seat] + s.sw[seat] + s.pl[seat];
+/** Cuántos de ese objeto de la tienda lleva (1 Maricarmen … 7 desatascador). */
+export const itemHeld = (s, k, seat) => [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl][k][seat];
+const shielded = (s, seat) => s.evk === 'shield' && s.imm === seat && s.evl[seat] > 0;
 export const alive = (s) => { const a = []; for (let i = 0; i < s.n; i++) if (!s.bk[i]) a.push(i); return a; };
 const nextAlive = (s, from) => { for (let i = 1; i <= s.n; i++) { const t = (from + i) % s.n; if (!s.bk[t]) return t; } return from; };
 export const groupOf = (s, g) => { const a = []; for (let i = 0; i < 40; i++) if (sq(s, i).g === g) a.push(i); return a; };
 /** Coste base de una casa u hotel (lo que se recupera a medias al venderlo). */
 export const houseBase = (s, i) => s.data.house[sq(s, i).g] || 0;
 /** Coste de construir ahora mismo: con el boom inmobiliario cuesta la mitad. */
-export const houseCost = (s, i) => (s.evk === 'boom' ? Math.floor(houseBase(s, i) / 2) : houseBase(s, i));
+export const houseCost = (s, i) => (s.evk === 'boom' ? Math.floor(houseBase(s, i) / 2) : s.evk === 'crisis' ? houseBase(s, i) * 2 : houseBase(s, i));
 export const ownsAll = (s, seat, g) => groupOf(s, g).every((i) => s.own[i] === seat);
 export const housesOf = (s, seat) => { let n = 0; for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] > 0 && s.lvl[i] < 5) n += s.lvl[i]; return n; };
 export const hotelsOf = (s, seat) => { let n = 0; for (let i = 0; i < 40; i++) if (s.own[i] === seat && s.lvl[i] === 5) n++; return n; };
@@ -92,6 +124,7 @@ export function worth(s, seat) {
 // ───── dinero ─────
 function pay(s, seat, amt, to, why, rent = false, tax = false) {
   if (amt <= 0) return;
+  if (shielded(s, seat)) { say(s, `@${seat} está protegido por el escudo y no paga ${eur(amt)}`, 'shield', { seat, amt }); return; }
   if (rent && s.mc[seat] > 0) {
     // con Maricarmen en la mano el alquiler no se cobra solo: se decide si pagarlo o usar la carta
     s.debts.push({ seat, amt, to, why, rent: true });
@@ -148,11 +181,12 @@ function moveDice(s, seat, total) {
 function sendJail(s, seat, why) {
   const from = s.pos[seat];
   s.pos[seat] = JAIL; s.jail[seat] = true; s.jt[seat] = 0; s.jmax[seat] = 3;
-  s.again = false; s.dbl = 0;
+  s.again = false; s.dbl = 0; s.jc[seat]++;
   say(s, `@${seat} va a la cárcel${why}`, 'jail', { seat, from, to: JAIL });
 }
 
 function land(s, seat, i, ctx) {
+  if (s.evk === 'snow' && s.snowman === i && !s.bk[seat] && !s.frz[seat]) { s.frz[seat] = 1; say(s, `@${seat} choca con el muñeco de nieve y se queda congelado: perderá su próximo turno`, 'freeze', { seat, sq: i }); }
   if (s.evk === 'dog' && s.dog === i && !s.bk[seat]) dogBite(s, seat);
   const q = sq(s, i);
   switch (q.t) {
@@ -169,7 +203,7 @@ function land(s, seat, i, ctx) {
           say(s, `@${seat} tira los dados: ${a} y ${b}`, 'dice', { seat, d1: a, d2: b });
           rent = (a + b) * 10;
         } else rent = rentOf(s, i, ctx.dice || 0) * (ctx.double ? 2 : 1);
-        pay(s, seat, rent + (s.evk === 'crisis' ? CRISIS_RENT : 0), o, ` de alquiler por ${q.n}`, true);
+        pay(s, seat, rent, o, ` de alquiler por ${q.n}`, true);
       }
       break;
     }
@@ -195,7 +229,7 @@ function draw(s, seat, which) {
   do { idx = d.order[d.i % d.order.length]; d.i++; } while (idx === d.held || idx === d.held2);
   const [kind, a, b] = cards[idx].e.split(':');
   // ánimo de la carta (amt): 1 buena, -1 mala, 0 neutra; solo sirve para la animación
-  const mood = ({ cash: Number(a) >= 0 ? 1 : -1, eachget: 1, mc: 1, free: 1, jail: -1, repair: -1, eachpay: -1 })[kind] || 0;
+  const mood = ({ cash: Number(a) >= 0 ? 1 : -1, eachget: 1, mc: 1, item: 1, free: 1, jail: -1, repair: -1, eachpay: -1 })[kind] || 0;
   say(s, `${which === 'c' ? 'Suerte' : 'Caja'}: ${cards[idx].x}`, 'card', { seat, text: cards[idx].x, deck: which, amt: mood });
   switch (kind) {
     case 'to': moveTo(s, seat, Number(a), true); land(s, seat, Number(a), {}); break;
@@ -214,7 +248,18 @@ function draw(s, seat, which) {
       break;
     }
     case 'jail': sendJail(s, seat, ''); break;
-    case 'mc': d.held2 = idx; s.mc[seat]++; s.mcBy = seat; break;
+    case 'mc':
+      if (s.mc[seat] > 0 || heldItems(s, seat) >= MAX_ITEMS) { s.cash[seat] += CARD_ITEM_REFUND; say(s, `@${seat} no puede llevar más objetos: se destruye y cobra ${eur(CARD_ITEM_REFUND)}`, 'gain', { seat, amt: CARD_ITEM_REFUND }); }
+      else { d.held2 = idx; s.mc[seat]++; s.mcBy = seat; }
+      break;
+    case 'item': {
+      // objeto de la tienda encontrado en una carta: si no cabe (ya lo lleva o lleva dos), se destruye y cobra 50 €
+      const k = Number(a);
+      if (itemHeld(s, k, seat) > 0 || (k !== 3 && heldItems(s, seat) >= MAX_ITEMS)) { s.cash[seat] += CARD_ITEM_REFUND; say(s, `@${seat} no puede llevar ${SHOP[k].n}: se destruye y cobra ${eur(CARD_ITEM_REFUND)}`, 'gain', { seat, amt: CARD_ITEM_REFUND }); break; }
+      [null, null, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl][k][seat]++; s.gx[seat] |= 1 << k;
+      say(s, `@${seat} se queda con ${SHOP[k].n}`, 'msg', { seat });
+      break;
+    }
     case 'free': d.held = idx; s.jf[seat]++; s.heldBy[which] = seat; break;
     case 'cash': { const v = Number(a); if (v >= 0) { s.cash[seat] += v; say(s, `@${seat} cobra ${eur(v)}`, 'gain', { seat, amt: v }); } else pay(s, seat, -v, -1, ''); break; }
     case 'repair': {
@@ -238,12 +283,22 @@ function liquidate(s, seat) {
   }
 }
 
+/** Solo se pueden llevar dos objetos (la doble condena aparte): si sobran, se quedan los primeros. */
+function trimItems(s, seat) {
+  let kept = 0;
+  [s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl].forEach((a, k) => {
+    if (a[seat] <= 0) return;
+    if (k !== 2 && kept >= MAX_ITEMS) { a[seat] = 0; if (k === 0 && s.mcBy === seat) { s.deck.c.held2 = -1; s.mcBy = -1; } } else { a[seat] = 1; if (k !== 2) kept++; }
+  });
+}
+
 function bankrupt(s, seat, to, why) {
   liquidate(s, seat);
   for (let i = 0; i < 40; i++) if (s.own[i] === seat) { s.own[i] = to; if (to < 0) s.mort[i] = false; }
   if (to >= 0) { s.cash[to] += s.cash[seat]; s.jf[to] += s.jf[seat]; s.mc[to] += s.mc[seat]; s.tri[to] = Math.min(1, s.tri[to] + s.tri[seat]); s.dj[to] = Math.min(1, s.dj[to] + s.dj[seat]); s.tk[to] = Math.min(1, s.tk[to] + s.tk[seat]); s.ob[to] = Math.min(1, s.ob[to] + s.ob[seat]); s.sw[to] = Math.min(1, s.sw[to] + s.sw[seat]); s.pl[to] = Math.min(1, s.pl[to] + s.pl[seat]); if (s.mcBy === seat) s.mcBy = to; }
   else if (s.mcBy === seat) { s.deck.c.held2 = -1; s.mcBy = -1; }
   else for (const w of ['c', 'h']) if (s.deck[w].held >= 0 && s.heldBy[w] === seat) { s.deck[w].held = -1; s.heldBy[w] = -1; }
+  if (to >= 0) trimItems(s, to);
   s.cash[seat] = 0; s.jf[seat] = 0; s.mc[seat] = 0; s.tri[seat] = 0; s.dj[seat] = 0; s.tk[seat] = 0; s.ob[seat] = 0; s.sw[seat] = 0; s.pl[seat] = 0; s.evl[seat] = 0; s.bk[seat] = true; s.jail[seat] = false;
   for (let i = 0; i < 40; i++) if (s.fence[i] === seat) s.fence[i] = -1;
   s.debts = s.debts.filter((d) => d.seat !== seat).map((d) => (d.to === seat ? { ...d, to } : d));
@@ -254,14 +309,15 @@ function bankrupt(s, seat, to, why) {
 }
 
 // ───── eventos aleatorios (regla opcional) ─────
-const EV_NAMES = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush'], EV_TURNS = 5, RUSH_STEPS = 2, BALANCE_PRIZE = 500, DOG_BITE = 150, DOG_STEP = 4, QUAKE_PCT = 20, EVENT_PCT = 15, CRISIS_PRICE = 50, CRISIS_RENT = 25;
+const EV_NAMES = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush', 'shield'], EV_TURNS = 5, SHIELD_TURNS = 3, RUSH_STEPS = 2, BALANCE_PRIZE = 500, DOG_BITE = 150, DOG_STEP = 4, QUAKE_PCT = 20, EVENT_PCT = 15, CRISIS_PRICE = 50, CRISIS_RENT = 25;
 /** Precio al que se compra una propiedad ahora mismo (con la crisis económica sube). */
-export const buyPrice = (s, i) => sq(s, i).p + (s.evk === 'crisis' ? CRISIS_PRICE : 0);
-const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella', 'Evento de nieve: está nevando, así que solo se tira un dado', 'Evento de lluvia: el suelo está mojado y se resbala, cada dado saca 4 o más', 'Evento del terremoto: al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador (un hotel se queda en 3 casas)', 'Evento de crisis económica: comprar una propiedad cuesta 50 € más y al caer en una ajena se pagan 25 € extra de alquiler', 'Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados', 'Evento de Hacienda: cada jugador paga el 5 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote)', 'Evento del ladrón: el jugador con más dinero pierde 100 € y se los lleva el que menos tiene', 'Evento de boom inmobiliario: construir casas y hoteles cuesta la mitad', 'Evento de hora punta: los dados suman 2 casillas más y las estaciones cobran el doble de alquiler'];
-const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia', 'La tierra ha dejado de temblar', 'La crisis económica ha terminado', '', '', '', 'El boom inmobiliario ha terminado', 'Ha pasado la hora punta'];
+export const buyPrice = (s, i) => sq(s, i).p;
+const EV_TEXT = ['Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella', 'Evento de nieve: está nevando, solo se tira un dado y un muñeco de nieve congela un turno a quien caiga en su casilla', 'Evento de lluvia: el suelo está mojado y al tirar hay un 20 % de resbalar y perder 50 €', 'Evento del terremoto: al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador (un hotel se queda en 3 casas)', 'Evento de crisis económica: construir casas y hoteles cuesta el doble', 'Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados', 'Evento de Hacienda: cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote)', 'Evento del ladrón: el jugador con más dinero pierde 100 € y se los lleva el que menos tiene', 'Evento de boom inmobiliario: construir casas y hoteles cuesta la mitad', 'Evento de hora punta: los dados suman 2 casillas más y las estaciones cobran el doble de alquiler', 'Evento de inmunidad: el jugador que va peor tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos'];
+const EV_END = ['El perro sarnoso ha desaparecido', 'Ha salido el sol: se acabó la nieve', 'Ha salido el sol: se acabó la lluvia', 'La tierra ha dejado de temblar', 'La crisis económica ha terminado', '', '', '', 'El boom inmobiliario ha terminado', 'Ha pasado la hora punta', 'El escudo se ha desvanecido'];
 
 // el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
 function dogBite(s, i) {
+  if (shielded(s, i)) { say(s, `El escudo protege a @${i} del perro`, 'shield', { seat: i, amt: 0 }); return; }
   const v = Math.min(DOG_BITE, s.cash[i]);
   s.cash[i] -= v;
   say(s, `El perro muerde a @${i} y le quita ${eur(v)}`, 'bite', { seat: i, amt: v, sq: s.pos[i] });
@@ -288,12 +344,12 @@ function balance(s, seat) {
   });
 }
 
-/** Hacienda (evento instantáneo): cada jugador paga el 5 % de su dinero al bote de La Peza (o a la banca). */
+/** Hacienda (evento instantáneo): cada jugador paga el 10 % de su dinero al bote de La Peza (o a la banca). */
 function hacienda(s, seat) {
   say(s, EV_TEXT[6], 'evt', { seat, amt: 1, sq: 6 });
   for (const i of alive(s)) {
-    const v = Math.floor(s.cash[i] * 0.05);
-    if (v <= 0) continue;
+    const v = Math.floor(s.cash[i] * 0.1);
+    if (v <= 0 || shielded(s, i)) continue;
     s.cash[i] -= v; if (s.cfg.pot) s.pot += v;
     say(s, `Hacienda: @${i} paga ${eur(v)}`, 'pay', { seat: i, to: -1, amt: v });
   }
@@ -305,11 +361,18 @@ function thief(s, seat) {
   const left = alive(s);
   let rich = left[0], poor = left[0];
   for (const i of left) { if (s.cash[i] > s.cash[rich]) rich = i; if (s.cash[i] < s.cash[poor]) poor = i; }
-  if (rich === poor) { say(s, 'El ladrón no encuentra a quién robar'); return; }
+  if (rich === poor || shielded(s, rich)) { say(s, 'El ladrón no encuentra a quién robar'); return; }
   const v = Math.min(100, s.cash[rich]);
   if (v <= 0) return;
   s.cash[rich] -= v; s.cash[poor] += v;
   say(s, `El ladrón le quita ${eur(v)} a @${rich} y se los da a @${poor}`, 'pay', { seat: rich, to: poor, amt: v });
+}
+
+/** Construcciones en el tablero (un hotel cuenta como una). */
+function constructions(s) {
+  let n = 0;
+  for (let i = 0; i < 40; i++) n += s.lvl[i] === 5 ? 1 : s.lvl[i];
+  return n;
 }
 
 /** Terremoto: derrumba un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas; sin edificios, se libra. */
@@ -322,7 +385,7 @@ function quake(s) {
     if (!houses.length) continue;
     const i = houses[rint(s, houses.length)];
     const hotel = s.lvl[i] === 5;
-    s.lvl[i] = hotel ? 3 : s.lvl[i] - 1;
+    s.lvl[i] = hotel ? Math.max(0, Math.min(3, MAX_HOUSES - housesOf(s, seat))) : s.lvl[i] - 1; // el hotel pasa a 3 casas si caben en el límite del jugador
     say(s, hotel ? `El terremoto derrumba el hotel de @${seat} en ${sq(s, i).n}: se queda en 3 casas` : `El terremoto derrumba una casa de @${seat} en ${sq(s, i).n}`, 'crumble', { seat, sq: i, amt: hotel ? 1 : 0 });
   }
 }
@@ -332,11 +395,23 @@ function maybeEvent(s, seat) {
   if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase === 'over') return;
   s.evChk = true;
   if (s.evk || s.tc[seat] < 2 || rint(s, 100) >= EVENT_PCT) return;
-  const kind = rint(s, 10);
+  let kind = rint(s, 11);
+  while (kind === 3 && constructions(s) < 3) kind = rint(s, 11); // el terremoto solo sale si hay al menos 3 construcciones
   if (kind >= 5 && kind <= 7) { [balance, hacienda, thief][kind - 5](s, seat); return; }
   s.evk = EV_NAMES[kind]; s.evf = true;
-  for (let i = 0; i < s.n; i++) s.evl[i] = s.bk[i] ? 0 : EV_TURNS;
-  say(s, EV_TEXT[kind], 'evt', { seat, amt: 1, sq: kind });
+  for (let i = 0; i < s.n; i++) s.evl[i] = s.bk[i] ? 0 : kind === 1 || kind === 2 ? 4 : EV_TURNS; // nieve y lluvia duran 4 turnos
+  if (kind === 1) {
+    // el muñeco de nieve aparece en una casilla en la que no haya nadie
+    const cand = [];
+    for (let i = 0; i < 40; i++) if (!s.pos.some((p, j) => !s.bk[j] && p === i)) cand.push(i);
+    s.snowman = cand[rint(s, cand.length)];
+  }
+  if (kind === 10) {
+    // inmunidad: escudo de 3 turnos para el jugador que va peor (menos patrimonio)
+    const left = alive(s), f = left.map((i) => fortune(s, i)), w = left[f.indexOf(Math.min(...f))];
+    s.imm = w; s.evl = Array(s.n).fill(0); s.evl[w] = SHIELD_TURNS;
+  }
+  say(s, EV_TEXT[kind], 'evt', kind === 10 ? { seat: s.imm, amt: 1, sq: kind } : { seat, amt: 1, sq: kind });
   if (kind === 0) { s.dog = 0; dogBites(s, [0]); }
 }
 
@@ -357,7 +432,7 @@ function nextTurn(s) {
     if (s.evl.every((v, i) => s.bk[i] || v <= 0)) {
       const kind = EV_NAMES.indexOf(s.evk);
       say(s, EV_END[kind], 'evt', { amt: 0, sq: kind });
-      s.evk = ''; s.dog = -1; s.evl = Array(s.n).fill(0);
+      s.evk = ''; s.dog = -1; s.imm = -1; s.snowman = -1; s.evl = Array(s.n).fill(0);
     }
   }
   s.evChk = false;
@@ -365,6 +440,7 @@ function nextTurn(s) {
   s.phase = 'roll'; s.dbl = 0; s.again = false; s.buy = -1;
   if (s.railCd[s.turn] > 0) s.railCd[s.turn]--;
   s.sh[s.turn] = 0; // una nueva visita a La Peza: otra compra en la tienda
+  if (s.frz[s.turn] > 0) { s.frz[s.turn]--; say(s, `@${s.turn} está congelado y pierde el turno`, 'freezeskip', { seat: s.turn }); nextTurn(s); }
 }
 
 /** Decide en qué fase queda la partida cuando una acción termina de resolverse. */
@@ -450,7 +526,15 @@ export function act(s, seat, code, dry = false) {
   if (!Number.isInteger(seat) || seat < 0 || seat >= s.n || s.bk[seat]) return 'Jugador no válido';
   const op = code[0], arg = code.slice(1);
   const mine = seat === s.turn, free = s.phase === 'roll' || s.phase === 'end';
-  const ok = () => { if (!dry) s.acts++; return OK; };
+  const ok = () => { if (!dry) { s.acts++; checkGoals(s); } return OK; };
+
+  // emoticonos: no cambian el juego, los puede enviar cualquiera en cualquier momento
+  if (op === 'E') {
+    if (!/^[0-2]$/.test(arg)) return 'Emoticono no válido';
+    if (dry) return OK;
+    say(s, '', 'emote', { seat, sq: Number(arg) });
+    return ok();
+  }
 
   // al principio todos tiran para ver quién empieza
   if (s.phase === 'order') {
@@ -483,9 +567,10 @@ export function act(s, seat, code, dry = false) {
     case 'r': {
       if (!mine || s.phase !== 'roll') return 'No puedes tirar ahora';
       if (dry) return OK;
-      // eventos: con nieve solo se tira un dado; con lluvia cada dado saca de 4 a 6
-      const snow = s.evk === 'snow' && s.evl[seat] > 0 && !s.jail[seat], rain = s.evk === 'rain' && s.evl[seat] > 0;
-      const a = rain ? rint(s, 3) + 4 : rint(s, 6) + 1, b = snow ? 0 : rain ? rint(s, 3) + 4 : rint(s, 6) + 1;
+      // eventos: con nieve solo se tira un dado; con lluvia hay un 20 % de resbalar y perder 50 €
+      const snow = s.evk === 'snow' && s.evl[seat] > 0 && !s.jail[seat];
+      const a = rint(s, 6) + 1, b = snow ? 0 : rint(s, 6) + 1;
+      const slip = s.evk === 'rain' && s.evl[seat] > 0 && rint(s, 100) < RAIN_SLIP;
       s.d1 = a; s.d2 = b;
       const rush = s.evk === 'rush' && s.evl[seat] > 0 ? RUSH_STEPS : 0; // hora punta: los dados llevan más lejos
       if (rush) say(s, `@${seat} avanza ${rush} casillas más por la hora punta`);
@@ -509,6 +594,7 @@ export function act(s, seat, code, dry = false) {
           moveDice(s, seat, a + b + rush);
         }
       } else { s.again = false; s.dbl = 0; moveDice(s, seat, a + b + rush); }
+      if (slip && !s.bk[seat] && s.phase !== 'over') { say(s, `@${seat} resbala en el suelo mojado`, 'slip', { seat }); pay(s, seat, SLIP_COST, -1, ' por resbalar'); }
       maybeEvent(s, seat);
       settle(s);
       return ok();
@@ -639,9 +725,10 @@ export function act(s, seat, code, dry = false) {
       if (s.sh[seat]) return 'Solo puedes comprar un objeto por visita';
       const have = [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl][k][seat];
       if (have > 0 || (s.sb[seat] >> k) & 1) return 'Ya has comprado ese objeto';
+      if (k !== 3 && heldItems(s, seat) >= MAX_ITEMS) return 'Solo puedes llevar dos objetos a la vez';
       if (s.cash[seat] < item.p) return 'No tienes dinero';
       if (dry) return OK;
-      s.cash[seat] -= item.p; s.sh[seat] = 1; s.sb[seat] |= 1 << k;
+      s.cash[seat] -= item.p; s.sh[seat] = 1; s.sb[seat] |= 1 << k; s.gx[seat] |= 1 << k;
       if (k === 1) s.mc[seat]++; else if (k === 2) s.tri[seat]++; else if (k === 3) s.dj[seat]++; else if (k === 4) s.tk[seat]++; else if (k === 5) s.ob[seat]++; else if (k === 6) s.sw[seat]++; else s.pl[seat]++;
       say(s, `@${seat} compra ${item.n} en la tienda por ${eur(item.p)}`, 'buy', { seat, amt: item.p });
       return ok();
@@ -821,4 +908,4 @@ export function applyText(s, text) {
 }
 
 /** Resumen del estado, para comparar partidas entre JS y Kotlin. */
-export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.tk, s.ob, s.sw, s.sh, s.fence, s.pl, s.sb, s.evk, s.evl, s.evf, s.evChk, s.dog, s.tc, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
+export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.tk, s.ob, s.sw, s.sh, s.fence, s.pl, s.sb, s.imm, s.jc, s.gt, s.ga, s.gd, s.gx, s.snowman, s.frz, s.evk, s.evl, s.evf, s.evChk, s.dog, s.tc, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);

@@ -520,6 +520,30 @@
    {
     "x": "Maricarmen: te perdona un alquiler. Guárdala y úsala cuando te toque pagarlo.",
     "e": "mc"
+   },
+   {
+    "x": "Encuentras un dado triple. Úsalo en tu turno para tirar tres dados en vez de dos.",
+    "e": "item:2"
+   },
+   {
+    "x": "Encuentras una doble condena. En la cárcel podrás quedarte hasta 6 turnos.",
+    "e": "item:3"
+   },
+   {
+    "x": "Encuentras un billete de tren. Úsalo en una estación para viajar a la siguiente.",
+    "e": "item:4"
+   },
+   {
+    "x": "Encuentras unas obras. Ponlas en cualquier casilla: quien llegue a ellas da la vuelta.",
+    "e": "item:5"
+   },
+   {
+    "x": "Encuentras un intercambio. Cambia tu casilla con la de otro jugador en vez de tirar.",
+    "e": "item:6"
+   },
+   {
+    "x": "Encuentras un desatascador. Chupa a otro jugador y déjalo en tu casilla.",
+    "e": "item:7"
    }
   ],
   "chest": [

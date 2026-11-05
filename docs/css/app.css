@@ -727,3 +727,27 @@ textarea.field { resize: vertical; }
 
 /* boom inmobiliario: un toque verde */
 .pboard.ev-boom { box-shadow: inset 0 0 5em rgba(60, 170, 90, .18); }
+
+/* escudo de inmunidad */
+.ptk.on-board.shielded { box-shadow: 0 0 0 .22em #7FD8FF, 0 0 1em .35em rgba(80, 200, 255, .85); }
+
+/* objetivo secreto, muñeco de nieve, congelado, emoticonos y resumen */
+.pdeck.o { left: 8%; bottom: 12%; transform: rotate(35deg); background: linear-gradient(145deg, #FFD84A, #E0A800); color: #4a3300; pointer-events: auto; cursor: pointer; text-shadow: none; font-size: .78em; line-height: 1.05; text-align: center; }
+.pdeck.o.done { background: linear-gradient(145deg, #A8E6A3, #4CAF50); color: #14391a; }
+.pevt.goalcard { background: linear-gradient(150deg, #FFD84A, #E0A800); color: #4a3300; }
+.pevt.goalcard .goal-name { font-size: 1.45em; }
+.psnowman { position: absolute; left: 10%; right: 10%; top: 50%; transform: translateY(-50%); z-index: 6; pointer-events: none; display: block; animation: fencein .5s cubic-bezier(.2,1.4,.4,1); filter: drop-shadow(0 .12em .2em rgba(0,0,0,.4)); }
+.psnowman svg { width: 100%; height: auto; max-height: 100%; display: block; }
+.ptk.on-board.frozen { box-shadow: 0 0 0 .22em #BFEFFF, 0 0 .9em .3em rgba(150, 220, 255, .9); filter: saturate(.55) brightness(1.15); }
+.fxemote { font-size: calc(var(--bs) / 11); line-height: 1; text-shadow: 0 .06em .14em rgba(0,0,0,.35); }
+.pemotes { position: relative; display: flex; justify-content: flex-end; padding: 2px 4px; }
+.pemote-btn { width: 40px; height: 40px; border-radius: 50%; font-size: 22px; line-height: 1; background: rgba(127,127,127,.14); border: 1px solid rgba(127,127,127,.22); }
+.pemote-pop { display: none; position: absolute; right: 48px; top: 0; gap: 6px; padding: 5px 8px; border-radius: 999px; background: var(--surface2); box-shadow: 0 4px 14px rgba(0,0,0,.35); z-index: 20; }
+.pemotes.open .pemote-pop { display: flex; }
+.pemote-pop button { font-size: 26px; width: 42px; height: 42px; border-radius: 50%; line-height: 1; }
+.pemote-pop button:active { transform: scale(1.2); }
+.psum-wrap { max-height: 60vh; overflow: auto; }
+.psum { width: 100%; border-collapse: collapse; font-size: 13px; }
+.psum th, .psum td { padding: 6px 5px; text-align: center; border-bottom: 1px solid rgba(127,127,127,.2); }
+.psum th { font-weight: 800; } .psum td:first-child { text-align: left; opacity: .8; }
+.psum td.top { font-weight: 900; color: #E6A700; }
