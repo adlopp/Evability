@@ -2,7 +2,7 @@
 // evapoly-engine.js en cada dispositivo con la misma semilla, así todos ven lo mismo. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggle, darkBars } from './ui.js';
-import { initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase, heldItems, itemHeld, MAX_ITEMS } from './evapoly-engine.js';
+import { setPerm, initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase, heldItems, itemHeld, MAX_ITEMS } from './evapoly-engine.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
 const MONEY_MIN = 500, MONEY_MAX = 2500, MONEY_STEP = 50;
@@ -227,6 +227,9 @@ export function openEvapoly({ roomId, api, onClose }) {
       return h('div', { class: 'pseat empty', style: `--c:${COLORS[i]}` }, inv ? [h('span', { class: 'ptk' }), h('b', {}, nameOf(inv)), h('small', {}, '…')] : h('b', {}, '—'));
     }));
 
+    // mapa: por ahora solo existe el 1; el 2 y el 3 están bloqueados
+    const mapRow = h('div', { class: 'pmaps', 'aria-label': 'Mapa' }, [1, 2, 3].map((m) => h('button', { class: 'pmap' + (m === 1 ? ' sel' : ' locked'), disabled: m !== 1, 'aria-label': m === 1 ? 'Mapa 1' : `Mapa ${m} bloqueado` }, m === 1 ? 'Mapa 1' : `🔒 Mapa ${m}`)));
+
     const tokRow = inRoom ? h('div', { class: 'ptok-row', 'aria-label': 'Ficha' }, toks.map((t, i) => h('button', {
       class: 'ptok-pick' + (myTok === i ? ' sel' : ''), disabled: taken.has(i), 'aria-label': t.n, title: t.n,
       style: `--c:${COLORS[mySeat()]}`, html: svgOf(t),
@@ -254,7 +257,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       buttons.push(h('button', { class: 'text-btn', onclick: async () => { if (await confirmDialog('Cerrar sala', '', 'Cerrar')) { await api.remove(room).catch(() => {}); close(); } } }, 'Cerrar sala'));
     } else if (inRoom) buttons.push(h('button', { class: 'text-btn', onclick: async () => { try { await api.leave(room); close(); } catch (e) { toast(e.message); } } }, 'Salir'));
 
-    fill(body, h('div', { class: 'poly-lobby' }, seats, tokRow,
+    fill(body, h('div', { class: 'poly-lobby' }, seats, mapRow, tokRow,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Dinero inicial'), moneyOut), slider,
         toggle('400 € al caer en la Salida', 'goBonus'), toggle('Subastas', 'auction'), toggle('Bote en La Peza', 'pot'), toggle('Premio por dobles (50 € y 100 €)', 'dblBonus'), toggle('Viaje en tren entre estaciones (50 € y 150 €)', 'rails'), toggle('Sin alquiler si el dueño está en la casilla', 'ownerFree'), toggle('Tienda en La Peza', 'shop'), toggle('Eventos aleatorios', 'events'), toggle('Objetivos secretos', 'goals')),
@@ -365,7 +368,9 @@ export function openEvapoly({ roomId, api, onClose }) {
       } else if (e.k === 'evt') {
         clearLanding();
         if (e.amt) { if (e.sq < 5 || e.sq >= 8) { viewEvk = EV_IDS[e.sq]; viewDog = e.sq === 0 ? 0 : -1; paintEvent(); } SFX.card(); await showEventCard(e.sq, true); }
-        else { viewEvk = ''; viewDog = -1; paintEvent(); SFX.turn(); await showEventCard(e.sq, false); }
+        else { viewEvk = ''; viewDog = -1; paintEvent(); if (e.sq === 12) { viewPerm = state.perm.join(','); paintBoard(); } SFX.turn(); await showEventCard(e.sq, false); }
+      } else if (e.k === 'chaos') {
+        viewPerm = state.perm.join(','); paintBoard(); SFX.bounce(); shake(); await wait(1100);
       } else if (e.k === 'dog') {
         viewDog = e.to; paintEvent(); SFX.step(); await wait(1000);
       } else if (e.k === 'quake') {
@@ -416,7 +421,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (e.m) { log.push(say(e.m)); if (log.length > 40) log.shift(); paintLog(); }
     }
     running = false;
-    view.pos = state.pos.slice(); viewEvk = state.evk; viewDog = state.dog; paintEvent();
+    view.pos = state.pos.slice(); viewEvk = state.evk; viewDog = state.dog; viewPerm = state.perm.join(','); paintEvent();
     if (state.turn !== seen) { seen = state.turn; if (state.turn === mySeat() && state.phase !== 'over' && state.phase !== 'order') { SFX.turn(); banner('Te toca', mySeat()); } }
     renderGame();
   }
@@ -483,7 +488,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   /** Resumen de la partida: una tabla con lo que ha hecho cada jugador y quién destaca en cada cosa. */
   function openSummary() {
     const s = state, st = stats || newStats(), n = room.players.length;
-    const fortuneOf = (i) => { let w = s.cash[i]; for (let q = 0; q < 40; q++) if (s.own[q] === i) { w += s.mort[q] ? data.squares[q].p / 2 : data.squares[q].p; w += s.lvl[q] * houseBase(s, q); } return w; };
+    const fortuneOf = (i) => { let w = s.cash[i]; for (let q = 0; q < 40; q++) if (s.own[q] === i) { w += s.mort[q] ? state.data.squares[q].p / 2 : state.data.squares[q].p; w += s.lvl[q] * houseBase(s, q); } return w; };
     const rows = [
       ['Patrimonio final', (i) => fortuneOf(i), eur], ['Dinero final', (i) => s.cash[i], eur],
       ['Alquileres cobrados', (i) => st.rentGot[i], eur], ['Alquileres pagados', (i) => st.rentPaid[i], eur],
@@ -500,7 +505,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     modal({ title: s.winner >= 0 ? `Gana ${seatName(s.winner)}` : 'Resumen', content: h('div', { class: 'psum-wrap' }, table), actions: [{ label: 'Cerrar' }] });
   }
   let summaryShown = false;
-  try { if (localStorage.getItem('ev.dbg')) window.__evapoly = { openSummary }; } catch { /* sin almacenamiento */ }
+  try { if (localStorage.getItem('ev.dbg')) window.__evapoly = { openSummary, chaos: () => { const ids = []; for (let i = 1; i < 40; i++) if (i % 10) ids.push(i); const perm = Array.from({ length: 40 }, (_, i) => i); ids.slice().reverse().forEach((v, k) => { perm[ids[k]] = v; }); setPerm(state, perm); viewPerm = state.perm.join(','); paintBoard(); } }; } catch { /* sin almacenamiento */ }
   // emoticonos: un botón con tres caras que salen un momento sobre tu ficha, y las ven todos
   let lastEmote = 0;
   async function sendEmote(n) {
@@ -530,7 +535,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     const t = s.gt[seat], a = s.ga[seat];
     if (!t) return '';
     const done = s.gd[seat] ? '¡Cumplido! ' : '';
-    if (t === 1) return `${done}Consigue ${data.squares[a].n}`;
+    if (t === 1) return `${done}Consigue ${state.base.squares[a].n}`;
     if (t === 2) return `${done}Cae en la cárcel ${a} veces (${Math.min(s.jc[seat], a)}/${a})`;
     return `${done}Consigue ${SHOP[a].n} (también puedes comprarlo en la tienda)`;
   }
@@ -558,7 +563,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── eventos aleatorios ─────
-  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush', 'shield'];
+  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush', 'shield', 'reverse', 'chaos', 'twice', 'gale', 'amnesty'];
   const EVT = [
     { n: 'Perro sarnoso', ico: 'dog', t: 'Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.' },
     { n: 'Nieve', ico: 'snow', t: 'Está nevando, así que te mueves más lento: durante 4 turnos de cada jugador solo se tira un dado en lugar de dos. Hay un muñeco de nieve en el mapa: si caes en su casilla, te quedas congelado y pierdes tu siguiente turno.' },
@@ -571,6 +576,11 @@ export function openEvapoly({ roomId, api, onClose }) {
     { n: 'Boom inmobiliario', ico: 'boom', t: 'Durante 5 turnos de cada jugador, construir casas y hoteles cuesta la mitad.' },
     { n: 'Hora punta', ico: 'rush', t: 'Durante 5 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.' },
     { n: 'Inmunidad', ico: 'shield', t: 'El jugador que va peor (menos dinero, propiedades y construcciones) tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos. Solo gasta si compra algo él.' },
+    { n: 'Dirección contraria', ico: 'reverse', t: 'Durante 3 turnos de cada jugador, en lugar de avanzar hacia delante se va hacia atrás. Mientras dure, pasar por la Salida no cobra.' },
+    { n: 'Caos', ico: 'chaos', t: 'Durante 3 turnos de cada jugador, todas las casillas menos las esquinas cambian de sitio al azar (con sus dueños y edificios). Los trenes no se pueden usar. Después, cada casilla vuelve a su sitio.' },
+    { n: 'Sorpresas y cajas', ico: 'twice', t: 'Durante 3 turnos de cada jugador, al caer en una casilla de Suerte o de Caja se cogen dos cartas en lugar de una.' },
+    { n: 'Vendaval', ico: 'gale', t: 'Durante 3 turnos de cada jugador, después de tirar los dados un vendaval te echa de 1 a 3 casillas hacia atrás. No puede llevarte más atrás de la primera calle.' },
+    { n: 'Amnistía Internacional', ico: 'amnesty', t: 'Salen todos de la cárcel y, durante un turno de cada jugador, nadie puede ir a la cárcel: ni por una casilla, ni por una carta, ni por tres dobles.' },
   ];
   let viewEvk = '', viewDog = -1, wxEl = null, evCardEl = null, dogEl = null;
   function wirePeek(el) {
@@ -600,12 +610,14 @@ export function openEvapoly({ roomId, api, onClose }) {
     } else if (dogEl) { dogEl.remove(); dogEl = null; }
   }
   /** Cartel de «Evento activado» (o de fin del evento) en el centro del tablero; se cierra al tocarlo. */
+  const END_ICO = { 0: 'dog', 3: 'quake', 4: 'crisis', 8: 'boom', 9: 'rush', 10: 'shield', 11: 'reverse', 12: 'chaos', 13: 'twice', 14: 'gale', 15: 'amnesty' };
+  const END_TXT = { 0: 'El perro ha desaparecido', 3: 'La tierra ha dejado de temblar', 4: 'La crisis económica ha terminado', 8: 'El boom inmobiliario ha terminado', 9: 'Ha pasado la hora punta', 10: 'El escudo se ha desvanecido', 11: 'Se acabó la dirección contraria', 12: 'El caos ha terminado', 13: 'Se acabaron las cartas dobles', 14: 'El viento se ha calmado', 15: 'La amnistía ha terminado' };
   function evtCardEl(kind, start, title) {
     const ev = EVT[kind];
     return h('div', { class: 'pevt' + (start ? '' : ' end') },
-      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : kind === 0 ? 'dog' : kind === 3 ? 'quake' : kind === 4 ? 'crisis' : kind === 8 ? 'boom' : kind === 9 ? 'rush' : kind === 10 ? 'shield' : 'sun'] }) }),
+      h('div', { class: 'pevt-art', html: svgOf({ p: icons[start ? ev.ico : END_ICO[kind] || 'sun'] }) }),
       h('b', { class: 'pevt-title' }, title || (start ? 'Evento activado' : 'Evento terminado')),
-      h('span', { class: 'pevt-name' }, start ? ev.n : kind === 0 ? 'El perro ha desaparecido' : kind === 3 ? 'La tierra ha dejado de temblar' : kind === 4 ? 'La crisis económica ha terminado' : kind === 8 ? 'El boom inmobiliario ha terminado' : kind === 9 ? 'Ha pasado la hora punta' : kind === 10 ? 'El escudo se ha desvanecido' : 'Ha salido el sol'),
+      h('span', { class: 'pevt-name' }, start ? ev.n : END_TXT[kind] || 'Ha salido el sol'),
       start ? h('p', {}, ev.t) : null);
   }
   /** Tocar la carta de evento del tablero muestra otra vez qué hace; si se mantiene pulsada, se ve mientras dure la pulsación. */
@@ -654,29 +666,48 @@ export function openEvapoly({ roomId, api, onClose }) {
   const GS = 0.97; // la cuadrícula ocupa el 97 % del tablero: queda un marco para que el color del dueño no toque el borde
   const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return ((n >> 16) * 0.3 + ((n >> 8) & 255) * 0.59 + (n & 255) * 0.11) / 255; };
 
+  /** Contenido de una casilla (nombre, precio, color) según la casilla que haya ahora en esa posición. */
+  function makePin(i) {
+    const c = cellOf(i), q2 = state.data.squares[i], side = sideOf(i);
+    const g = q2.g ? data.groups[q2.g] : null, special = q2.t === 'chance' || q2.t === 'chest';
+    // dentro de la casilla todo se dibuja como en las de abajo; las de los lados se giran (como en el tablero de verdad)
+    const cw = c.w * GS * 0.62, ch = c.h * GS * 0.62, sideways = side === 'left' || side === 'right';
+    const W = sideways ? ch : cw, H = sideways ? cw : ch;
+    const ownable = ['street', 'station', 'utility'].includes(q2.t);
+    const body = H - (g ? 1.5 : 0) - (ownable ? 2.4 : 0) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
+    // un nombre de una sola palabra va en una sola línea, con la letra justa para que no se parta ni tape el precio
+    const one = !q2.n.includes(' ') && side !== 'corner';
+    let fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
+    if (one && !special) fs = Math.min(fs, (W - 0.7) / (q2.n.length * 0.66));
+    const pin = h('div', { class: 'pin', style: sideways ? { width: W + 'em', height: H + 'em' } : {} },
+      g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'pr' }, eur(q2.p))) : null,
+      h('div', { class: 'pbody' },
+        q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
+        h('span', { class: 'nm' + (one && !special ? ' one' : ''), style: { fontSize: fs + 'em' } }, q2.n),
+        q2.p && !g ? h('span', { class: 'pr2' + (q2.t === 'station' ? ' zoomonly' : '') }, eur(q2.p)) : null),
+      ownable ? h('div', { class: 'pown' }, h('span', { class: 'bld' })) : null);
+    return { pin, g, q2, ownable };
+  }
+  let boardPerm = '', viewPerm = '';
+  /** Caos: pone en cada posición la casilla que le toca ahora, con una pequeña animación. */
+  function refreshSquares() {
+    boardPerm = state.perm.join(',');
+    for (let i = 0; i < 40; i++) {
+      const el = gridEl.children[i], { pin, g, q2, ownable } = makePin(i);
+      el.querySelector(':scope > .pin')?.replaceWith(pin);
+      for (const k of [...el.classList]) if (k.startsWith('t-')) el.classList.remove(k);
+      el.classList.add('t-' + q2.t); el.classList.toggle('ownable', ownable);
+      el.style.setProperty('--gc', g || '#7d8791');
+      el.animate([{ opacity: 0, transform: 'scale(.6) rotate(-8deg)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: Math.random() * 260, easing: 'ease-out' });
+    }
+  }
+
   function buildBoard() {
     boardEl = h('div', { class: 'pboard' });
     gridEl = h('div', { class: 'pgrid' });
-    dogEl = null; evCardEl = null; viewEvk = state.evk; viewDog = state.dog;
+    dogEl = null; evCardEl = null; viewEvk = state.evk; viewDog = state.dog; boardPerm = viewPerm = state.perm.join(',');
     for (let i = 0; i < 40; i++) {
-      const c = cellOf(i), q2 = data.squares[i], side = sideOf(i);
-      const g = q2.g ? data.groups[q2.g] : null, special = q2.t === 'chance' || q2.t === 'chest';
-      // dentro de la casilla todo se dibuja como en las de abajo; las de los lados se giran (como en el tablero de verdad)
-      const cw = c.w * GS * 0.62, ch = c.h * GS * 0.62, sideways = side === 'left' || side === 'right';
-      const W = sideways ? ch : cw, H = sideways ? cw : ch;
-      const ownable = ['street', 'station', 'utility'].includes(q2.t);
-      const body = H - (g ? 1.5 : 0) - (ownable ? 2.4 : 0) - (q2.i ? (side === 'corner' ? 4.4 : special ? 3.2 : 2.1) : 0) - (q2.p && !g && q2.t !== 'station' ? 1.1 : 0) - 0.3;
-      // un nombre de una sola palabra va en una sola línea, con la letra justa para que no se parta ni tape el precio
-      const one = !q2.n.includes(' ') && side !== 'corner';
-      let fs = side === 'corner' ? 1.35 : special ? 1 : fitName(q2.n, W - 0.7, Math.max(1, body));
-      if (one && !special) fs = Math.min(fs, (W - 0.7) / (q2.n.length * 0.66));
-      const pin = h('div', { class: 'pin', style: sideways ? { width: W + 'em', height: H + 'em' } : {} },
-        g ? h('div', { class: 'pband', style: { background: g, color: lum(g) > 0.62 ? '#1c1b22' : '#fff' } }, h('span', { class: 'pr' }, eur(q2.p))) : null,
-        h('div', { class: 'pbody' },
-          q2.i ? h('span', { class: 'ico', html: svgOf({ p: icons[q2.i] }) }) : null,
-          h('span', { class: 'nm' + (one && !special ? ' one' : ''), style: { fontSize: fs + 'em' } }, q2.n),
-          q2.p && !g ? h('span', { class: 'pr2' + (q2.t === 'station' ? ' zoomonly' : '') }, eur(q2.p)) : null),
-        ownable ? h('div', { class: 'pown' }, h('span', { class: 'bld' })) : null);
+      const c = cellOf(i), side = sideOf(i), { pin, g, q2, ownable } = makePin(i);
       const el = h('div', { class: `psq t-${q2.t} s-${side}` + (ownable ? ' ownable' : ''), 'data-i': i, style: `left:${c.l}%;top:${c.t}%;width:${c.w}%;height:${c.h}%;--gc:${g || '#7d8791'}` }, pin);
       // mantener pulsado: la casilla se agranda mientras se sigue pulsando; un toque corto abre su ficha
       let timer, held = false, zoom = null;
@@ -743,12 +774,13 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   function paintBoard() {
     if (!gridEl) return;
+    if (boardPerm !== viewPerm) refreshSquares();
     const subj = hiSeat >= 0 && !state.bk[hiSeat] ? hiSeat : focusOn ? mySeat() : -1;
     boardEl.classList.toggle('focus', subj >= 0);
     for (let i = 0; i < 40; i++) {
       const el = gridEl.children[i], o = state.own[i];
       // foco: mías con brillo, las de otros apagadas y, en los colores en los que tengo alguna, las que me faltan con contorno punteado
-      const q0 = data.squares[i], corner = ['go', 'jail', 'parking', 'gotojail'].includes(q0.t);
+      const q0 = state.data.squares[i], corner = ['go', 'jail', 'parking', 'gotojail'].includes(q0.t);
       const mineSq = subj >= 0 && ['street', 'station', 'utility'].includes(q0.t) && o === subj, dim = subj >= 0 && !corner && !mineSq;
       el.classList.toggle('fo-mine', mineSq); el.classList.toggle('fo-dim', dim);
       el.classList.toggle('owned', o >= 0); el.classList.toggle('mort', !!state.mort[i]);
@@ -881,7 +913,7 @@ export function openEvapoly({ roomId, api, onClose }) {
       const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? `Maricarmen${s.mc[i] > 1 ? ' ×' + s.mc[i] : ''}` : null, s.tri[i] ? `Dado triple${s.tri[i] > 1 ? ' ×' + s.tri[i] : ''}` : null, s.dj[i] ? 'Doble condena' : null, s.tk[i] ? 'Billete de tren' : null, s.ob[i] ? 'Obras' : null, s.sw[i] ? 'Intercambio' : null, s.pl[i] ? 'Desatascador' : null, s.evk === 'shield' && s.imm === i ? 'Escudo' : null, s.frz[i] ? 'Congelado' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
       const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : '') + (hiSeat === i ? ' sel' : ''), style: `--c:${COLORS[i]}`, onclick: () => { if (bk) return; hiSeat = hiSeat === i ? -1 : i; paintBoard(); renderGame(); } },
         tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info),
-          h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: data.squares[sqi].g ? data.groups[data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
+          h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: state.data.squares[sqi].g ? data.groups[state.data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
         h('span', { class: 'cash' }, eur(s.cash[i])));
       for (const d of deltas) if (d.seat === i && Date.now() - d.at < 1500) row.append(h('span', { class: 'pdelta ' + d.cls, style: `animation-delay:-${Date.now() - d.at}ms` }, d.text));
       return row;
@@ -912,7 +944,7 @@ export function openEvapoly({ roomId, api, onClose }) {
         out.push(h('div', { class: 'pbtns' }, btn('Pagar', 'd', { disabled: s.cash[my] < d.amt }), d.rent && s.mc[my] > 0 ? btn('Maricarmen', 'k') : null, btn('Quiebra', 'q', { primary: false })));
       } else status(`${seatName(d.seat)} debe ${eur(d.amt)}`);
     } else if (s.phase === 'auction') {
-      const au = s.auction, qd = data.squares[au.sq];
+      const au = s.auction, qd = state.data.squares[au.sq];
       status(`Subasta: ${qd.n} · ${au.bidder >= 0 ? `${eur(au.bid)} (${seatName(au.bidder)})` : 'sin pujas'}`);
       if (au.cur === my) out.push(h('div', { class: 'pbtns' }, [10, 50, 100].map((inc) => btn(`+${inc}`, 'i' + (au.bid + inc), { disabled: au.bid + inc > s.cash[my] })), btn('Retirarse', 'f', { primary: false })));
       else status(`Puja ${seatName(au.cur)}`);
@@ -934,10 +966,10 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (s.cfg.rails && !s.jail[my]) {
         const trips = [5, 15, 25, 35].filter((i) => act(s, my, 'x' + i, true) === null);
         const ST = [5, 15, 25, 35];
-        if (trips.length) out.push(h('div', { class: 'pbtns' }, trips.map((i) => btn(`Tren a ${data.squares[i].n.replace('Estación ', '')} · ${(ST.indexOf(i) - ST.indexOf(s.pos[my]) + 4) % 4 === 1 ? 50 : 150} €`, 'x' + i, { primary: false }))));
+        if (trips.length) out.push(h('div', { class: 'pbtns' }, trips.map((i) => btn(`Tren a ${state.data.squares[i].n.replace('Estación ', '')} · ${(ST.indexOf(i) - ST.indexOf(s.pos[my]) + 4) % 4 === 1 ? 50 : 150} €`, 'x' + i, { primary: false }))));
       }
     } else if (s.phase === 'buy') {
-      const qd = data.squares[s.buy];
+      const qd = state.data.squares[s.buy];
       status(`${qd.n} · ${eur(buyPrice(s, s.buy))}`);
       out.push(h('div', { class: 'pbtns' }, btn('Comprar', 'b', { cls: 'cta', disabled: s.cash[my] < buyPrice(s, s.buy) })));
       out.push(h('div', { class: 'pbtns' }, s.cfg.auction ? btn('Subastar', 'a', { primary: false }) : null, btn('No comprar', 'n', { primary: false })));
@@ -954,7 +986,7 @@ export function openEvapoly({ roomId, api, onClose }) {
 
   // ───── casilla (ficha de la propiedad) ─────
   function openSquare(i) {
-    const s = state, q2 = data.squares[i];
+    const s = state, q2 = state.data.squares[i];
     if (!q2) return;
     const my = mySeat(), o = s.own[i];
     const content = h('div', { class: 'pdeed' });
@@ -1011,14 +1043,14 @@ export function openEvapoly({ roomId, api, onClose }) {
       content.append(h('button', {
         class: 'game-row', disabled: act(s, my, op + p, true) !== null || running || busy,
         onclick: async () => { m.close(); await send(op + p); },
-      }, h('div', {}, seatName(p), h('small', {}, data.squares[s.pos[p]].n))));
+      }, h('div', {}, seatName(p), h('small', {}, state.data.squares[s.pos[p]].n))));
     }
     m = modal({ title, content, actions: [{ label: 'Cerrar' }] });
   }
 
   // ───── tratos ─────
   function tradeBox(t, incoming) {
-    const list = (arr) => arr.map((i) => data.squares[i].n).join(', ') || '—';
+    const list = (arr) => arr.map((i) => state.data.squares[i].n).join(', ') || '—';
     const box = h('div', { class: 'ptrade' },
       h('div', { class: 'pstatus' }, `${seatName(t.from)} propone`),
       h('div', { class: 'prow' }, h('span', {}, 'Te da'), h('b', {}, [t.gc ? eur(t.gc) : null, t.gp.length ? list(t.gp) : null, t.gj ? `${t.gj} carta` : null].filter(Boolean).join(' + ') || '—')),
@@ -1035,7 +1067,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     const give = new Set(), take = new Set();
     let gc = 0, rc = 0, gj = 0, rj = 0;
     const content = h('div', { class: 'ptrade-edit' });
-    const tradable = (i) => { const g = data.squares[i].g; return !g || groupOf(s, g).every((j) => s.lvl[j] === 0); };
+    const tradable = (i) => { const g = state.data.squares[i].g; return !g || groupOf(s, g).every((j) => s.lvl[j] === 0); };
     const col = (seat, set, getCash, setCash, getJ, setJ) => {
       const props = mine(s, seat);
       return h('div', { class: 'pcol', style: `--c:${COLORS[seat]}` },
@@ -1048,7 +1080,7 @@ export function openEvapoly({ roomId, api, onClose }) {
           h('button', { class: 'icon-btn', onclick: () => { setJ(Math.max(0, getJ() - 1)); draw(); } }, icon('minus', 18)), h('b', {}, getJ()),
           h('button', { class: 'icon-btn', onclick: () => { setJ(Math.min(s.jf[seat], getJ() + 1)); draw(); } }, icon('plus', 18))) : null,
         props.map((i) => h('button', { class: 'pprop' + (set.has(i) ? ' sel' : ''), disabled: !tradable(i), onclick: () => { set.has(i) ? set.delete(i) : set.add(i); draw(); } },
-          h('i', { style: { background: data.squares[i].g ? data.groups[data.squares[i].g] : '#888' } }), data.squares[i].n)));
+          h('i', { style: { background: state.data.squares[i].g ? data.groups[state.data.squares[i].g] : '#888' } }), state.data.squares[i].n)));
     };
     const draw = () => {
       const code = `T${to}|${gc}|${rc}|${[...give]}|${[...take]}|${gj}|${rj}`;

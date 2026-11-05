@@ -751,3 +751,9 @@ textarea.field { resize: vertical; }
 .psum th, .psum td { padding: 6px 5px; text-align: center; border-bottom: 1px solid rgba(127,127,127,.2); }
 .psum th { font-weight: 800; } .psum td:first-child { text-align: left; opacity: .8; }
 .psum td.top { font-weight: 900; color: #E6A700; }
+
+/* mapas de la sala */
+.pmaps { display: flex; gap: 8px; justify-content: center; margin: 4px 0 8px; }
+.pmap { flex: 1; max-width: 120px; padding: 8px 6px; border-radius: 12px; border: 2px solid var(--accent); background: var(--surface2); color: inherit; font: inherit; font-weight: 700; }
+.pmap.sel { background: var(--accent); color: var(--on-accent); }
+.pmap.locked { border-color: var(--outline); color: #8a929b; background: rgba(128, 128, 128, .15); opacity: .7; }

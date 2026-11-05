@@ -53,7 +53,10 @@ object Poly {
         return Data(squares, gs.keys().asSequence().associateWith { gs.getString(it) }, hs.keys().asSequence().associateWith { hs.getInt(it) }, cards("chance"), cards("chest"))
     }
 
-    class State(val data: Data, val n: Int, val cfg: Cfg, var r: Int) {
+    class State(var data: Data, val n: Int, val cfg: Cfg, var r: Int) {
+        val base: Data = data
+        var perm = IntArray(40) { it } // perm[i] = casilla original que está ahora en la posición i (el caos las mezcla)
+        var evu = 0 // eventos que ya han salido en la partida (un bit por evento): cada uno sale una sola vez
         val pos = IntArray(n)
         val cash = IntArray(n) { cfg.money }
         val jail = BooleanArray(n)
@@ -151,7 +154,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), sb.joinToString(",", "[", "]"), imm.toString(), jc.joinToString(",", "[", "]"), gt.joinToString(",", "[", "]"), ga.joinToString(",", "[", "]"), gd.joinToString(",", "[", "]"), gx.joinToString(",", "[", "]"), snowman.toString(), frz.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), sb.joinToString(",", "[", "]"), imm.toString(), jc.joinToString(",", "[", "]"), gt.joinToString(",", "[", "]"), ga.joinToString(",", "[", "]"), gd.joinToString(",", "[", "]"), gx.joinToString(",", "[", "]"), snowman.toString(), perm.joinToString(",", "[", "]"), evu.toString(), frz.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -233,7 +236,9 @@ object Poly {
         // casilla a casilla: al llegar a unas obras (valla) se da la vuelta; la Salida se cobra una vez si se cruza hacia delante
         val from = s.pos[seat]
         val segs = ArrayList<IntArray>()
-        var pos = from; var dir = 1; var seg = from; var pass = false
+        val rev = s.evk == "reverse" && s.evl[seat] > 0
+        val gale = s.evk == "gale" && s.evl[seat] > 0
+        var pos = from; var dir = if (rev) -1 else 1; var seg = from; var pass = false
         for (k in 1..total) {
             val prev = pos
             pos = (pos + dir + 40) % 40
@@ -244,12 +249,18 @@ object Poly {
                 if (k == total) pos = prev
                 continue
             }
-            if (dir == 1 && pos == 0) pass = true
+            if (!rev && dir == 1 && pos == 0) pass = true // con la dirección contraria no se cobra la Salida
         }
         if (pass) goPay(s, seat, pos == 0)
         s.pos[seat] = pos
         for (g in segs) say(s, "@$seat llega a las obras de ${s.sq(g[1]).n} y da la vuelta", "move", seat = seat, from = g[0], to = g[1], dir = g[2], sq = g[1])
         say(s, "@$seat avanza $total y cae en ${s.sq(pos).n}", "move", seat = seat, from = seg, to = pos, dir = dir)
+        if (gale && pos >= 2) {
+            // vendaval: te echa hacia atrás de 1 a 3 casillas, pero nunca más allá de la primera calle
+            val np = maxOf(1, pos - (rint(s, 3) + 1))
+            say(s, "Un vendaval echa a @$seat ${pos - np} casilla${if (pos - np > 1) "s" else ""} atrás hasta ${s.sq(np).n}", "move", seat = seat, from = pos, to = np, dir = -1)
+            pos = np; s.pos[seat] = np
+        }
         land(s, seat, pos, dice = total, utilRoll = false, double = false)
     }
 
@@ -270,7 +281,7 @@ object Poly {
         for (seat in 0 until s.n) {
             if (s.bk[seat] || s.gd[seat] != 0 || s.gt[seat] == 0) continue
             val t = s.gt[seat]; val a = s.ga[seat]
-            val done = if (t == 1) s.own[a] == seat else if (t == 2) s.jc[seat] >= a else ((s.gx[seat] shr a) and 1) == 1
+            val done = if (t == 1) s.own[s.perm.indexOf(a)] == seat else if (t == 2) s.jc[seat] >= a else ((s.gx[seat] shr a) and 1) == 1
             if (!done) continue
             s.gd[seat] = 1; s.cash[seat] += GOAL_PRIZE
             say(s, "@$seat cumple su objetivo secreto y cobra ${eur(GOAL_PRIZE)}", "gain", seat = seat, amt = GOAL_PRIZE)
@@ -278,6 +289,7 @@ object Poly {
     }
 
     private fun sendJail(s: State, seat: Int, why: String) {
+        if (s.evk == "amnesty" && s.evl[seat] > 0) { s.again = false; s.dbl = 0; say(s, "Amnistía: @$seat se libra de ir a la cárcel", "msg", seat = seat); return }
         val from = s.pos[seat]
         s.pos[seat] = JAIL; s.jail[seat] = true; s.jt[seat] = 0; s.jmax[seat] = 3
         s.again = false; s.dbl = 0; s.jc[seat]++
@@ -313,8 +325,12 @@ object Poly {
                 s.ev.add(Ev("card", "La Peza: Tito Pepe te ha soltado unos fajos de billetes", seat = seat, text = "Tito Pepe te ha soltado unos fajos de billetes", sq = 2, amt = 1))
                 say(s, "@$seat se lleva ${eur(v)} de los impuestos de ${q.n}", "gain", seat = seat, amt = v)
             }
-            "chance" -> draw(s, seat, 0)
-            "chest" -> draw(s, seat, 1)
+            "chance", "chest" -> {
+                val w = if (q.t == "chance") 0 else 1
+                draw(s, seat, w)
+                // sorpresas y cajas: durante el evento se cogen dos cartas (si la primera no te ha movido de sitio ni te ha mandado a la cárcel)
+                if (s.evk == "twice" && s.evl[seat] > 0 && !s.bk[seat] && !s.jail[seat] && s.pos[seat] == i && s.debts.isEmpty() && s.phase != "over") draw(s, seat, w)
+            }
             "gotojail" -> sendJail(s, seat, "")
             else -> {}
         }
@@ -333,9 +349,10 @@ object Poly {
         val mood = when (kind) { "cash" -> if (a!!.toInt() >= 0) 1 else -1; "eachget", "mc", "free", "item" -> 1; "jail", "repair", "eachpay" -> -1; else -> 0 }
         say(s, "${if (which == 0) "Suerte" else "Caja"}: ${cards[idx].x}", "card", seat = seat, text = cards[idx].x, sq = which, amt = mood)
         when (kind) {
-            "to" -> { moveTo(s, seat, a!!.toInt(), true); land(s, seat, a.toInt()) }
+            "to" -> { val t = s.perm.indexOf(a!!.toInt()); moveTo(s, seat, t, true); land(s, seat, t) }
             "near" -> {
-                val list = if (a == "u") listOf(12, 28) else listOf(5, 15, 25, 35)
+                val tp = if (a == "u") "utility" else "station"
+                val list = (0 until 40).filter { s.sq(it).t == tp }
                 val p = s.pos[seat]
                 val t = list.firstOrNull { it > p } ?: list[0]
                 moveTo(s, seat, t, true)
@@ -418,7 +435,9 @@ object Poly {
     }
 
     // ───── eventos aleatorios (regla opcional) ─────
-    private val EV_NAMES = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush", "shield")
+    private val EV_NAMES = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush", "shield", "reverse", "chaos", "twice", "gale", "amnesty")
+    private val EV_DUR = listOf(5, 4, 4, 5, 5, 0, 0, 0, 5, 5, 3, 3, 3, 3, 3, 1)
+    private val EV_W = listOf(1, 7, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
     private const val SHIELD_TURNS = 3
     private const val RUSH_STEPS = 2
     private const val BALANCE_PRIZE = 500
@@ -429,8 +448,8 @@ object Poly {
     private const val EV_TURNS = 5
     private const val DOG_BITE = 150
     private const val DOG_STEP = 4
-    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella", "Evento de nieve: está nevando, solo se tira un dado y un muñeco de nieve congela un turno a quien caiga en su casilla", "Evento de lluvia: el suelo está mojado y al tirar hay un 20 % de resbalar y perder 50 €", "Evento del terremoto: al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador (un hotel se queda en 3 casas)", "Evento de crisis económica: construir casas y hoteles cuesta el doble", "Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados", "Evento de Hacienda: cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote)", "Evento del ladrón: el jugador con más dinero pierde 100 € y se los lleva el que menos tiene", "Evento de boom inmobiliario: construir casas y hoteles cuesta la mitad", "Evento de hora punta: los dados suman 2 casillas más y las estaciones cobran el doble de alquiler", "Evento de inmunidad: el jugador que va peor tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos")
-    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia", "La tierra ha dejado de temblar", "La crisis económica ha terminado", "", "", "", "El boom inmobiliario ha terminado", "Ha pasado la hora punta", "El escudo se ha desvanecido")
+    private val EV_TEXT = listOf("Evento del perro sarnoso: un perro avanza 4 casillas por turno y muerde a quien esté en su casilla o caiga en ella", "Evento de nieve: está nevando, solo se tira un dado y un muñeco de nieve congela un turno a quien caiga en su casilla", "Evento de lluvia: el suelo está mojado y al tirar hay un 20 % de resbalar y perder 50 €", "Evento del terremoto: al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador (un hotel se queda en 3 casas)", "Evento de crisis económica: construir casas y hoteles cuesta el doble", "Evento de equilibrio: el jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €; si hay empate, cobran todos los empatados", "Evento de Hacienda: cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote)", "Evento del ladrón: el jugador con más dinero pierde 100 € y se los lleva el que menos tiene", "Evento de boom inmobiliario: construir casas y hoteles cuesta la mitad", "Evento de hora punta: los dados suman 2 casillas más y las estaciones cobran el doble de alquiler", "Evento de inmunidad: el jugador que va peor tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos", "Evento de dirección contraria: durante 3 turnos de cada jugador se avanza hacia atrás y no se cobra la Salida", "Evento de caos: durante 3 turnos de cada jugador todas las casillas, menos las esquinas, cambian de sitio al azar y los trenes no funcionan", "Evento de sorpresas y cajas: durante 3 turnos de cada jugador, al caer en Suerte o Caja se cogen dos cartas", "Evento de vendaval: durante 3 turnos de cada jugador, al tirar un vendaval te echa de 1 a 3 casillas hacia atrás, sin pasar de la primera calle", "Amnistía Internacional: salen todos de la cárcel y durante un turno de cada jugador nadie puede ir a la cárcel")
+    private val EV_END = listOf("El perro sarnoso ha desaparecido", "Ha salido el sol: se acabó la nieve", "Ha salido el sol: se acabó la lluvia", "La tierra ha dejado de temblar", "La crisis económica ha terminado", "", "", "", "El boom inmobiliario ha terminado", "Ha pasado la hora punta", "El escudo se ha desvanecido", "Se acabó la dirección contraria", "El caos ha terminado: cada casilla vuelve a su sitio", "Se acabaron las cartas dobles", "El viento se ha calmado", "La amnistía ha terminado")
 
     // el perro solo muerde a quien está en su casilla: cuando él llega a ella o cuando alguien cae en ella
     private fun dogBite(s: State, i: Int) {
@@ -504,18 +523,40 @@ object Poly {
         }
     }
 
+    /** Recoloca las casillas (menos las esquinas): `perm[i]` es la casilla original que queda en la posición i. Dueños, casas, hipotecas y obras viajan con la casilla. */
+    private fun setPerm(s: State, perm: IntArray) {
+        val inv = IntArray(40)
+        s.perm.forEachIndexed { p, o -> inv[o] = p }
+        val own = s.own.copyOf(); val lvl = s.lvl.copyOf(); val mort = s.mort.copyOf(); val fence = s.fence.copyOf()
+        for (i in 0 until 40) { s.own[i] = own[inv[perm[i]]]; s.lvl[i] = lvl[inv[perm[i]]]; s.mort[i] = mort[inv[perm[i]]]; s.fence[i] = fence[inv[perm[i]]] }
+        s.perm = perm
+        s.data = Data(perm.map { s.base.squares[it] }, s.base.groups, s.base.house, s.base.chance, s.base.chest)
+        s.trade = null
+    }
+
+    /** Elige el evento: snow y rain pesan 7 y el resto 1 (25 % + 25 % + 50 % repartido); cada evento sale una sola vez por partida. */
+    private fun pickEvent(s: State): Int {
+        val w = EV_W.mapIndexed { k, v -> if (((s.evu shr k) and 1) == 1 || (k == 3 && constructions(s) < 3) || (k == 12 && (s.buy >= 0 || s.auction != null || s.debts.isNotEmpty()))) 0 else v }
+        val tot = w.sum()
+        if (tot == 0) return -1
+        var r = rint(s, tot)
+        for (k in w.indices) { r -= w[k]; if (r < 0) return k }
+        return -1
+    }
+
     /** Una vez por turno, tras tirar: un 15 % de que se active un evento (si no hay otro activo ni son los dos primeros turnos del jugador). */
     private fun maybeEvent(s: State, seat: Int) {
         if (!s.cfg.events || s.evChk || s.bk[seat] || s.phase == "over") return
         s.evChk = true
         if (s.evk != "" || s.tc[seat] < 2 || rint(s, 100) >= EVENT_PCT) return
-        var kind = rint(s, 11)
-        while (kind == 3 && constructions(s) < 3) kind = rint(s, 11) // el terremoto solo sale si hay al menos 3 construcciones
+        val kind = pickEvent(s)
+        if (kind < 0) return
+        s.evu = s.evu or (1 shl kind) // cada evento sale una sola vez por partida
         if (kind == 5) { balance(s, seat); return }
         if (kind == 6) { hacienda(s, seat); return }
         if (kind == 7) { thief(s, seat); return }
         s.evk = EV_NAMES[kind]; s.evf = true
-        for (i in 0 until s.n) s.evl[i] = if (s.bk[i]) 0 else if (kind == 1 || kind == 2) 4 else EV_TURNS // nieve y lluvia duran 4 turnos
+        for (i in 0 until s.n) s.evl[i] = if (s.bk[i]) 0 else EV_DUR[kind]
         if (kind == 1) {
             // el muñeco de nieve aparece en una casilla en la que no haya nadie
             val cand = (0 until 40).filter { c -> (0 until s.n).none { j -> !s.bk[j] && s.pos[j] == c } }
@@ -529,6 +570,19 @@ object Poly {
         }
         say(s, EV_TEXT[kind], "evt", seat = if (kind == 10) s.imm else seat, amt = 1, sq = kind)
         if (kind == 0) { s.dog = 0; dogBites(s, listOf(0)) }
+        if (kind == 12) {
+            // caos: las casillas que no son esquina se mezclan
+            val ids = (1 until 40).filter { it % 10 != 0 }
+            val mix = shuffled(s, ids.size).map { ids[it] }
+            val perm = IntArray(40) { it }
+            ids.forEachIndexed { k, pos -> perm[pos] = mix[k] }
+            setPerm(s, perm)
+            say(s, "Las casillas se mezclan", "chaos", seat = seat)
+        }
+        if (kind == 15) {
+            // amnistía: los presos salen y durante un turno nadie va a la cárcel
+            for (i in s.alive()) if (s.jail[i]) { s.jail[i] = false; s.jt[i] = 0; say(s, "Amnistía: @$i sale de la cárcel", "free", seat = i) }
+        }
     }
 
     private fun nextTurn(s: State) {
@@ -549,6 +603,7 @@ object Poly {
             if ((0 until s.n).all { s.bk[it] || s.evl[it] <= 0 }) {
                 val kind = EV_NAMES.indexOf(s.evk)
                 say(s, EV_END[kind], "evt", amt = 0, sq = kind)
+                if (s.evk == "chaos") setPerm(s, IntArray(40) { it })
                 s.evk = ""; s.dog = -1; s.imm = -1; s.snowman = -1; s.evl = IntArray(s.n)
             }
         }
@@ -872,6 +927,7 @@ object Poly {
                 // billete de tren (tienda): desde una estación (tuya o no) viajas a la siguiente, en vez de tirar
                 if (!mine || s.phase != "roll" || s.dbl > 0 || s.again || s.tk[seat] < 1) return "Ahora no puedes usar el billete"
                 if (s.jail[seat]) return "Estás en la cárcel"
+                if (s.evk == "chaos") return "Los trenes no funcionan durante el caos"
                 val st = listOf(5, 15, 25, 35)
                 val from = s.pos[seat]
                 val k = st.indexOf(from)
@@ -938,6 +994,7 @@ object Poly {
                 // movimiento por raíles: en vez de tirar, pagas y viajas a otra estación tuya (la siguiente 50 €, la de enfrente 150 €); solo hacia delante
                 if (!s.cfg.rails || !mine || s.phase != "roll" || s.dbl > 0 || s.again) return "Ahora no puedes viajar en tren"
                 if (s.jail[seat]) return "Estás en la cárcel"
+                if (s.evk == "chaos") return "Los trenes no funcionan durante el caos"
                 if (s.railCd[seat] > 0) return "Tras viajar en tren, el turno siguiente toca tirar los dados"
                 val st = listOf(5, 15, 25, 35)
                 val from = s.pos[seat]
