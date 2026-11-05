@@ -246,20 +246,22 @@ object Poly {
         val gale = s.evk == "gale" && s.evl[seat] > 0
         var pos = from; var dir = if (rev) -1 else 1; var seg = from; var pass = false
         for (k in 1..total) {
-            val prev = pos
-            pos = (pos + dir + 40) % 40
-            if (s.fence[pos] >= 0) {
-                s.fence[pos] = -1
-                segs.add(intArrayOf(seg, pos, dir))
+            var nxt = (pos + dir + 40) % 40
+            if (s.fence[nxt] >= 0) {
+                // las obras son una pared: no se entra en su casilla; se levantan y se sigue hacia atrás desde donde se está
+                val wall = nxt
+                s.fence[wall] = -1
+                segs.add(intArrayOf(seg, pos, dir, wall))
                 seg = pos; dir = -dir
-                if (k == total) pos = prev
-                continue
+                nxt = (pos + dir + 40) % 40
+                if (s.fence[nxt] >= 0) continue // también hay obras detrás: este paso se queda quieto
             }
+            pos = nxt
             if (!rev && dir == 1 && pos == 0) pass = true // con la dirección contraria no se cobra la Salida
         }
         if (pass) goPay(s, seat, pos == 0)
         s.pos[seat] = pos
-        for (g in segs) say(s, "@$seat llega a las obras de ${s.sq(g[1]).n} y da la vuelta", "move", seat = seat, from = g[0], to = g[1], dir = g[2], sq = g[1])
+        for (g in segs) say(s, "@$seat choca con las obras de ${s.sq(g[3]).n} y da la vuelta", "move", seat = seat, from = g[0], to = g[1], dir = g[2], sq = g[3])
         say(s, "@$seat avanza $total y cae en ${s.sq(pos).n}", "move", seat = seat, from = seg, to = pos, dir = dir)
         if (gale && pos >= 2) {
             // vendaval: te echa hacia atrás de 1 a 3 casillas, pero nunca más allá de la primera calle

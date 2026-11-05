@@ -162,21 +162,22 @@ function moveDice(s, seat, total) {
   const rev = s.evk === 'reverse' && s.evl[seat] > 0, gale = s.evk === 'gale' && s.evl[seat] > 0;
   let pos = from, dir = rev ? -1 : 1, seg = from, pass = false;
   for (let k = 1; k <= total; k++) {
-    const prev = pos;
-    pos = (pos + dir + 40) % 40;
-    if (s.fence[pos] >= 0) {
-      // las obras se levantan al chocar; con pasos por delante se rebota, si era el último paso uno se queda en la casilla anterior
-      s.fence[pos] = -1;
-      segs.push({ from: seg, to: pos, dir });
+    let nxt = (pos + dir + 40) % 40;
+    if (s.fence[nxt] >= 0) {
+      // las obras son una pared: no se entra en su casilla; se levantan y se sigue hacia atrás desde donde se está
+      const wall = nxt;
+      s.fence[wall] = -1;
+      segs.push({ from: seg, to: pos, dir, sq: wall });
       seg = pos; dir = -dir;
-      if (k === total) pos = prev;
-      continue;
+      nxt = (pos + dir + 40) % 40;
+      if (s.fence[nxt] >= 0) continue; // también hay obras detrás: este paso se queda quieto
     }
+    pos = nxt;
     if (!rev && dir === 1 && pos === 0) pass = true; // con la dirección contraria no se cobra la Salida
   }
   if (pass) goPay(s, seat, pos === 0);
   s.pos[seat] = pos;
-  for (const g of segs) say(s, `@${seat} llega a las obras de ${sq(s, g.to).n} y da la vuelta`, 'move', { seat, from: g.from, to: g.to, dir: g.dir, sq: g.to });
+  for (const g of segs) say(s, `@${seat} choca con las obras de ${sq(s, g.sq).n} y da la vuelta`, 'move', { seat, from: g.from, to: g.to, dir: g.dir, sq: g.sq });
   say(s, `@${seat} avanza ${total} y cae en ${sq(s, pos).n}`, 'move', { seat, from: seg, to: pos, dir });
   if (gale && pos >= 2) {
     // vendaval: te echa hacia atrás de 1 a 3 casillas, pero nunca más allá de la primera calle
