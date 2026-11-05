@@ -2,7 +2,7 @@
 // evapoly-engine.js en cada dispositivo con la misma semilla, así todos ven lo mismo. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggle, darkBars } from './ui.js';
-import { setPerm, initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase, heldItems, itemHeld, MAX_ITEMS } from './evapoly-engine.js';
+import { setPerm, initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase, heldItems, itemHeld, MAX_ITEMS, LEGENDARY, NOT_FOR_SALE } from './evapoly-engine.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
 const MONEY_MIN = 500, MONEY_MAX = 2500, MONEY_STEP = 50;
@@ -569,17 +569,17 @@ export function openEvapoly({ roomId, api, onClose }) {
     { n: 'Nieve', ico: 'snow', t: 'Está nevando, así que te mueves más lento: durante 4 turnos de cada jugador solo se tira un dado en lugar de dos. Hay un muñeco de nieve en el mapa: si caes en su casilla, te quedas congelado y pierdes tu siguiente turno.' },
     { n: 'Lluvia', ico: 'rain', t: 'Está lloviendo, el suelo está mojado y te resbalas: durante 4 turnos de cada jugador, cada vez que tires hay un 20 % de resbalar y perder 50 €.' },
     { n: 'Terremoto', ico: 'quake', t: 'Durante 5 turnos de cada jugador, al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas. Quien no tenga edificios se libra.' },
-    { n: 'Crisis económica', ico: 'crisis', t: 'Durante 5 turnos de cada jugador, construir casas y hoteles cuesta el doble.' },
+    { n: 'Crisis económica', ico: 'crisis', t: 'Durante 2 turnos de cada jugador, construir casas y hoteles cuesta el doble.' },
     { n: 'Equilibrio', ico: 'balance', t: 'El jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €. Si hay empate, cobran todos los empatados.' },
     { n: 'Hacienda', ico: 'hacienda', t: 'Cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).' },
     { n: 'Ladrón', ico: 'thief', t: 'El jugador con más dinero pierde 100 € y se los lleva el jugador que menos tiene.' },
-    { n: 'Boom inmobiliario', ico: 'boom', t: 'Durante 5 turnos de cada jugador, construir casas y hoteles cuesta la mitad.' },
-    { n: 'Hora punta', ico: 'rush', t: 'Durante 5 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.' },
-    { n: 'Inmunidad', ico: 'shield', t: 'El jugador que va peor (menos dinero, propiedades y construcciones) tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos. Solo gasta si compra algo él.' },
-    { n: 'Dirección contraria', ico: 'reverse', t: 'Durante 3 turnos de cada jugador, en lugar de avanzar hacia delante se va hacia atrás. Mientras dure, pasar por la Salida no cobra.' },
-    { n: 'Caos', ico: 'chaos', t: 'Durante 3 turnos de cada jugador, todas las casillas menos las esquinas cambian de sitio al azar (con sus dueños y edificios). Los trenes no se pueden usar. Después, cada casilla vuelve a su sitio.' },
-    { n: 'Sorpresas y cajas', ico: 'twice', t: 'Durante 3 turnos de cada jugador, al caer en una casilla de Suerte o de Caja se cogen dos cartas en lugar de una.' },
-    { n: 'Vendaval', ico: 'gale', t: 'Durante 3 turnos de cada jugador, después de tirar los dados un vendaval te echa de 1 a 3 casillas hacia atrás. No puede llevarte más atrás de la primera calle.' },
+    { n: 'Boom inmobiliario', ico: 'boom', t: 'Durante 2 turnos de cada jugador, construir casas y hoteles cuesta la mitad.' },
+    { n: 'Hora punta', ico: 'rush', t: 'Durante 2 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.' },
+    { n: 'Inmunidad', ico: 'shield', t: 'El jugador que va peor (menos dinero, propiedades y construcciones) tiene un escudo durante 2 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos. Solo gasta si compra algo él.' },
+    { n: 'Dirección contraria', ico: 'reverse', t: 'Durante 2 turnos de cada jugador, en lugar de avanzar hacia delante se va hacia atrás. Mientras dure, pasar por la Salida no cobra.' },
+    { n: 'Caos', ico: 'chaos', t: 'Durante 2 turnos de cada jugador, todas las casillas menos las esquinas cambian de sitio al azar (con sus dueños y edificios). Los trenes no se pueden usar. Después, cada casilla vuelve a su sitio.' },
+    { n: 'Sorpresas y cajas', ico: 'twice', t: 'Durante 2 turnos de cada jugador, al caer en una casilla de Suerte o de Caja se cogen dos cartas en lugar de una.' },
+    { n: 'Vendaval', ico: 'gale', t: 'Durante 2 turnos de cada jugador, después de tirar los dados un vendaval te echa de 1 a 3 casillas hacia atrás. No puede llevarte más atrás de la primera calle.' },
     { n: 'Amnistía Internacional', ico: 'amnesty', t: 'Salen todos de la cárcel y, durante un turno de cada jugador, nadie puede ir a la cárcel: ni por una casilla, ni por una carta, ni por tres dobles.' },
   ];
   let viewEvk = '', viewDog = -1, wxEl = null, evCardEl = null, dogEl = null;
@@ -910,7 +910,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     fill(sideEl, room.players.map((u, i) => {
       const jail = s.jail[i], bk = s.bk[i];
       const turn = s.phase === 'order' ? s.ordCand[i] && !s.ordRolls[i] : s.turn === i && s.phase !== 'over';
-      const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? `Maricarmen${s.mc[i] > 1 ? ' ×' + s.mc[i] : ''}` : null, s.tri[i] ? `Dado triple${s.tri[i] > 1 ? ' ×' + s.tri[i] : ''}` : null, s.dj[i] ? 'Doble condena' : null, s.tk[i] ? 'Billete de tren' : null, s.ob[i] ? 'Obras' : null, s.sw[i] ? 'Intercambio' : null, s.pl[i] ? 'Desatascador' : null, s.evk === 'shield' && s.imm === i ? 'Escudo' : null, s.frz[i] ? 'Congelado' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
+      const info = bk ? 'Quiebra' : s.phase === 'order' ? (s.ordRolls[i] ? `Sacó ${s.ordRolls[i]}` : '') : [jail ? 'Cárcel' : null, s.jf[i] ? `Carta ×${s.jf[i]}` : null, s.mc[i] ? `Maricarmen${s.mc[i] > 1 ? ' ×' + s.mc[i] : ''}` : null, s.tri[i] ? `Dado triple${s.tri[i] > 1 ? ' ×' + s.tri[i] : ''}` : null, s.dj[i] ? 'Doble condena' : null, s.tk[i] ? 'Billete de tren' : null, s.ob[i] ? 'Obras' : null, s.sw[i] ? 'Intercambio' : null, s.pl[i] ? 'Desatascador' : null, s.rt[i] ? 'Inténtalo otra vez' : null, s.evk === 'shield' && s.imm === i ? 'Escudo' : null, s.frz[i] ? 'Congelado' : null, `${mine(s, i).length} calles`].filter(Boolean).join(' · ');
       const row = h('div', { class: 'pp' + (turn ? ' turn' : '') + (bk ? ' bk' : '') + (hiSeat === i ? ' sel' : ''), style: `--c:${COLORS[i]}`, onclick: () => { if (bk) return; hiSeat = hiSeat === i ? -1 : i; paintBoard(); renderGame(); } },
         tokEl(i, 'mini'), h('div', { class: 'who' }, h('b', {}, nameOf(u) + (i === my ? ' (tú)' : '')), h('small', {}, info),
           h('span', { class: 'pprops' }, mine(s, i).map((sqi) => h('u', { style: { background: state.data.squares[sqi].g ? data.groups[state.data.squares[sqi].g] : '#8a929b' }, class: s.mort[sqi] ? 'mort' : '' })))),
@@ -949,7 +949,13 @@ export function openEvapoly({ roomId, api, onClose }) {
       if (au.cur === my) out.push(h('div', { class: 'pbtns' }, [10, 50, 100].map((inc) => btn(`+${inc}`, 'i' + (au.bid + inc), { disabled: au.bid + inc > s.cash[my] })), btn('Retirarse', 'f', { primary: false })));
       else status(`Puja ${seatName(au.cur)}`);
     } else if (cur !== my) status(`Turno de ${seatName(cur)}`);
-    else if (s.phase === 'roll') {
+    else if (s.phase === 'retry' && s.pend) {
+      // «Inténtalo otra vez»: se ve dónde caería la tirada y se decide si quedarse con ella
+      const p = s.pend, rev = s.evk === 'reverse' && s.evl[my] > 0, tot = p[0] + p[1] + p[2];
+      const dest = (((s.pos[my] + (rev ? -tot : tot)) % 40) + 40) % 40;
+      status(`Has sacado ${p[1] ? `${p[0]} y ${p[1]}` : p[0]}: caerías en ${state.data.squares[dest].n}`);
+      out.push(h('div', { class: 'pbtns' }, btn('Moverme', 'G', { cls: 'cta' }), btn('Volver a tirar', 'J', { primary: false })));
+    } else if (s.phase === 'roll') {
       const row = [];
       if (s.jail[my]) { row.push(btn(`Pagar ${eur(JAIL_FINE)}`, 'p', { primary: false, disabled: s.cash[my] < JAIL_FINE })); if (s.jf[my] > 0) row.push(btn('Usar carta', 'c', { primary: false })); }
       row.push(btn('Tirar dados', 'r', { cls: 'cta' }));
@@ -1017,16 +1023,16 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── tienda de La Peza ─────
-  const SHOP_NAMES = { 1: 'Maricarmen', 2: 'Dado triple', 3: 'Doble condena', 4: 'Billete de tren', 5: 'Obras', 6: 'Intercambio', 7: 'Desatascador' };
-  const haveOf = (s, k, my) => [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl][k][my] + ((s.sb[my] >> k) & 1);
+  const SHOP_NAMES = { 1: 'Maricarmen', 2: 'Dado triple', 3: 'Doble condena', 4: 'Billete de tren', 5: 'Obras', 6: 'Intercambio', 7: 'Desatascador', 8: 'Inténtalo otra vez' };
+  const haveOf = (s, k, my) => [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl, s.rt][k][my] + ((s.sb[my] >> k) & 1);
   function openShop() {
     const s = state, my = mySeat();
     const content = h('div', { class: 'stack' });
     let m;
-    const draw = () => fill(content, Object.entries(SHOP).map(([k, it]) => h('button', {
-      class: 'game-row', disabled: s.cash[my] < it.p || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || (Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS) || running || busy,
+    const draw = () => fill(content, Object.entries(SHOP).filter(([k]) => !NOT_FOR_SALE.has(Number(k))).map(([k, it]) => h('button', {
+      class: 'game-row ' + (LEGENDARY.has(Number(k)) ? 'q-leg' : 'q-rare'), disabled: s.cash[my] < it.p || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || (Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS) || running || busy,
       onclick: async () => { m.close(); await send('o' + k); },
-    }, h('div', {}, SHOP_NAMES[k], h('small', {}, haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS ? 'Ya llevas dos objetos' : eur(it.p))))));
+    }, h('div', {}, SHOP_NAMES[k], h('small', {}, (LEGENDARY.has(Number(k)) ? 'Legendario · ' : 'Raro · ') + (haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS ? 'Ya llevas dos objetos' : eur(it.p)))))));
     draw();
     m = modal({ title: 'Tienda', content, actions: [{ label: 'Cerrar' }] });
   }

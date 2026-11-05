@@ -344,17 +344,17 @@ private val EV_DESC = listOf(
     "Está nevando, así que te mueves más lento: durante 4 turnos de cada jugador solo se tira un dado en lugar de dos. Hay un muñeco de nieve en el mapa: si caes en su casilla, te quedas congelado y pierdes tu siguiente turno.",
     "Está lloviendo, el suelo está mojado y te resbalas: durante 4 turnos de cada jugador, cada vez que tires hay un 20 % de resbalar y perder 50 €.",
     "Durante 5 turnos de cada jugador, al acabar cada turno hay un 20 % de que tiemble la tierra y se derrumbe un edificio al azar de cada jugador: una casa pierde un piso y un hotel se queda en 3 casas. Quien no tenga edificios se libra.",
-    "Durante 5 turnos de cada jugador, construir casas y hoteles cuesta el doble.",
+    "Durante 2 turnos de cada jugador, construir casas y hoteles cuesta el doble.",
     "El jugador con menos patrimonio (dinero, propiedades y construcciones) recibe 500 €. Si hay empate, cobran todos los empatados.",
     "Cada jugador paga el 10 % de su dinero, que va al bote de La Peza (o a la banca si no hay bote).",
     "El jugador con más dinero pierde 100 € y se los lleva el jugador que menos tiene.",
-    "Durante 5 turnos de cada jugador, construir casas y hoteles cuesta la mitad.",
-    "Durante 5 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.",
-    "El jugador que va peor (menos dinero, propiedades y construcciones) tiene un escudo durante 3 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos. Solo gasta si compra algo él.",
-    "Durante 3 turnos de cada jugador, en lugar de avanzar hacia delante se va hacia atrás. Mientras dure, pasar por la Salida no cobra.",
-    "Durante 3 turnos de cada jugador, todas las casillas menos las esquinas cambian de sitio al azar (con sus dueños y edificios). Los trenes no se pueden usar. Después, cada casilla vuelve a su sitio.",
-    "Durante 3 turnos de cada jugador, al caer en una casilla de Suerte o de Caja se cogen dos cartas en lugar de una.",
-    "Durante 3 turnos de cada jugador, después de tirar los dados un vendaval te echa de 1 a 3 casillas hacia atrás. No puede llevarte más atrás de la primera calle.",
+    "Durante 2 turnos de cada jugador, construir casas y hoteles cuesta la mitad.",
+    "Durante 2 turnos de cada jugador, los dados suman 2 casillas más al avanzar y las estaciones cobran el doble de alquiler.",
+    "El jugador que va peor (menos dinero, propiedades y construcciones) tiene un escudo durante 2 turnos y no pierde dinero por alquileres, impuestos, cartas ni eventos. Solo gasta si compra algo él.",
+    "Durante 2 turnos de cada jugador, en lugar de avanzar hacia delante se va hacia atrás. Mientras dure, pasar por la Salida no cobra.",
+    "Durante 2 turnos de cada jugador, todas las casillas menos las esquinas cambian de sitio al azar (con sus dueños y edificios). Los trenes no se pueden usar. Después, cada casilla vuelve a su sitio.",
+    "Durante 2 turnos de cada jugador, al caer en una casilla de Suerte o de Caja se cogen dos cartas en lugar de una.",
+    "Durante 2 turnos de cada jugador, después de tirar los dados un vendaval te echa de 1 a 3 casillas hacia atrás. No puede llevarte más atrás de la primera calle.",
     "Salen todos de la cárcel y, durante un turno de cada jugador, nadie puede ir a la cárcel: ni por una casilla, ni por una carta, ni por tres dobles.",
 )
 
@@ -1682,7 +1682,7 @@ private fun GamePanel(
                         } else {
                             val extra = if (s.bk[i]) "Quiebra"
                             else if (s.phase == "order") (if (s.ordRolls[i] > 0) "Sacó ${s.ordRolls[i]}" else "")
-                            else listOfNotNull(if (s.jail[i]) "Cárcel" else null, if (s.jf[i] > 0) "Carta ×${s.jf[i]}" else null, if (s.mc[i] > 0) "Maricarmen" + (if (s.mc[i] > 1) " ×${s.mc[i]}" else "") else null, if (s.tri[i] > 0) "Dado triple" + (if (s.tri[i] > 1) " ×${s.tri[i]}" else "") else null, if (s.dj[i] > 0) "Doble condena" else null, if (s.tk[i] > 0) "Billete de tren" else null, if (s.evk == "shield" && s.imm == i) "Escudo" else null, if (s.frz[i] > 0) "Congelado" else null, if (s.ob[i] > 0) "Obras" else null, if (s.sw[i] > 0) "Intercambio" else null, if (s.pl[i] > 0) "Desatascador" else null, "$owned calles").joinToString(" · ")
+                            else listOfNotNull(if (s.jail[i]) "Cárcel" else null, if (s.jf[i] > 0) "Carta ×${s.jf[i]}" else null, if (s.mc[i] > 0) "Maricarmen" + (if (s.mc[i] > 1) " ×${s.mc[i]}" else "") else null, if (s.tri[i] > 0) "Dado triple" + (if (s.tri[i] > 1) " ×${s.tri[i]}" else "") else null, if (s.dj[i] > 0) "Doble condena" else null, if (s.tk[i] > 0) "Billete de tren" else null, if (s.evk == "shield" && s.imm == i) "Escudo" else null, if (s.frz[i] > 0) "Congelado" else null, if (s.ob[i] > 0) "Obras" else null, if (s.sw[i] > 0) "Intercambio" else null, if (s.pl[i] > 0) "Desatascador" else null, if (s.rt[i] > 0) "Inténtalo otra vez" else null, "$owned calles").joinToString(" · ")
                             Text(extra, color = OnSurfaceDim, fontSize = 12.sp)
                         }
                     }
@@ -1741,7 +1741,15 @@ private fun GamePanel(
             if (au.cur == my) Btns { for (inc in listOf(10, 50, 100)) B("+$inc", "i${au.bid + inc}", true, au.bid + inc <= s.cash[my]); B("Retirarse", "f", false) }
             else Status("Puja ${seatName(au.cur)}")
         } else if (cur != my) Status("Turno de ${seatName(cur)}")
-        else if (s.phase == "roll") {
+        else if (s.phase == "retry" && s.pend != null) {
+            // «Inténtalo otra vez»: se ve dónde caería la tirada y se decide si quedarse con ella
+            val p = s.pend!!
+            val rev = s.evk == "reverse" && s.evl[my] > 0
+            val tot = p[0] + p[1] + p[2]
+            val dest = (((s.pos[my] + (if (rev) -tot else tot)) % 40) + 40) % 40
+            Status("Has sacado " + (if (p[1] != 0) "${p[0]} y ${p[1]}" else "${p[0]}") + ": caerías en ${s.sq(dest).n}")
+            Btns { B("Moverme", "G", cta = true); B("Volver a tirar", "J", false) }
+        } else if (s.phase == "roll") {
             Btns {
                 if (s.jail[my]) { B("Pagar ${Poly.eur(Poly.JAIL_FINE)}", "p", false, s.cash[my] >= Poly.JAIL_FINE); if (s.jf[my] > 0) B("Usar carta", "c", false) }
                 B("Tirar dados", "r", cta = true)
@@ -1783,10 +1791,11 @@ private fun GamePanel(
                 onDismissRequest = { showShop = false }, title = { Text("Tienda") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val names = mapOf(1 to "Maricarmen", 2 to "Dado triple", 3 to "Doble condena", 4 to "Billete de tren", 5 to "Obras", 6 to "Intercambio", 7 to "Desatascador")
+                        val names = mapOf(1 to "Maricarmen", 2 to "Dado triple", 3 to "Doble condena", 4 to "Billete de tren", 5 to "Obras", 6 to "Intercambio", 7 to "Desatascador", 8 to "Inténtalo otra vez")
                         for ((k, it) in Poly.SHOP) {
-                            val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; else -> s.pl[my] } > 0 || (s.sb[my] shr k) and 1 == 1
-                            PolyButton("${names[k]} · " + (if (have) "Ya lo has comprado" else if (k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) "Ya llevas dos objetos" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !(k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) && !locked) { showShop = false; onSend("o$k") }
+                            if (k in Poly.NOT_FOR_SALE) continue
+                            val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; 7 -> s.pl[my]; else -> s.rt[my] } > 0 || (s.sb[my] shr k) and 1 == 1
+                            PolyButton("${names[k]} (${if (k in Poly.LEGENDARY) "legendario" else "raro"}) · " + (if (have) "Ya lo has comprado" else if (k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) "Ya llevas dos objetos" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !(k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) && !locked) { showShop = false; onSend("o$k") }
                         }
                     }
                 },

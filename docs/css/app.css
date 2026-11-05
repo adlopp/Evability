@@ -757,3 +757,9 @@ textarea.field { resize: vertical; }
 .pmap { flex: 1; max-width: 120px; padding: 8px 6px; border-radius: 12px; border: 2px solid var(--accent); background: var(--surface2); color: inherit; font: inherit; font-weight: 700; }
 .pmap.sel { background: var(--accent); color: var(--on-accent); }
 .pmap.locked { border-color: var(--outline); color: #8a929b; background: rgba(128, 128, 128, .15); opacity: .7; }
+
+/* calidad de los objetos de la tienda */
+.game-row.q-leg { border-color: #E3A94A; box-shadow: inset 3px 0 0 #E3A94A; }
+.game-row.q-leg small { color: #E3A94A; }
+.game-row.q-rare { box-shadow: inset 3px 0 0 #5AA0E6; }
+.game-row.q-rare small { color: #7FB8F0; }
