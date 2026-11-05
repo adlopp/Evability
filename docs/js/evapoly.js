@@ -367,7 +367,7 @@ export function openEvapoly({ roomId, api, onClose }) {
         await wait(600); popSeats.clear(); paintTokens(); showLanding(e.sq);
       } else if (e.k === 'evt') {
         clearLanding();
-        if (e.amt) { if (e.sq < 5 || e.sq >= 8) { viewEvk = EV_IDS[e.sq]; viewDog = e.sq === 0 ? 0 : -1; paintEvent(); } SFX.card(); await showEventCard(e.sq, true); }
+        if (e.amt) { if ((e.sq < 5 || e.sq >= 8) && (e.sq < 17 || e.sq > 19)) { viewEvk = EV_IDS[e.sq]; viewDog = e.sq === 0 ? 0 : -1; paintEvent(); } SFX.card(); await showEventCard(e.sq, true); }
         else { viewEvk = ''; viewDog = -1; paintEvent(); if (e.sq === 12) { viewPerm = state.perm.join(','); paintBoard(); } SFX.turn(); await showEventCard(e.sq, false); }
       } else if (e.k === 'chaos') {
         viewPerm = state.perm.join(','); paintBoard(); SFX.bounce(); shake(); await wait(1100);
@@ -536,7 +536,13 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (!t) return '';
     const done = s.gd[seat] ? '¡Cumplido! ' : '';
     if (t === 1) return `${done}Consigue ${state.base.squares[a].n}`;
-    if (t === 2) return `${done}Cae en la cárcel ${a} veces (${Math.min(s.jc[seat], a)}/${a})`;
+    if (t === 2) return `${done}Pasa ${a} turnos en la cárcel (${Math.min(s.jc[seat], a)}/${a})`;
+    if (t === 5) return `${done}Haz un viaje en tren`;
+    if (t === 6) return `${done}Saca dobles ${a} veces (${Math.min(s.dc[seat], a)}/${a})`;
+    if (t === 7) return `${done}Termina ${a} turnos seguidos sin gastar dinero (${Math.min(s.sg[seat], a)}/${a}); cualquier gasto, alquiler o impuesto te reinicia`;
+    if (t === 8) return `${done}Completa un grupo de color`;
+    if (t === 9) return `${done}Construye un hotel`;
+    if (t === 10) return `${done}Da la vuelta al tablero en ${a} turnos: pasa por la Salida antes de gastar ${a} turnos desde la última vez (${Math.min(s.lt[seat], a)}/${a})`;
     return `${done}Consigue ${SHOP[a].n} (también puedes comprarlo en la tienda)`;
   }
   let goalPeek = null, goalEl = null;
@@ -563,7 +569,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   }
 
   // ───── eventos aleatorios ─────
-  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush', 'shield', 'reverse', 'chaos', 'twice', 'gale', 'amnesty'];
+  const EV_IDS = ['dog', 'snow', 'rain', 'quake', 'crisis', 'balance', 'hacienda', 'thief', 'boom', 'rush', 'shield', 'reverse', 'chaos', 'twice', 'gale', 'amnesty', 'merchant', 'lottery', 'pot', 'swap', 'dturn', 'police'];
   const EVT = [
     { n: 'Perro sarnoso', ico: 'dog', t: 'Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.' },
     { n: 'Nieve', ico: 'snow', t: 'Está nevando, así que te mueves más lento: durante 4 turnos de cada jugador solo se tira un dado en lugar de dos. Hay un muñeco de nieve en el mapa: si caes en su casilla, te quedas congelado y pierdes tu siguiente turno.' },
@@ -581,6 +587,12 @@ export function openEvapoly({ roomId, api, onClose }) {
     { n: 'Sorpresas y cajas', ico: 'twice', t: 'Durante 2 turnos de cada jugador, al caer en una casilla de Suerte o de Caja se cogen dos cartas en lugar de una.' },
     { n: 'Vendaval', ico: 'gale', t: 'Durante 2 turnos de cada jugador, después de tirar los dados un vendaval te echa de 1 a 3 casillas hacia atrás. No puede llevarte más atrás de la primera calle.' },
     { n: 'Amnistía Internacional', ico: 'amnesty', t: 'Salen todos de la cárcel y, durante un turno de cada jugador, nadie puede ir a la cárcel: ni por una casilla, ni por una carta, ni por tres dobles.' },
+    { n: 'Mercader Mohamed', ico: 'merchant', t: 'Durante 4 turnos de cada jugador, el mercader Mohamed se instala en una estación al azar. Quien caiga en ella no paga alquiler y puede comprarle una de 3 propiedades libres al azar.' },
+    { n: 'Lotería', ico: 'lottery', t: 'El jugador que activa el evento tira un dado y cobra 25 € por cada punto que saque.' },
+    { n: 'Reparto del bote', ico: 'pot', t: 'El bote de La Peza se divide y se reparte a partes iguales entre todos los jugadores.' },
+    { n: 'Intercambio de sitio', ico: 'swap', t: 'Dos jugadores al azar intercambian su posición. Al cambiar de sitio no sufren el efecto de la casilla en la que quedan: luego se tiran los dados como siempre.' },
+    { n: 'Turno doble', ico: 'dturn', t: 'Durante 1 turno de cada jugador, se tira dos veces. Si sale dobles no pasa nada especial (no hay otra tirada ni cárcel por tres dobles) y se cobra el premio de dobles si esa opción está activada.' },
+    { n: 'Policía', ico: 'police', t: 'Durante 2 turnos de cada jugador, quien saque dobles va directo a la cárcel.' },
   ];
   let viewEvk = '', viewDog = -1, wxEl = null, evCardEl = null, dogEl = null;
   function wirePeek(el) {
@@ -610,8 +622,8 @@ export function openEvapoly({ roomId, api, onClose }) {
     } else if (dogEl) { dogEl.remove(); dogEl = null; }
   }
   /** Cartel de «Evento activado» (o de fin del evento) en el centro del tablero; se cierra al tocarlo. */
-  const END_ICO = { 0: 'dog', 3: 'quake', 4: 'crisis', 8: 'boom', 9: 'rush', 10: 'shield', 11: 'reverse', 12: 'chaos', 13: 'twice', 14: 'gale', 15: 'amnesty' };
-  const END_TXT = { 0: 'El perro ha desaparecido', 3: 'La tierra ha dejado de temblar', 4: 'La crisis económica ha terminado', 8: 'El boom inmobiliario ha terminado', 9: 'Ha pasado la hora punta', 10: 'El escudo se ha desvanecido', 11: 'Se acabó la dirección contraria', 12: 'El caos ha terminado', 13: 'Se acabaron las cartas dobles', 14: 'El viento se ha calmado', 15: 'La amnistía ha terminado' };
+  const END_ICO = { 0: 'dog', 3: 'quake', 4: 'crisis', 8: 'boom', 9: 'rush', 10: 'shield', 11: 'reverse', 12: 'chaos', 13: 'twice', 14: 'gale', 15: 'amnesty', 16: 'merchant', 20: 'dturn', 21: 'police' };
+  const END_TXT = { 0: 'El perro ha desaparecido', 3: 'La tierra ha dejado de temblar', 4: 'La crisis económica ha terminado', 8: 'El boom inmobiliario ha terminado', 9: 'Ha pasado la hora punta', 10: 'El escudo se ha desvanecido', 11: 'Se acabó la dirección contraria', 12: 'El caos ha terminado', 13: 'Se acabaron las cartas dobles', 14: 'El viento se ha calmado', 15: 'La amnistía ha terminado', 16: 'El mercader Mohamed se ha ido', 20: 'Se acabó el turno doble', 21: 'La policía se ha ido' };
   function evtCardEl(kind, start, title) {
     const ev = EVT[kind];
     return h('div', { class: 'pevt' + (start ? '' : ' end') },
@@ -786,6 +798,8 @@ export function openEvapoly({ roomId, api, onClose }) {
       el.classList.toggle('owned', o >= 0); el.classList.toggle('mort', !!state.mort[i]);
       let sm = el.querySelector(':scope > .psnowman');
       if (viewEvk === 'snow' && state.snowman === i) { if (!sm) el.append(h('span', { class: 'psnowman', html: svgOf({ p: icons.snowman }) })); } else if (sm) sm.remove();
+      let mh = el.querySelector(':scope > .pmerchant');
+      if (viewEvk === 'merchant' && state.mer === i) { if (!mh) el.append(h('span', { class: 'psnowman pmerchant', html: svgOf({ p: icons.merchant }) })); } else if (mh) mh.remove();
       let fe = el.querySelector(':scope > .pfence');
       if (state.fence[i] >= 0) { if (!fe) { fe = h('span', { class: 'pfence', html: svgOf({ p: icons.fence }) }); el.append(fe); } }
       else if (fe) fe.remove();
@@ -979,6 +993,11 @@ export function openEvapoly({ roomId, api, onClose }) {
       status(`${qd.n} · ${eur(buyPrice(s, s.buy))}`);
       out.push(h('div', { class: 'pbtns' }, btn('Comprar', 'b', { cls: 'cta', disabled: s.cash[my] < buyPrice(s, s.buy) })));
       out.push(h('div', { class: 'pbtns' }, s.cfg.auction ? btn('Subastar', 'a', { primary: false }) : null, btn('No comprar', 'n', { primary: false })));
+    } else if (s.phase === 'merchant') {
+      // mercader Mohamed: quien cae en su estación puede comprarle una de las propiedades que ofrece
+      status('El mercader Mohamed te ofrece propiedades');
+      for (const i of s.mo) out.push(h('div', { class: 'pbtns' }, btn(`${state.data.squares[i].n} · ${eur(buyPrice(s, i))}`, 'W' + i, { cls: 'cta', disabled: s.cash[my] < buyPrice(s, i) })));
+      out.push(h('div', { class: 'pbtns' }, btn('No comprar nada', 'L', { primary: false })));
     } else if (s.phase === 'end') out.push(h('div', { class: 'pbtns' }, btn('Terminar turno', 'e', { cls: 'cta' })));
     // acciones secundarias en tu turno
     if (my >= 0 && cur === my && (s.phase === 'roll' || s.phase === 'end') && !s.trade) {

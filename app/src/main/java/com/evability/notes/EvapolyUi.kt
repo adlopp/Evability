@@ -335,10 +335,10 @@ private fun SummaryTable(names: List<String>, rows: List<Triple<String, IntArray
 
 // ───── eventos aleatorios ─────
 private class EvCard(val kind: Int, val start: Boolean, val peek: Boolean = false, val hold: Boolean = false)
-private val EV_IDS = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush", "shield", "reverse", "chaos", "twice", "gale", "amnesty")
-private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto", "Crisis económica", "Equilibrio", "Hacienda", "Ladrón", "Boom inmobiliario", "Hora punta", "Inmunidad", "Dirección contraria", "Caos", "Sorpresas y cajas", "Vendaval", "Amnistía Internacional")
-private val EV_END_ICO = mapOf(0 to "dog", 3 to "quake", 4 to "crisis", 8 to "boom", 9 to "rush", 10 to "shield", 11 to "reverse", 12 to "chaos", 13 to "twice", 14 to "gale", 15 to "amnesty")
-private val EV_END_TXT = mapOf(0 to "El perro ha desaparecido", 3 to "La tierra ha dejado de temblar", 4 to "La crisis económica ha terminado", 8 to "El boom inmobiliario ha terminado", 9 to "Ha pasado la hora punta", 10 to "El escudo se ha desvanecido", 11 to "Se acabó la dirección contraria", 12 to "El caos ha terminado", 13 to "Se acabaron las cartas dobles", 14 to "El viento se ha calmado", 15 to "La amnistía ha terminado")
+private val EV_IDS = listOf("dog", "snow", "rain", "quake", "crisis", "balance", "hacienda", "thief", "boom", "rush", "shield", "reverse", "chaos", "twice", "gale", "amnesty", "merchant", "lottery", "pot", "swap", "dturn", "police")
+private val EV_NAMES = listOf("Perro sarnoso", "Nieve", "Lluvia", "Terremoto", "Crisis económica", "Equilibrio", "Hacienda", "Ladrón", "Boom inmobiliario", "Hora punta", "Inmunidad", "Dirección contraria", "Caos", "Sorpresas y cajas", "Vendaval", "Amnistía Internacional", "Mercader Mohamed", "Lotería", "Reparto del bote", "Intercambio de sitio", "Turno doble", "Policía")
+private val EV_END_ICO = mapOf(0 to "dog", 3 to "quake", 4 to "crisis", 8 to "boom", 9 to "rush", 10 to "shield", 11 to "reverse", 12 to "chaos", 13 to "twice", 14 to "gale", 15 to "amnesty", 16 to "merchant", 20 to "dturn", 21 to "police")
+private val EV_END_TXT = mapOf(0 to "El perro ha desaparecido", 3 to "La tierra ha dejado de temblar", 4 to "La crisis económica ha terminado", 8 to "El boom inmobiliario ha terminado", 9 to "Ha pasado la hora punta", 10 to "El escudo se ha desvanecido", 11 to "Se acabó la dirección contraria", 12 to "El caos ha terminado", 13 to "Se acabaron las cartas dobles", 14 to "El viento se ha calmado", 15 to "La amnistía ha terminado", 16 to "El mercader Mohamed se ha ido", 20 to "Se acabó el turno doble", 21 to "La policía se ha ido")
 private val EV_DESC = listOf(
     "Durante 5 turnos de cada jugador, un perro avanza 4 casillas por turno. Si cae en tu casilla, o tú caes en la suya, te muerde y te quita 150 €.",
     "Está nevando, así que te mueves más lento: durante 4 turnos de cada jugador solo se tira un dado en lugar de dos. Hay un muñeco de nieve en el mapa: si caes en su casilla, te quedas congelado y pierdes tu siguiente turno.",
@@ -356,6 +356,12 @@ private val EV_DESC = listOf(
     "Durante 2 turnos de cada jugador, al caer en una casilla de Suerte o de Caja se cogen dos cartas en lugar de una.",
     "Durante 2 turnos de cada jugador, después de tirar los dados un vendaval te echa de 1 a 3 casillas hacia atrás. No puede llevarte más atrás de la primera calle.",
     "Salen todos de la cárcel y, durante un turno de cada jugador, nadie puede ir a la cárcel: ni por una casilla, ni por una carta, ni por tres dobles.",
+    "Durante 4 turnos de cada jugador, el mercader Mohamed se instala en una estación al azar. Quien caiga en ella no paga alquiler y puede comprarle una de 3 propiedades libres al azar.",
+    "El jugador que activa el evento tira un dado y cobra 25 € por cada punto que saque.",
+    "El bote de La Peza se divide y se reparte a partes iguales entre todos los jugadores.",
+    "Dos jugadores al azar intercambian su posición. Al cambiar de sitio no sufren el efecto de la casilla en la que quedan: luego se tiran los dados como siempre.",
+    "Durante 1 turno de cada jugador, se tira dos veces. Si sale dobles no pasa nada especial (no hay otra tirada ni cárcel por tres dobles) y se cobra el premio de dobles si esa opción está activada.",
+    "Durante 2 turnos de cada jugador, quien saque dobles va directo a la cárcel.",
 )
 
 /** Nieve o lluvia suaves sobre el tablero: el mapa se vuelve invernal o mojado. */
@@ -613,6 +619,7 @@ private fun SquareView(
         if (ownable) Box(Modifier.fillMaxSize().border(uu * (if (owner >= 0) 0.34f else 0.2f), band ?: Color(0xFF7D8791)))
         if (st.fence[i] >= 0) PolyIcon("fence", minOf(ow, oh) * 0.85f, Modifier.align(Alignment.Center))
         if (st.evk == "snow" && st.snowman == i) PolyIcon("snowman", minOf(ow, oh) * 0.8f, Modifier.align(Alignment.Center))
+        if (st.evk == "merchant" && st.mer == i) PolyIcon("merchant", minOf(ow, oh) * 0.8f, Modifier.align(Alignment.Center))
         if (hl) {
             val pulse = rememberInfiniteTransition(label = "ruta")
             val a by pulse.animateFloat(0.32f, 0.6f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "ruta")
@@ -940,7 +947,13 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
         val done = if (s.gd[seat] != 0) "¡Cumplido! " else ""
         return when (t) {
             1 -> "${done}Consigue ${s.base.squares[a].n}"
-            2 -> "${done}Cae en la cárcel $a veces (${minOf(s.jc[seat], a)}/$a)"
+            2 -> "${done}Pasa $a turnos en la cárcel (${minOf(s.jc[seat], a)}/$a)"
+            5 -> "${done}Haz un viaje en tren"
+            6 -> "${done}Saca dobles $a veces (${minOf(s.dc[seat], a)}/$a)"
+            7 -> "${done}Termina $a turnos seguidos sin gastar dinero (${minOf(s.sg[seat], a)}/$a); cualquier gasto, alquiler o impuesto te reinicia"
+            8 -> "${done}Completa un grupo de color"
+            9 -> "${done}Construye un hotel"
+            10 -> "${done}Da la vuelta al tablero en $a turnos: pasa por la Salida antes de gastar $a turnos desde la última vez (${minOf(s.lt[seat], a)}/$a)"
             else -> "${done}Consigue ${Poly.SHOP[a]!!.first} (también puedes comprarlo en la tienda)"
         }
     }
@@ -1064,7 +1077,7 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
                 }
                 "evt" -> {
                     landing = null
-                    if (e.amt != 0) { if (e.sq < 5 || e.sq >= 8) { viewEvk = EV_IDS[e.sq]; viewDog = if (e.sq == 0) 0 else -1 }; PolySound.play("card") }
+                    if (e.amt != 0) { if ((e.sq < 5 || e.sq >= 8) && (e.sq < 17 || e.sq > 19)) { viewEvk = EV_IDS[e.sq]; viewDog = if (e.sq == 0) 0 else -1 }; PolySound.play("card") }
                     else { viewEvk = ""; viewDog = -1; PolySound.play("turn") }
                     val c = EvCard(e.sq, e.amt != 0)
                     evCard = c
@@ -1777,6 +1790,11 @@ private fun GamePanel(
             Status("${q.n} · ${Poly.eur(s.buyPrice(s.buy))}")
             Btns { B("Comprar", "b", true, s.cash[my] >= s.buyPrice(s.buy), cta = true) }
             Btns { if (s.cfg.auction) B("Subastar", "a", false); B("No comprar", "n", false) }
+        } else if (s.phase == "merchant") {
+            // mercader Mohamed: quien cae en su estación puede comprarle una de las propiedades que ofrece
+            Status("El mercader Mohamed te ofrece propiedades")
+            for (i in s.mo) Btns { B("${s.sq(i).n} · ${Poly.eur(s.buyPrice(i))}", "W$i", true, s.cash[my] >= s.buyPrice(i), cta = true) }
+            Btns { B("No comprar nada", "L", false) }
         } else if (s.phase == "end") Btns { B("Terminar turno", "e", cta = true) }
 
         if (!frozen && my >= 0 && cur == my && (s.phase == "roll" || s.phase == "end") && t == null) {
