@@ -20,6 +20,11 @@ export const SHOP = { 1: { n: 'la carta Maricarmen', p: 400 }, 2: { n: 'el dado 
 export const LEGENDARY = new Set([1, 8]), NOT_FOR_SALE = new Set([1]);
 /** Premio del objetivo secreto: 250 € si se juega con 1500 € de base o menos y 350 € con más. */
 export const goalPrize = (s) => (s.cfg.money <= 1500 ? 250 : 350);
+/** Stock rotativo de la tienda: cada SHOP_REFRESH turnos de jugador se eligen 3 objetos a la venta y uno es el objeto del día (mitad de precio, una sola unidad). */
+export const SHOP_REFRESH = 6, SELLABLE = [2, 3, 4, 5, 6, 7, 8];
+export const shopPrice = (s, k) => (s.dayItem === k ? Math.floor(SHOP[k].p / 2) : SHOP[k].p);
+/** Turnos de jugador que faltan para que cambie el stock. */
+export const shopTurnsLeft = (s) => SHOP_REFRESH - (s.tc.reduce((a, b) => a + b, 0) % SHOP_REFRESH);
 export const MAX_ITEMS = 2, RAIN_SLIP = 20, SLIP_COST = 50, CARD_ITEM_REFUND = 50;
 
 export const eur = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' €';
@@ -51,30 +56,39 @@ export function initGame(data, n, cfg, seed) {
     heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0), tri: Array(n).fill(0), dj: Array(n).fill(0), jmax: Array(n).fill(3),
     tk: Array(n).fill(0), ob: Array(n).fill(0), sw: Array(n).fill(0), sh: Array(n).fill(0), fence: Array(40).fill(-1),
     pl: Array(n).fill(0), rt: Array(n).fill(0), tr: Array(n).fill(0), dc: Array(n).fill(0), lg: 0, pend: null, sb: Array(n).fill(0), imm: -1, jc: Array(n).fill(0), gt: Array(n).fill(0), ga: Array(n).fill(0), gd: Array(n).fill(0), gx: Array(n).fill(0), snowman: -1, mer: -1, mo: [], base: data, perm: Array.from({ length: 40 }, (_, i) => i), evu: 0, frz: Array(n).fill(0), evk: '', evl: Array(n).fill(0), evf: false, evChk: false, dog: -1, tc: Array(n).fill(0),
-    sx: Array(n).fill(0), sg: Array(n).fill(0), lt: Array(n).fill(0), tb: Array(n).fill(0), hb: Array(n).fill(0), xr: false,
+    sx: Array(n).fill(0), sg: Array(n).fill(0), lt: Array(n).fill(0), tb: Array(n).fill(0), hb: Array(n).fill(0), xr: false, stock: [], dayItem: 0,
   };
   s.deck.c.order = shuffled(s, data.cards.chance.length);
   s.deck.h.order = shuffled(s, data.cards.chest.length);
   // quién empieza: cada jugador tira los dados y empieza el más alto (los empates vuelven a tirar)
   if (s.cfg.goals) assignGoals(s);
+  if (s.cfg.shop) restock(s, false);
   s.phase = 'order';
   say(s, 'Todos tiran los dados: empieza el que saque más', 'start');
   return s;
+}
+
+/** Cambia el stock de la tienda: 3 objetos al azar a la venta y uno de ellos es el objeto del día. */
+function restock(s, announce) {
+  s.stock = shuffled(s, SELLABLE.length).slice(0, 3).map((i) => SELLABLE[i]);
+  s.dayItem = s.stock[rint(s, 3)];
+  if (announce) say(s, `La tienda de La Peza cambia de stock. Objeto del día: ${SHOP[s.dayItem].n} a mitad de precio`);
 }
 
 /** Objetivo secreto de cada jugador: conseguir una calle, servicio o estación en concreto, pasar 3 turnos en la cárcel o conseguir un objeto de la tienda. */
 function assignGoals(s) {
   const props = [];
   for (let i = 0; i < 40; i++) if (['street', 'station', 'utility'].includes(sq(s, i).t)) props.push(i);
-  // tipos: 1 una casilla, 2 cárcel (3 turnos), 3 un objeto, 5 un viaje en tren (solo con raíles o tienda), 6 sacar dobles, 7 tacaño (4 turnos sin gastar), 8 monopolio, 9 construir un hotel, 10 dar la vuelta al tablero en 7 turnos
+  // tipos: 1 una casilla, 2 cárcel (3 turnos), 3 un objeto, 5 un viaje en tren (solo con raíles o tienda), 6 sacar dobles seguidos en un mismo turno, 7 tacaño (5 turnos sin gastar), 8 monopolio, 9 construir 3 casas (u hoteles), 10 dar la vuelta al tablero en 4 turnos
   const types = [1, 2, 3, 6, 7, 8, 9, 10];
+  const used = new Set(); // dos jugadores no reciben la misma casilla
   if (s.cfg.rails || s.cfg.shop) types.push(5);
   for (let seat = 0; seat < s.n; seat++) {
     const t = types[rint(s, types.length)];
     s.gt[seat] = t;
-    if (t === 1) s.ga[seat] = props[rint(s, props.length)];
+    if (t === 1) { const pool = props.filter((p) => !used.has(p)); s.ga[seat] = pool[rint(s, pool.length)]; used.add(s.ga[seat]); }
     else if (t === 3) s.ga[seat] = [2, 3, 4, 5, 6, 7][rint(s, 6)];
-    else s.ga[seat] = t === 5 ? 1 : t === 2 ? 3 : t === 6 ? 2 : t === 7 ? 4 : t === 10 ? 7 : 0; // cárcel: 3 turnos; tren: 1 viaje; dobles: 2 veces; tacaño: 4 turnos; vuelta: 7 turnos
+    else s.ga[seat] = t === 5 ? 1 : t === 2 ? 3 : t === 6 ? 2 : t === 7 ? 5 : t === 9 ? 3 : t === 10 ? 4 : 0; // cárcel: 3 turnos; tren: 1 viaje; dobles: 2 seguidos; tacaño: 5 turnos; casas: 3; vuelta: 4 turnos
   }
 }
 
@@ -86,7 +100,7 @@ function goalDone(s, seat, t, a) {
     case 6: return s.dc[seat] >= a;
     case 7: return s.sg[seat] >= a; // turnos seguidos sin gastar dinero
     case 8: for (let i = 0; i < 40; i++) if (sq(s, i).t === 'street' && ownsAll(s, seat, sq(s, i).g)) return true; return false; // algún grupo de color completo
-    case 9: return s.hb[seat] > 0;
+    case 9: return s.hb[seat] >= a; // casas u hoteles construidos
     case 10: return s.tb[seat] > 0;
     default: return ((s.gx[seat] >> a) & 1) === 1;
   }
@@ -543,6 +557,7 @@ function maybeEvent(s, seat) {
 function nextTurn(s) {
   const prev = s.turn;
   s.tc[prev]++;
+  if (s.cfg.shop && s.tc.reduce((a, b) => a + b, 0) % SHOP_REFRESH === 0) restock(s, true);
   if (s.sx[prev]) s.sg[prev] = 0; else s.sg[prev]++; // objetivo «tacaño»: turnos seguidos sin gastar
   s.sx[prev] = 0; s.lt[prev]++; s.xr = false; // lt: turnos desde la última Salida
   if (s.evk) {
@@ -586,18 +601,18 @@ function throwDice(s, seat) {
 /** Aplica una tirada ya hecha: dobles, cárcel, movimiento, resbalón y posible evento. */
 function finishRoll(s, seat, [a, b, rush, slipN]) {
   const slip = slipN === 1;
-  if (a === b) s.dc[seat]++; // objetivo secreto: veces que ha sacado dobles
+  if (a === b && !s.jail[seat] && !(s.evk === 'police' && s.evl[seat] > 0)) s.dc[seat] = Math.max(s.dc[seat], s.dbl + 1); // objetivo secreto: dobles seguidos en un mismo turno
   if (s.jail[seat]) {
     if (a === b) {
       s.jail[seat] = false; s.jt[seat] = 0; s.again = false;
       say(s, `@${seat} saca dobles y sale de la cárcel`, 'free');
       moveDice(s, seat, a + b + rush);
-    } else if (++s.jc[seat] && ++s.jt[seat] >= s.jmax[seat]) { // jc: turnos que ha pasado en la cárcel (objetivo secreto)
+    } else if (s.jt[seat] >= s.jmax[seat]) {
+      // ya ha pasado todos sus turnos en la cárcel: en este intento sale sin pagar multa
       s.jail[seat] = false; s.jt[seat] = 0; s.again = false;
-      say(s, `@${seat} agota su condena: paga la multa y sale`);
-      pay(s, seat, JAIL_FINE, -1, ' de multa');
-      if (s.debts.length) s.pendMove = a + b + rush; else moveDice(s, seat, a + b + rush);
-    } else { say(s, `@${seat} sigue en la cárcel (${s.jt[seat]}/${s.jmax[seat]})`); s.again = false; }
+      say(s, `@${seat} cumple su condena y sale de la cárcel`, 'free');
+      moveDice(s, seat, a + b + rush);
+    } else { s.jc[seat]++; s.jt[seat]++; say(s, `@${seat} sigue en la cárcel (${s.jt[seat]}/${s.jmax[seat]})`); s.again = false; } // jc: turnos que ha pasado en la cárcel (objetivo secreto)
   } else if (a === b) {
     if (s.evk === 'police' && s.evl[seat] > 0) sendJail(s, seat, ': la policía lo pilla sacando dobles');
     else if (++s.dbl >= 3) { say(s, `@${seat} saca tres dobles seguidos`); sendJail(s, seat, ''); }
@@ -845,7 +860,7 @@ export function act(s, seat, code, dry = false) {
       if (op === 'h') {
         s.cash[seat] -= c; spent(s, seat);
         s.lvl[i]++;
-        if (s.lvl[i] === 5) s.hb[seat] = 1; // objetivo secreto: ha construido un hotel
+        s.hb[seat]++; // objetivo secreto: edificios construidos
         say(s, `@${seat} construye ${s.lvl[i] === 5 ? 'un hotel' : 'una casa'} en ${q.n}`, 'build', { seat, sq: i, amt: -c });
       } else if (op === 's') {
         s.cash[seat] += c / 2;
@@ -887,15 +902,18 @@ export function act(s, seat, code, dry = false) {
       if (!s.cfg.shop || !(mine && free) || s.pos[seat] !== 20 || s.jail[seat]) return 'La tienda está en La Peza';
       const k = Number(arg), item = SHOP[k];
       if (!item || NOT_FOR_SALE.has(k)) return 'Objeto no válido';
+      if (!s.stock.includes(k)) return 'Ese objeto no está en la tienda ahora';
       if (s.sh[seat]) return 'Solo puedes comprar un objeto por visita';
       const have = [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl, s.rt][k][seat];
       if (have > 0 || (s.sb[seat] >> k) & 1) return 'Ya has comprado ese objeto';
       if (k !== 3 && heldItems(s, seat) >= MAX_ITEMS) return 'Solo puedes llevar dos objetos a la vez';
-      if (s.cash[seat] < item.p) return 'No tienes dinero';
+      const price = shopPrice(s, k), daily = s.dayItem === k;
+      if (s.cash[seat] < price) return 'No tienes dinero';
       if (dry) return OK;
-      s.cash[seat] -= item.p; spent(s, seat); s.sh[seat] = 1; s.sb[seat] |= 1 << k; s.gx[seat] |= 1 << k;
+      s.cash[seat] -= price; spent(s, seat); s.sh[seat] = 1; s.sb[seat] |= 1 << k; s.gx[seat] |= 1 << k;
       if (k === 1) s.mc[seat]++; else if (k === 2) s.tri[seat]++; else if (k === 3) s.dj[seat]++; else if (k === 4) s.tk[seat]++; else if (k === 5) s.ob[seat]++; else if (k === 6) s.sw[seat]++; else if (k === 7) s.pl[seat]++; else s.rt[seat]++;
-      say(s, `@${seat} compra ${item.n} en la tienda por ${eur(item.p)}`, 'buy', { seat, amt: item.p });
+      say(s, `@${seat} compra ${item.n} en la tienda por ${eur(price)}${daily ? ' (objeto del día)' : ''}`, 'buy', { seat, amt: price });
+      if (daily) { s.dayItem = 0; s.stock = s.stock.filter((x) => x !== k); } // el objeto del día es una sola unidad
       return ok();
     }
     case 'B': {
@@ -1096,4 +1114,4 @@ export function applyText(s, text) {
 }
 
 /** Resumen del estado, para comparar partidas entre JS y Kotlin. */
-export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.tk, s.ob, s.sw, s.sh, s.fence, s.pl, s.sb, s.imm, s.jc, s.gt, s.ga, s.gd, s.gx, s.snowman, s.mer, s.mo, s.perm, s.evu, s.tr, s.dc, s.rt, s.lg, s.pend, s.frz, s.evk, s.evl, s.evf, s.evChk, s.dog, s.tc, s.sx, s.sg, s.lt, s.tb, s.hb, s.xr, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);
+export const digest = (s) => JSON.stringify([s.pos, s.cash, s.jail, s.jt, s.jf, s.bk, s.own, s.lvl, s.mort.map(Number), s.heldBy.c, s.heldBy.h, s.turn, s.phase, s.dbl, s.again, s.buy, s.winner, s.r, s.mc, s.mcBy, s.pot, s.ordCand.map(Number), s.ordRolls, s.railCd, s.tri, s.dj, s.jmax, s.tk, s.ob, s.sw, s.sh, s.fence, s.pl, s.sb, s.imm, s.jc, s.gt, s.ga, s.gd, s.gx, s.snowman, s.mer, s.mo, s.perm, s.evu, s.tr, s.dc, s.rt, s.lg, s.pend, s.frz, s.evk, s.evl, s.evf, s.evChk, s.dog, s.tc, s.sx, s.sg, s.lt, s.tb, s.hb, s.xr, s.stock, s.dayItem, s.debts.map((d) => [d.seat, d.amt, d.to]), s.auction && [s.auction.sq, s.auction.bid, s.auction.bidder, s.auction.cur]]);

@@ -2,7 +2,7 @@
 // evapoly-engine.js en cada dispositivo con la misma semilla, así todos ven lo mismo. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggle, darkBars } from './ui.js';
-import { setPerm, initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase, heldItems, itemHeld, MAX_ITEMS, LEGENDARY, NOT_FOR_SALE } from './evapoly-engine.js';
+import { setPerm, initGame, act, applyText, rentOf, houseCost, groupOf, unmortgageCost, eur, JAIL_FINE, SHOP, buyPrice, houseBase, heldItems, itemHeld, MAX_ITEMS, LEGENDARY, NOT_FOR_SALE, shopPrice, shopTurnsLeft } from './evapoly-engine.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
 const MONEY_MIN = 500, MONEY_MAX = 2500, MONEY_STEP = 50;
@@ -538,10 +538,10 @@ export function openEvapoly({ roomId, api, onClose }) {
     if (t === 1) return `${done}Consigue ${state.base.squares[a].n}`;
     if (t === 2) return `${done}Pasa ${a} turnos en la cárcel (${Math.min(s.jc[seat], a)}/${a})`;
     if (t === 5) return `${done}Haz un viaje en tren`;
-    if (t === 6) return `${done}Saca dobles ${a} veces (${Math.min(s.dc[seat], a)}/${a})`;
+    if (t === 6) return `${done}Saca dobles ${a} veces seguidas en un mismo turno (${Math.min(s.dc[seat], a)}/${a})`;
     if (t === 7) return `${done}Termina ${a} turnos seguidos sin gastar dinero (${Math.min(s.sg[seat], a)}/${a}); cualquier gasto, alquiler o impuesto te reinicia`;
     if (t === 8) return `${done}Completa un grupo de color`;
-    if (t === 9) return `${done}Construye un hotel`;
+    if (t === 9) return `${done}Construye ${a} casas u hoteles (${Math.min(s.hb[seat], a)}/${a})`;
     if (t === 10) return `${done}Da la vuelta al tablero en ${a} turnos: pasa por la Salida antes de gastar ${a} turnos desde la última vez (${Math.min(s.lt[seat], a)}/${a})`;
     return `${done}Consigue ${SHOP[a].n} (también puedes comprarlo en la tienda)`;
   }
@@ -1048,10 +1048,10 @@ export function openEvapoly({ roomId, api, onClose }) {
     const s = state, my = mySeat();
     const content = h('div', { class: 'stack' });
     let m;
-    const draw = () => fill(content, Object.entries(SHOP).filter(([k]) => !NOT_FOR_SALE.has(Number(k))).map(([k, it]) => h('button', {
-      class: 'game-row ' + (LEGENDARY.has(Number(k)) ? 'q-leg' : 'q-rare'), disabled: s.cash[my] < it.p || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || (Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS) || running || busy,
+    const draw = () => fill(content, [h('small', { class: 'muted' }, `La tienda cambia de stock en ${shopTurnsLeft(s)} turno${shopTurnsLeft(s) === 1 ? '' : 's'}`), ...s.stock.map((k) => [k, SHOP[k]]).map(([k, it]) => h('button', {
+      class: 'game-row ' + (LEGENDARY.has(Number(k)) ? 'q-leg' : 'q-rare'), disabled: s.cash[my] < shopPrice(s, k) || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || (Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS) || running || busy,
       onclick: async () => { m.close(); await send('o' + k); },
-    }, h('div', {}, SHOP_NAMES[k], h('small', {}, (LEGENDARY.has(Number(k)) ? 'Legendario · ' : 'Raro · ') + (haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS ? 'Ya llevas dos objetos' : eur(it.p)))))));
+    }, h('div', {}, SHOP_NAMES[k], h('small', {}, (LEGENDARY.has(Number(k)) ? 'Legendario · ' : 'Raro · ') + (haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS ? 'Ya llevas dos objetos' : s.dayItem === k ? `Objeto del día · ${eur(shopPrice(s, k))} (antes ${eur(it.p)}) · una sola unidad` : eur(it.p))))))]);
     draw();
     m = modal({ title: 'Tienda', content, actions: [{ label: 'Cerrar' }] });
   }

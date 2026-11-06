@@ -949,10 +949,10 @@ fun EvapolyScreen(roomId: String, onClose: () -> Unit) {
             1 -> "${done}Consigue ${s.base.squares[a].n}"
             2 -> "${done}Pasa $a turnos en la cárcel (${minOf(s.jc[seat], a)}/$a)"
             5 -> "${done}Haz un viaje en tren"
-            6 -> "${done}Saca dobles $a veces (${minOf(s.dc[seat], a)}/$a)"
+            6 -> "${done}Saca dobles $a veces seguidas en un mismo turno (${minOf(s.dc[seat], a)}/$a)"
             7 -> "${done}Termina $a turnos seguidos sin gastar dinero (${minOf(s.sg[seat], a)}/$a); cualquier gasto, alquiler o impuesto te reinicia"
             8 -> "${done}Completa un grupo de color"
-            9 -> "${done}Construye un hotel"
+            9 -> "${done}Construye $a casas u hoteles (${minOf(s.hb[seat], a)}/$a)"
             10 -> "${done}Da la vuelta al tablero en $a turnos: pasa por la Salida antes de gastar $a turnos desde la última vez (${minOf(s.lt[seat], a)}/$a)"
             else -> "${done}Consigue ${Poly.SHOP[a]!!.first} (también puedes comprarlo en la tienda)"
         }
@@ -1810,10 +1810,11 @@ private fun GamePanel(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val names = mapOf(1 to "Maricarmen", 2 to "Dado triple", 3 to "Doble condena", 4 to "Billete de tren", 5 to "Obras", 6 to "Intercambio", 7 to "Desatascador", 8 to "Inténtalo otra vez")
-                        for ((k, it) in Poly.SHOP) {
-                            if (k in Poly.NOT_FOR_SALE) continue
+                        Text("La tienda cambia de stock en ${Poly.shopTurnsLeft(s)} turno${if (Poly.shopTurnsLeft(s) == 1) "" else "s"}", color = OnSurfaceDim, fontSize = 12.sp)
+                        for (k in s.stock) {
+                            val it = Poly.SHOP[k]!!
                             val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; 7 -> s.pl[my]; else -> s.rt[my] } > 0 || (s.sb[my] shr k) and 1 == 1
-                            PolyButton("${names[k]} (${if (k in Poly.LEGENDARY) "legendario" else "raro"}) · " + (if (have) "Ya lo has comprado" else if (k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) "Ya llevas dos objetos" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !(k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) && !locked) { showShop = false; onSend("o$k") }
+                            PolyButton("${names[k]} (${if (k in Poly.LEGENDARY) "legendario" else "raro"}) · " + (if (have) "Ya lo has comprado" else if (k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) "Ya llevas dos objetos" else if (s.dayItem == k) "Objeto del día · ${Poly.eur(Poly.shopPrice(s, k))} (antes ${Poly.eur(it.second)}) · una sola unidad" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !(k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) && !locked) { showShop = false; onSend("o$k") }
                         }
                     }
                 },

@@ -22,6 +22,12 @@ object Poly {
     /** Calidad de los objetos: los legendarios son Maricarmen y Inténtalo otra vez; el resto son raros. Maricarmen no se vende. */
     val LEGENDARY = setOf(1, 8)
     val NOT_FOR_SALE = setOf(1)
+    /** Stock rotativo de la tienda: cada SHOP_REFRESH turnos de jugador se eligen 3 objetos a la venta y uno es el objeto del día (mitad de precio, una sola unidad). */
+    const val SHOP_REFRESH = 6
+    val SELLABLE = listOf(2, 3, 4, 5, 6, 7, 8)
+    fun shopPrice(s: State, k: Int): Int = if (s.dayItem == k) SHOP[k]!!.second / 2 else SHOP[k]!!.second
+    /** Turnos de jugador que faltan para que cambie el stock. */
+    fun shopTurnsLeft(s: State): Int = SHOP_REFRESH - (s.tc.sum() % SHOP_REFRESH)
     const val MAX_ITEMS = 2
     /** Premio del objetivo secreto: 250 € si se juega con 1500 € de base o menos y 350 € con más. */
     fun goalPrize(s: State): Int = if (s.cfg.money <= 1500) 250 else 350
@@ -89,7 +95,7 @@ object Poly {
         val pl = IntArray(n) // desatascadores
         val rt = IntArray(n) // «Inténtalo otra vez»
         val tr = IntArray(n) // viajes en tren hechos (objetivo secreto)
-        val dc = IntArray(n) // veces que ha sacado dobles (objetivo secreto)
+        val dc = IntArray(n) // máximo de dobles seguidos que ha sacado en un turno (objetivo secreto)
         var lg = 0 // objetos legendarios que ya han salido en una carta (un bit por objeto)
         var pend: IntArray? = null // tirada pendiente de aceptar (con «Inténtalo otra vez»)
         var imm = -1 // jugador con el escudo de inmunidad
@@ -113,8 +119,10 @@ object Poly {
         val sg = IntArray(n) // turnos seguidos sin gastar dinero
         val lt = IntArray(n) // turnos desde la última vez que pasó por la Salida
         val tb = IntArray(n) // 1 si ha dado la vuelta al tablero a tiempo
-        val hb = IntArray(n) // 1 si ha construido un hotel
+        val hb = IntArray(n) // edificios construidos (objetivo secreto)
         var xr = false // en el turno doble, ya ha hecho la segunda tirada
+        var stock: List<Int> = emptyList() // objetos a la venta en la tienda ahora mismo
+        var dayItem = 0 // objeto del día (mitad de precio, una sola unidad); 0 si no hay
         val jmax = IntArray(n) { 3 } // turnos máximos en la cárcel de cada jugador (6 con la doble condena)
         var turn = 0
         var phase = "roll"
@@ -173,7 +181,7 @@ object Poly {
                 pos.joinToString(",", "[", "]"), cash.joinToString(",", "[", "]"), jail.joinToString(",", "[", "]") { b(it) }, jt.joinToString(",", "[", "]"),
                 jf.joinToString(",", "[", "]"), bk.joinToString(",", "[", "]") { b(it) }, own.joinToString(",", "[", "]"), lvl.joinToString(",", "[", "]"),
                 mort.joinToString(",", "[", "]") { if (it) "1" else "0" }, heldBy[0].toString(), heldBy[1].toString(), turn.toString(),
-                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), sb.joinToString(",", "[", "]"), imm.toString(), jc.joinToString(",", "[", "]"), gt.joinToString(",", "[", "]"), ga.joinToString(",", "[", "]"), gd.joinToString(",", "[", "]"), gx.joinToString(",", "[", "]"), snowman.toString(), mer.toString(), mo.joinToString(",", "[", "]"), perm.joinToString(",", "[", "]"), evu.toString(), tr.joinToString(",", "[", "]"), dc.joinToString(",", "[", "]"), rt.joinToString(",", "[", "]"), lg.toString(), pend?.joinToString(",", "[", "]") ?: "null", frz.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"), sx.joinToString(",", "[", "]"), sg.joinToString(",", "[", "]"), lt.joinToString(",", "[", "]"), tb.joinToString(",", "[", "]"), hb.joinToString(",", "[", "]"), b(xr),
+                "\"$phase\"", dbl.toString(), b(again), buy.toString(), winner.toString(), r.toString(), mc.joinToString(",", "[", "]"), mcBy.toString(), pot.toString(), ordCand.joinToString(",", "[", "]") { if (it) "1" else "0" }, ordRolls.joinToString(",", "[", "]"), railCd.joinToString(",", "[", "]"), tri.joinToString(",", "[", "]"), dj.joinToString(",", "[", "]"), jmax.joinToString(",", "[", "]"), tk.joinToString(",", "[", "]"), ob.joinToString(",", "[", "]"), sw.joinToString(",", "[", "]"), sh.joinToString(",", "[", "]"), fence.joinToString(",", "[", "]"), pl.joinToString(",", "[", "]"), sb.joinToString(",", "[", "]"), imm.toString(), jc.joinToString(",", "[", "]"), gt.joinToString(",", "[", "]"), ga.joinToString(",", "[", "]"), gd.joinToString(",", "[", "]"), gx.joinToString(",", "[", "]"), snowman.toString(), mer.toString(), mo.joinToString(",", "[", "]"), perm.joinToString(",", "[", "]"), evu.toString(), tr.joinToString(",", "[", "]"), dc.joinToString(",", "[", "]"), rt.joinToString(",", "[", "]"), lg.toString(), pend?.joinToString(",", "[", "]") ?: "null", frz.joinToString(",", "[", "]"), "\"$evk\"", evl.joinToString(",", "[", "]"), b(evf), b(evChk), dog.toString(), tc.joinToString(",", "[", "]"), sx.joinToString(",", "[", "]"), sg.joinToString(",", "[", "]"), lt.joinToString(",", "[", "]"), tb.joinToString(",", "[", "]"), hb.joinToString(",", "[", "]"), b(xr), stock.joinToString(",", "[", "]"), dayItem.toString(),
                 debts.joinToString(",", "[", "]") { "[${it.seat},${it.amt},${it.to}]" },
                 auction?.let { "[${it.sq},${it.bid},${it.bidder},${it.cur}]" } ?: "null",
             ).joinToString(",") + "]"
@@ -205,6 +213,7 @@ object Poly {
         s.deckC.order = shuffled(s, data.chance.size)
         s.deckH.order = shuffled(s, data.chest.size)
         if (s.cfg.goals) assignGoals(s)
+        if (s.cfg.shop) restock(s, false)
         s.phase = "order"
         say(s, "Todos tiran los dados: empieza el que saque más", "start")
         return s
@@ -287,18 +296,26 @@ object Poly {
         land(s, seat, pos, dice = total, utilRoll = false, double = false)
     }
 
+    /** Cambia el stock de la tienda: 3 objetos al azar a la venta y uno de ellos es el objeto del día. */
+    private fun restock(s: State, announce: Boolean) {
+        s.stock = shuffled(s, SELLABLE.size).take(3).map { SELLABLE[it] }
+        s.dayItem = s.stock[rint(s, 3)]
+        if (announce) say(s, "La tienda de La Peza cambia de stock. Objeto del día: ${SHOP[s.dayItem]!!.first} a mitad de precio")
+    }
+
     /** Objetivo secreto de cada jugador: conseguir una calle, servicio o estación en concreto, pasar 3 turnos en la cárcel o conseguir un objeto de la tienda. */
     private fun assignGoals(s: State) {
         val props = (0 until 40).filter { s.sq(it).t == "street" || s.sq(it).t == "station" || s.sq(it).t == "utility" }
-        // tipos: 1 una casilla, 2 cárcel (3 turnos), 3 un objeto, 5 un viaje en tren (solo con raíles o tienda), 6 sacar dobles, 7 tacaño (4 turnos sin gastar), 8 monopolio, 9 construir un hotel, 10 dar la vuelta al tablero en 7 turnos
+        // tipos: 1 una casilla, 2 cárcel (3 turnos), 3 un objeto, 5 un viaje en tren (solo con raíles o tienda), 6 sacar dobles seguidos en un mismo turno, 7 tacaño (5 turnos sin gastar), 8 monopolio, 9 construir 3 casas (u hoteles), 10 dar la vuelta al tablero en 4 turnos
         val types = arrayListOf(1, 2, 3, 6, 7, 8, 9, 10)
+        val used = HashSet<Int>() // dos jugadores no reciben la misma casilla
         if (s.cfg.rails || s.cfg.shop) types.add(5)
         for (seat in 0 until s.n) {
             val t = types[rint(s, types.size)]
             s.gt[seat] = t
-            if (t == 1) s.ga[seat] = props[rint(s, props.size)]
+            if (t == 1) { val pool = props.filter { it !in used }; s.ga[seat] = pool[rint(s, pool.size)]; used.add(s.ga[seat]) }
             else if (t == 3) s.ga[seat] = listOf(2, 3, 4, 5, 6, 7)[rint(s, 6)]
-            else s.ga[seat] = when (t) { 5 -> 1; 2 -> 3; 6 -> 2; 7 -> 4; 10 -> 7; else -> 0 } // cárcel: 3 turnos; tren: 1 viaje; dobles: 2 veces; tacaño: 4 turnos; vuelta: 7 turnos
+            else s.ga[seat] = when (t) { 5 -> 1; 2 -> 3; 6 -> 2; 7 -> 5; 9 -> 3; 10 -> 4; else -> 0 } // cárcel: 3 turnos; tren: 1 viaje; dobles: 2 seguidos; tacaño: 5 turnos; casas: 3; vuelta: 4 turnos
         }
     }
 
@@ -309,7 +326,7 @@ object Poly {
         6 -> s.dc[seat] >= a
         7 -> s.sg[seat] >= a // turnos seguidos sin gastar dinero
         8 -> (0 until 40).any { s.sq(it).t == "street" && s.ownsAll(seat, s.sq(it).g) } // algún grupo de color completo
-        9 -> s.hb[seat] > 0
+        9 -> s.hb[seat] >= a // casas u hoteles construidos
         10 -> s.tb[seat] > 0
         else -> ((s.gx[seat] shr a) and 1) == 1
     }
@@ -684,6 +701,7 @@ object Poly {
     private fun nextTurn(s: State) {
         val prev = s.turn
         s.tc[prev]++
+        if (s.cfg.shop && s.tc.sum() % SHOP_REFRESH == 0) restock(s, true)
         if (s.sx[prev] != 0) s.sg[prev] = 0 else s.sg[prev]++ // objetivo «tacaño»: turnos seguidos sin gastar
         s.sx[prev] = 0; s.lt[prev]++; s.xr = false // lt: turnos desde la última Salida
         if (s.evk != "") {
@@ -729,18 +747,18 @@ object Poly {
     /** Aplica una tirada ya hecha: dobles, cárcel, movimiento, resbalón y posible evento. */
     private fun finishRoll(s: State, seat: Int, t: IntArray) {
         val a = t[0]; val b = t[1]; val rush = t[2]; val slip = t[3] == 1
-        if (a == b) s.dc[seat]++ // objetivo secreto: veces que ha sacado dobles
+        if (a == b && !s.jail[seat] && !(s.evk == "police" && s.evl[seat] > 0)) s.dc[seat] = maxOf(s.dc[seat], s.dbl + 1) // objetivo secreto: dobles seguidos en un mismo turno
         if (s.jail[seat]) {
             if (a == b) {
                 s.jail[seat] = false; s.jt[seat] = 0; s.again = false
                 say(s, "@$seat saca dobles y sale de la cárcel", "free")
                 moveDice(s, seat, a + b + rush)
-            } else if (++s.jc[seat] > 0 && ++s.jt[seat] >= s.jmax[seat]) { // jc: turnos que ha pasado en la cárcel (objetivo secreto)
+            } else if (s.jt[seat] >= s.jmax[seat]) {
+                // ya ha pasado todos sus turnos en la cárcel: en este intento sale sin pagar multa
                 s.jail[seat] = false; s.jt[seat] = 0; s.again = false
-                say(s, "@$seat agota su condena: paga la multa y sale")
-                pay(s, seat, JAIL_FINE, -1, " de multa")
-                if (s.debts.isNotEmpty()) s.pendMove = a + b + rush else moveDice(s, seat, a + b + rush)
-            } else { say(s, "@$seat sigue en la cárcel (${s.jt[seat]}/${s.jmax[seat]})"); s.again = false }
+                say(s, "@$seat cumple su condena y sale de la cárcel", "free")
+                moveDice(s, seat, a + b + rush)
+            } else { s.jc[seat]++; s.jt[seat]++; say(s, "@$seat sigue en la cárcel (${s.jt[seat]}/${s.jmax[seat]})"); s.again = false } // jc: turnos que ha pasado en la cárcel (objetivo secreto)
         } else if (a == b) {
             if (s.evk == "police" && s.evl[seat] > 0) sendJail(s, seat, ": la policía lo pilla sacando dobles")
             else if (++s.dbl >= 3) { say(s, "@$seat saca tres dobles seguidos"); sendJail(s, seat, "") }
@@ -1002,7 +1020,7 @@ object Poly {
                     'h' -> {
                         s.cash[seat] -= c; s.spent(seat)
                         s.lvl[i]++
-                        if (s.lvl[i] == 5) s.hb[seat] = 1 // objetivo secreto: ha construido un hotel
+                        s.hb[seat]++ // objetivo secreto: edificios construidos
                         say(s, "@$seat construye ${if (s.lvl[i] == 5) "un hotel" else "una casa"} en ${q.n}", "build", seat = seat, sq = i, amt = -c)
                     }
                     's' -> {
@@ -1049,15 +1067,18 @@ object Poly {
                 val k = arg.toIntOrNull() ?: return "Objeto no válido"
                 val item = SHOP[k] ?: return "Objeto no válido"
                 if (k in NOT_FOR_SALE) return "Objeto no válido"
+                if (k !in s.stock) return "Ese objeto no está en la tienda ahora"
                 if (s.sh[seat] != 0) return "Solo puedes comprar un objeto por visita"
                 val have = when (k) { 1 -> s.mc[seat]; 2 -> s.tri[seat]; 3 -> s.dj[seat]; 4 -> s.tk[seat]; 5 -> s.ob[seat]; 6 -> s.sw[seat]; 7 -> s.pl[seat]; else -> s.rt[seat] }
                 if (have > 0 || (s.sb[seat] shr k) and 1 == 1) return "Ya has comprado ese objeto"
                 if (k != 3 && s.heldItems(seat) >= MAX_ITEMS) return "Solo puedes llevar dos objetos a la vez"
-                if (s.cash[seat] < item.second) return "No tienes dinero"
+                val price = shopPrice(s, k); val daily = s.dayItem == k
+                if (s.cash[seat] < price) return "No tienes dinero"
                 if (dry) return null
-                s.cash[seat] -= item.second; s.spent(seat); s.sh[seat] = 1; s.sb[seat] = s.sb[seat] or (1 shl k); s.gx[seat] = s.gx[seat] or (1 shl k)
+                s.cash[seat] -= price; s.spent(seat); s.sh[seat] = 1; s.sb[seat] = s.sb[seat] or (1 shl k); s.gx[seat] = s.gx[seat] or (1 shl k)
                 when (k) { 1 -> s.mc[seat]++; 2 -> s.tri[seat]++; 3 -> s.dj[seat]++; 4 -> s.tk[seat]++; 5 -> s.ob[seat]++; 6 -> s.sw[seat]++; 7 -> s.pl[seat]++; else -> s.rt[seat]++ }
-                say(s, "@$seat compra ${item.first} en la tienda por ${eur(item.second)}", "buy", seat = seat, amt = item.second)
+                say(s, "@$seat compra ${item.first} en la tienda por ${eur(price)}${if (daily) " (objeto del día)" else ""}", "buy", seat = seat, amt = price)
+                if (daily) { s.dayItem = 0; s.stock = s.stock.filter { it != k } } // el objeto del día es una sola unidad
                 return ok()
             }
             'B' -> {
