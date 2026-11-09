@@ -142,7 +142,7 @@ export async function resetPassword(rawEmail) {
   catch (e) { throw e.message === 'Usuario o contraseña incorrectos' ? new Error('No hay ninguna cuenta con ese correo') : e; }
 }
 
-export function signOut() { saveSession(null); lastShownPoke = -1; unread.clear(); friendUidsCache = []; }
+export function signOut() { saveSession(null); lastShownPoke = -1; unread.clear(); friendUidsCache = []; pending = 0; }
 
 export async function myProfile() { const s = await live(); return profile(s.uid, (await getAll('users', [s.uid]))[s.uid]); }
 /** Guarda la miniatura (la de las listas) y, aparte, la foto en alta resolución para cuando se amplía. */
@@ -173,15 +173,29 @@ export async function search(raw) {
   return (await query('users', where, 10)).map((d) => profile(idOf(d.name), d)).filter((p) => p.uid !== me);
 }
 
+const groupOf = (d) => ({ id: idOf(d.name), name: text(d, 'name'), desc: text(d, 'desc'), photo: text(d, 'photo'), owner: text(d, 'owner'), members: list(d, 'members'), invited: list(d, 'invited'), lastFrom: text(d, 'lastFrom'), lastAt: time(d, 'lastAt') });
+
 export async function overview() {
   const me = (await live()).uid;
   const friendUids = (await query('friends', filter('members', 'ARRAY_CONTAINS', str(me)))).map((d) => list(d, 'members').find((u) => u !== me));
   const incomingUids = (await query('requests', filter('to', 'EQUAL', str(me)))).map((d) => text(d, 'from'));
   const outgoing = new Set((await query('requests', filter('from', 'EQUAL', str(me)))).map((d) => text(d, 'to')));
-  const profiles = await getAll('users', [...new Set([...friendUids, ...incomingUids])]);
+  // grupos (si todavía no se han publicado las reglas nuevas, simplemente no salen)
+  let groups = [], groupInvites = [];
+  try {
+    groups = (await query('groups', filter('members', 'ARRAY_CONTAINS', str(me)))).map(groupOf).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    groupInvites = (await query('groups', filter('invited', 'ARRAY_CONTAINS', str(me)))).map(groupOf);
+  } catch { /* sin grupos */ }
+  const profiles = await getAll('users', [...new Set([...friendUids, ...incomingUids, ...groupInvites.map((g) => g.owner)])]);
   const presence = await getAll('presence', friendUids).catch(() => ({}));
   const pokes = await getAll('pokes', friendUids.map((u) => `${u}_${me}`)).catch(() => ({}));
+  pending = incomingUids.length + groupInvites.length;
+  for (const k of [...unread.keys()]) if (isGroup(k) && !groups.some((g) => 'g:' + g.id === k)) unread.delete(k);
+  for (const g of groups) { const key = 'g:' + g.id; unread.set(key, !!g.lastFrom && g.lastFrom !== me && g.lastAt > chatRead(key)); }
+  paintBadge();
   return {
+    groups,
+    groupInvites: groupInvites.map((g) => ({ ...g, ownerName: profile(g.owner, profiles[g.owner]).username })),
     friends: friendUids.map((u) => ({ profile: profile(u, profiles[u]), lastSeen: time(presence[u], 'lastSeen'), lastPokeAt: time(pokes[`${u}_${me}`], 'at'), studying: presence[u]?.fields?.studying?.booleanValue === true }))
       .sort((a, b) => a.profile.username.localeCompare(b.profile.username)),
     incoming: incomingUids.map((u) => profile(u, profiles[u])),
@@ -201,17 +215,61 @@ export async function accept(uid) {
 export async function decline(uid) { await commit(del(`requests/${uid}_${(await live()).uid}`)); }
 export async function removeFriend(uid) { const m = [(await live()).uid, uid].sort(); await commit(del(`friends/${m[0]}_${m[1]}`)); }
 
+// ───────── grupos ─────────
+
+/** Cambia listas de un documento sin pisar lo que hayan hecho otros a la vez: añade o quita uid de una lista (`op` = appendMissingElements | removeAllFromArray). */
+const arrayOps = (path, ops) => ({
+  update: { name: `${DB}/${path}`, fields: {} }, updateMask: { fieldPaths: [] }, currentDocument: { exists: true },
+  updateTransforms: ops.map(([field, op, uids]) => ({ fieldPath: field, [op]: { values: uids.map(str) } })),
+});
+export const MAX_GROUP = 10;
+
+/** Crea el grupo con quien lo crea dentro y manda la invitación a los amigos elegidos (hasta 9). */
+export async function createGroup({ name, desc, photo, invite }) {
+  const me = (await live()).uid, id = uid(), n = name.trim().slice(0, 40);
+  if (!n) throw new Error('Ponle un nombre al grupo');
+  if (invite.length > MAX_GROUP - 1) throw new Error(`Un grupo puede tener hasta ${MAX_GROUP} personas`);
+  await commit(write(`groups/${id}`, { owner: str(me), name: str(n), desc: str((desc || '').trim().slice(0, 200)), photo: str(photo || ''), members: strs([me]), invited: strs(invite) }, { serverTime: 'at' }));
+  return id;
+}
+export async function getGroup(id) { const d = (await getAll('groups', [id]).catch(() => ({})))[id]; return d ? groupOf(d) : null; }
+export async function acceptGroup(id) { const me = (await live()).uid; await commit(arrayOps(`groups/${id}`, [['members', 'appendMissingElements', [me]], ['invited', 'removeAllFromArray', [me]]])); }
+export async function declineGroup(id) { const me = (await live()).uid; await commit(arrayOps(`groups/${id}`, [['invited', 'removeAllFromArray', [me]]])); }
+export async function leaveGroup(id) { const me = (await live()).uid; await commit(arrayOps(`groups/${id}`, [['members', 'removeAllFromArray', [me]]])); }
+export async function kickFromGroup(id, uidToRemove) { await commit(arrayOps(`groups/${id}`, [['members', 'removeAllFromArray', [uidToRemove]]])); }
+export async function inviteToGroup(id, uids) { await commit(arrayOps(`groups/${id}`, [['invited', 'appendMissingElements', uids]])); }
+export async function deleteGroup(id) { await commit(del(`groups/${id}`)); }
+export async function editGroup(id, { name, desc, photo }) {
+  const n = name.trim().slice(0, 40);
+  if (!n) throw new Error('Ponle un nombre al grupo');
+  await commit(writeMask(`groups/${id}`, { name: str(n), desc: str((desc || '').trim().slice(0, 200)), photo: str(photo || '') }, ['name', 'desc', 'photo']));
+}
+/** Perfiles (nombre y foto) de varias personas, por uid. */
+async function profilesOf(uids) { const d = await getAll('users', [...new Set(uids)]); return new Map(uids.map((u) => [u, profile(u, d[u])])); }
+
 // ───────── chat ─────────
 
 const pairId = (a, b) => (a < b ? `${a}_${b}` : `${b}_${a}`);
 const readKey = (pair) => 'ev.chatRead.' + pair;
 const chatRead = (pair) => Number(localStorage.getItem(readKey(pair)) || 0);
-/** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
+/** Amigos y grupos con mensajes sin leer (para el punto de la lista y el de la cabecera). Los grupos van con la clave «g:<id>». */
 const unread = new Map();
 let friendUidsCache = [], friendsFetchedAt = 0;
-export const anyUnread = () => [...unread.values()].some(Boolean);
+/** Solicitudes de amistad e invitaciones a grupos que esperan respuesta (también encienden el punto de la cabecera). */
+let pending = 0;
+export const anyUnread = () => pending > 0 || [...unread.values()].some(Boolean);
+const paintBadge = () => document.querySelector('.top-row .round[aria-label=Amigos]')?.classList.toggle('badge', anyUnread());
 
-const msgOf = (d, me) => ({ id: idOf(d.name), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0), rq: text(d, 'rq'), rf: text(d, 'rf'), del: d.fields?.del?.booleanValue === true });
+/** Un chat es con un amigo (se identifica por su uid) o con un grupo (clave «g:<id>»). */
+const isGroup = (key) => typeof key === 'string' && key.startsWith('g:');
+/** Dónde vive el chat en Firestore: chats/<pareja> o groups/<id>. */
+const chatBase = async (key) => (isGroup(key) ? `groups/${key.slice(2)}` : `chats/${pairId((await live()).uid, key)}`);
+/** Clave con la que se recuerda hasta dónde has leído. */
+const chatKey = (key) => (isGroup(key) ? key : pairId(session.uid, key));
+/** Anota quién escribió el último mensaje y cuándo (en el documento del chat o en el del grupo). */
+const metaWrite = (base, me) => (base.startsWith('groups/') ? writeMask(base, { lastFrom: str(me) }, ['lastFrom'], 'lastAt') : write(base, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+
+const msgOf = (d, me) => ({ id: idOf(d.name), from: text(d, 'from'), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0), rq: text(d, 'rq'), rf: text(d, 'rf'), del: d.fields?.del?.booleanValue === true });
 
 async function queryUnder(parent, structured) {
   const arr = JSON.parse(await postText(`${DOCS}/${parent}:runQuery`, JSON.stringify({ structuredQuery: structured }), { token: (await live()).idToken }));
@@ -226,60 +284,69 @@ async function checkChats() {
     friendUidsCache = (await query('friends', filter('members', 'ARRAY_CONTAINS', str(me)))).map((d) => list(d, 'members').find((u) => u !== me));
     friendsFetchedAt = Date.now();
   }
-  if (!friendUidsCache.length) return;
-  const metas = await getAll('chats', friendUidsCache.map((u) => pairId(me, u)));
-  for (const u of friendUidsCache) {
-    const pair = pairId(me, u), meta = metas[pair];
-    unread.set(u, !!meta && text(meta, 'lastFrom') !== me && time(meta, 'lastAt') > chatRead(pair));
+  if (friendUidsCache.length) {
+    const metas = await getAll('chats', friendUidsCache.map((u) => pairId(me, u)));
+    for (const u of friendUidsCache) {
+      const pair = pairId(me, u), meta = metas[pair];
+      unread.set(u, !!meta && text(meta, 'lastFrom') !== me && time(meta, 'lastAt') > chatRead(pair));
+    }
   }
-  document.querySelector('.top-row .round[aria-label=Amigos]')?.classList.toggle('badge', anyUnread());
+  // grupos, invitaciones a grupos y solicitudes de amistad
+  try {
+    const [mine, invites, reqs] = await Promise.all([
+      query('groups', filter('members', 'ARRAY_CONTAINS', str(me))), query('groups', filter('invited', 'ARRAY_CONTAINS', str(me))), query('requests', filter('to', 'EQUAL', str(me)))]);
+    for (const k of [...unread.keys()]) if (isGroup(k) && !mine.some((g) => 'g:' + idOf(g.name) === k)) unread.delete(k);
+    for (const g of mine) { const key = 'g:' + idOf(g.name), from = text(g, 'lastFrom'); unread.set(key, !!from && from !== me && time(g, 'lastAt') > chatRead(key)); }
+    pending = invites.length + reqs.length;
+  } catch { /* sin reglas de grupos: no pasa nada */ }
+  paintBadge();
 }
 
 /** Mensajes del chat: los 50 últimos si `after` es 0, o solo los posteriores a `after` (ms). */
 async function chatMessages(friendUid, after) {
-  const me = (await live()).uid, pair = pairId(me, friendUid), base = { from: [{ collectionId: 'messages' }] };
+  const me = (await live()).uid, path = await chatBase(friendUid), base = { from: [{ collectionId: 'messages' }] };
   const q = after <= 0 ? { ...base, orderBy: orderByAt('DESCENDING'), limit: 50 }
     : { ...base, where: filter('at', 'GREATER_THAN', { timestampValue: new Date(after).toISOString() }), orderBy: orderByAt('ASCENDING'), limit: 100 };
-  const msgs = (await queryUnder(`chats/${pair}`, q)).map((d) => (msgOf(d, me)));
+  const msgs = (await queryUnder(path, q)).map((d) => (msgOf(d, me)));
   return after > 0 ? msgs : msgs.reverse();
 }
 
 /** Los 50 mensajes anteriores a `before` (ms): se piden al subir en la conversación, así el historial no tiene límite. */
 async function chatOlder(friendUid, before) {
-  const me = (await live()).uid, pair = pairId(me, friendUid);
+  const me = (await live()).uid, path = await chatBase(friendUid);
   const q = { from: [{ collectionId: 'messages' }], where: filter('at', 'LESS_THAN', { timestampValue: new Date(before).toISOString() }), orderBy: orderByAt('DESCENDING'), limit: 50 };
-  return (await queryUnder(`chats/${pair}`, q)).map((d) => (msgOf(d, me))).reverse();
+  return (await queryUnder(path, q)).map((d) => (msgOf(d, me))).reverse();
 }
 
 /** `reply` = { msg, preview }: mensaje al que se responde; se guarda un extracto y su autor para enseñarlo encima. */
 async function sendMessage(friendUid, textMsg, reply) {
-  const me = (await live()).uid, pair = pairId(me, friendUid), t = textMsg.trim().slice(0, 5000);
+  const me = (await live()).uid, base = await chatBase(friendUid), t = textMsg.trim().slice(0, 5000);
   if (!t) return;
   await commit(
-    write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(t), ...(reply ? { rid: str(reply.msg.id), rq: str(reply.preview.slice(0, 120)), rf: str(reply.msg.mine ? me : friendUid) } : {}) }, { serverTime: 'at' }),
-    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+    write(`${base}/messages/${uid()}`, { from: str(me), text: str(t), ...(reply ? { rid: str(reply.msg.id), rq: str(reply.preview.slice(0, 120)), rf: str(reply.msg.from || (reply.msg.mine ? me : friendUid)) } : {}) }, { serverTime: 'at' }),
+    metaWrite(base, me));
 }
 
 /** Borra un mensaje propio para los dos: queda vacío y marcado, y si llevaba audio o foto se borra también su contenido. */
 async function deleteMessage(friendUid, id, kind) {
-  const pair = pairId((await live()).uid, friendUid);
-  await commit(writeMask(`chats/${pair}/messages/${id}`, { del: boolV(true), text: str(''), rq: str('') }, ['del', 'text', 'rq'], 'delAt'),
-    ...(kind === 'audio' || kind === 'image' ? [del(`chats/${pair}/audio/${id}`)] : []));
+  const base = await chatBase(friendUid);
+  await commit(writeMask(`${base}/messages/${id}`, { del: boolV(true), text: str(''), rq: str('') }, ['del', 'text', 'rq'], 'delAt'),
+    ...(kind === 'audio' || kind === 'image' ? [del(`${base}/audio/${id}`)] : []));
 }
 
 /** Mensajes borrados desde `since` (ms): así el otro lado los ve sin volver a leer todo el chat. */
 async function chatDeletions(friendUid, since) {
-  const pair = pairId((await live()).uid, friendUid);
+  const path = await chatBase(friendUid);
   const q = { from: [{ collectionId: 'messages' }], where: filter('delAt', 'GREATER_THAN', { timestampValue: new Date(since).toISOString() }), orderBy: [{ field: { fieldPath: 'delAt' }, direction: 'ASCENDING' }], limit: 50 };
-  const docs = await queryUnder(`chats/${pair}`, q);
+  const docs = await queryUnder(path, q);
   return { ids: docs.map((d) => idOf(d.name)), max: Math.max(0, ...docs.map((d) => time(d, 'delAt'))) };
 }
 
 function markRead(friendUid, at) {
   if (!session) return;
-  localStorage.setItem(readKey(pairId(session.uid, friendUid)), String(at));
+  localStorage.setItem(readKey(chatKey(friendUid)), String(at));
   unread.set(friendUid, false);
-  document.querySelector('.top-row .round[aria-label=Amigos]')?.classList.toggle('badge', anyUnread());
+  paintBadge();
 }
 
 // ───── ajedrez: partidas en la nube ─────
@@ -410,13 +477,13 @@ const blobToB64 = (blob) => new Promise((res, rej) => { const r = new FileReader
 
 /** Manda un audio: el contenido va en su propio documento y el mensaje solo lleva la duración (así el chat carga ligero). */
 async function sendAudio(friendUid, blob, mime, durMs) {
-  const me = (await live()).uid, pair = pairId(me, friendUid), b64 = await blobToB64(blob);
+  const me = (await live()).uid, base = await chatBase(friendUid), b64 = await blobToB64(blob);
   if (b64.length > 700000) throw new Error('El audio es demasiado largo');
   const id = uid();
   await commit(
-    write(`chats/${pair}/audio/${id}`, { from: str(me), data: str(b64) }),
-    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('audio'), dur: intV(durMs), mime: str(mime.slice(0, 39)) }, { serverTime: 'at' }),
-    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+    write(`${base}/audio/${id}`, { from: str(me), data: str(b64) }),
+    write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('audio'), dur: intV(durMs), mime: str(mime.slice(0, 39)) }, { serverTime: 'at' }),
+    metaWrite(base, me));
 }
 
 /** Reduce la foto (lado largo 1280 px, JPEG) hasta que quepa en un documento (< 700.000 caracteres en base64). */
@@ -436,17 +503,17 @@ async function photoToB64(file) {
 /** Manda una foto: el contenido va en su propio documento y el mensaje solo avisa de que es una foto. */
 async function sendPhoto(friendUid, file) {
   if (!file.type.startsWith('image/')) throw new Error('Solo se pueden enviar fotos');
-  const me = (await live()).uid, pair = pairId(me, friendUid), b64 = await photoToB64(file), id = uid();
+  const me = (await live()).uid, base = await chatBase(friendUid), b64 = await photoToB64(file), id = uid();
   await commit(
-    write(`chats/${pair}/audio/${id}`, { from: str(me), data: str(b64) }),
-    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('image'), mime: str('image/jpeg') }, { serverTime: 'at' }),
-    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+    write(`${base}/audio/${id}`, { from: str(me), data: str(b64) }),
+    write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('image'), mime: str('image/jpeg') }, { serverTime: 'at' }),
+    metaWrite(base, me));
 }
 
 const photoCache = new Map();
 async function photoUrl(friendUid, msg) {
   if (photoCache.has(msg.id)) return photoCache.get(msg.id);
-  const pair = pairId((await live()).uid, friendUid), data = text((await getAll(`chats/${pair}/audio`, [msg.id]))[msg.id], 'data');
+  const data = text((await getAll(`${await chatBase(friendUid)}/audio`, [msg.id]))[msg.id], 'data');
   if (!data) throw new Error('No se pudo cargar la foto');
   const url = `data:image/jpeg;base64,${data}`;
   photoCache.set(msg.id, url);
@@ -456,7 +523,7 @@ async function photoUrl(friendUid, msg) {
 const audioCache = new Map();
 async function audioUrl(friendUid, msg) {
   if (audioCache.has(msg.id)) return audioCache.get(msg.id);
-  const pair = pairId((await live()).uid, friendUid), data = text((await getAll(`chats/${pair}/audio`, [msg.id]))[msg.id], 'data');
+  const data = text((await getAll(`${await chatBase(friendUid)}/audio`, [msg.id]))[msg.id], 'data');
   if (!data) throw new Error('No se pudo cargar el audio');
   const url = `data:${(msg.mime || 'audio/mp4').split(';')[0]};base64,${data}`;
   audioCache.set(msg.id, url);
@@ -491,8 +558,148 @@ function openGames(onWordle, onChess, onPoly) {
   });
 }
 
-/** Chat con un amigo: los mensajes se ven en cuanto llegan (se consultan cada 3 s mientras la pantalla está abierta). */
+
+// ───────── grupos: crear, ver y gestionar ─────────
+
+/** Lista de amigos con casillas para elegir a quién invitar (`exclude` = quienes ya están o ya están invitados). */
+function friendPicker(friends, exclude, max) {
+  const picked = new Set(), box = h('div', { class: 'pick-list' }), note = h('small', { class: 'dim' });
+  const rows = friends.filter((f) => !exclude.includes(f.uid)).map((f) => {
+    const cb = h('input', { type: 'checkbox' });
+    cb.addEventListener('change', () => {
+      if (cb.checked && picked.size >= max) { cb.checked = false; toast(`Un grupo puede tener hasta ${MAX_GROUP} personas`); return; }
+      cb.checked ? picked.add(f.uid) : picked.delete(f.uid);
+      note.textContent = picked.size ? `${picked.size} elegido${picked.size === 1 ? '' : 's'}` : '';
+    });
+    return h('label', { class: 'person pick-row' }, avatar(f.username, f.photo, 36, null, f.uid), h('span', { class: 'grow' }, f.username), cb);
+  });
+  box.append(...(rows.length ? rows : [h('p', { class: 'dim small' }, 'No hay más amigos a quienes invitar.')]));
+  return { el: h('div', { class: 'stack' }, box, note), selected: () => [...picked] };
+}
+
+/** Foto del grupo: botón con la vista previa; al tocarlo se elige y se recorta. */
+function groupPhotoPicker(name, initial) {
+  let photo = initial || '';
+  const holder = h('button', { class: 'plain group-photo-btn', type: 'button', 'aria-label': 'Elegir foto del grupo' });
+  const placeholder = () => h('div', { class: 'avatar', style: { width: '84px', height: '84px' } }, icon('people', 38));
+  const paint = () => holder.replaceChildren(photo || name() ? avatar(name() || '?', photo, 84) : placeholder(), h('small', { class: 'dim' }, photo ? 'Cambiar foto' : 'Añadir foto'));
+  const file = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
+  file.onchange = async () => {
+    const f = file.files[0]; file.value = '';
+    if (!f) return;
+    const b = await openCrop(f);
+    if (b) { photo = b.thumb; paint(); }
+  };
+  holder.onclick = () => file.click();
+  paint();
+  return { el: h('div', { class: 'group-photo' }, holder, file), value: () => photo, repaint: paint };
+}
+
+/** «Nuevo grupo»: nombre, descripción, foto y a qué amigos se invita. `onCreated(id)` se llama al terminar. */
+function openCreateGroup(friends, onCreated) {
+  const name = h('input', { class: 'field', placeholder: 'Nombre del grupo', maxlength: 40 });
+  const desc = h('textarea', { class: 'field', rows: 3, placeholder: 'Descripción (opcional)', maxlength: 200 });
+  const photo = groupPhotoPicker(() => name.value.trim().slice(0, 1).toUpperCase(), '');
+  const pick = friendPicker(friends, [], MAX_GROUP - 1);
+  const m = modal({
+    title: 'Nuevo grupo',
+    content: h('div', { class: 'stack' }, photo.el, name, desc, h('h3', {}, 'Invitar amigos'), pick.el,
+      h('small', { class: 'dim' }, 'Les llegará una invitación y entrarán cuando la acepten.')),
+    actions: [{ label: 'Cancelar' }, { label: 'Crear grupo', primary: true, onClick: async () => {
+      if (!name.value.trim()) { toast('Ponle un nombre al grupo'); return false; }
+      try { const id = await createGroup({ name: name.value, desc: desc.value, photo: photo.value(), invite: pick.selected() }); toast('Grupo creado'); onCreated?.(id); }
+      catch (e) { toast(e.message || 'No se pudo crear el grupo'); return false; }
+    } }],
+  });
+  name.addEventListener('input', () => { if (!photo.value()) photo.repaint(); });
+  setTimeout(() => name.focus(), 50);
+  return m;
+}
+
+/** Información del grupo: miembros y, según seas quien lo creó o no, editar, invitar, echar, eliminar o salir. */
+function openGroupInfo(group0, { onChanged, onGone } = {}) {
+  const me = session.uid;
+  let g = group0, profs = new Map(), m;
+  const body = h('div', { class: 'stack group-info' });
+  const isOwner = () => g.owner === me;
+  async function reload() {
+    const fresh = await getGroup(g.id);
+    if (!fresh || !fresh.members.includes(me)) { m.close(); onGone?.(); return; }
+    g = fresh;
+    profs = await profilesOf([...g.members, ...g.invited]);
+    paint();
+    onChanged?.(g);
+  }
+  const run = (fn) => async () => { try { await fn(); await reload(); } catch (e) { toast(e.message || 'No se pudo completar'); } };
+  const nameOf = (u) => profs.get(u)?.username || '?';
+
+  function editDialog() {
+    const name = h('input', { class: 'field', placeholder: 'Nombre del grupo', maxlength: 40, value: g.name });
+    const desc = h('textarea', { class: 'field', rows: 3, placeholder: 'Descripción', maxlength: 200 }, g.desc);
+    const photo = groupPhotoPicker(() => name.value.trim().slice(0, 1).toUpperCase(), g.photo);
+    modal({
+      title: 'Editar grupo', content: h('div', { class: 'stack' }, photo.el, name, desc),
+      actions: [{ label: 'Cancelar' }, { label: 'Guardar', primary: true, onClick: async () => {
+        try { await editGroup(g.id, { name: name.value, desc: desc.value, photo: photo.value() }); await reload(); }
+        catch (e) { toast(e.message || 'No se pudo guardar'); return false; }
+      } }],
+    });
+  }
+  async function inviteDialog() {
+    let friends = [];
+    try { friends = (await overview()).friends.map((f) => f.profile); } catch (e) { toast(e.message || 'Sin conexión'); return; }
+    const pick = friendPicker(friends, [...g.members, ...g.invited], MAX_GROUP - g.members.length - g.invited.length);
+    modal({
+      title: 'Invitar al grupo', content: pick.el,
+      actions: [{ label: 'Cancelar' }, { label: 'Invitar', primary: true, onClick: async () => {
+        const sel = pick.selected();
+        if (!sel.length) return;
+        try { await inviteToGroup(g.id, sel); toast('Invitación enviada'); await reload(); }
+        catch (e) { toast(e.message || 'No se pudo invitar'); return false; }
+      } }],
+    });
+  }
+
+  function personRow(u, pendingInvite) {
+    const kick = isOwner() && u !== me && !pendingInvite
+      ? h('button', { class: 'icon-btn', 'aria-label': 'Quitar del grupo', onclick: async () => { if (await confirmDialog('Quitar del grupo', `¿Quitar a ${nameOf(u)} del grupo?`, 'Quitar')) run(() => kickFromGroup(g.id, u))(); } }, icon('userMinus', 20)) : null;
+    return h('div', { class: 'person' }, avatar(nameOf(u), profs.get(u)?.photo || '', 38, null, u),
+      h('span', { class: 'grow' }, nameOf(u) + (u === me ? ' (tú)' : '')),
+      u === g.owner ? h('small', { class: 'dim' }, 'Creador') : pendingInvite ? h('small', { class: 'dim' }, 'Invitado') : null, kick);
+  }
+  function paint() {
+    body.replaceChildren(
+      h('div', { class: 'group-head' }, avatar(g.name, g.photo, 84), h('h2', {}, g.name), g.desc ? h('p', { class: 'dim' }, g.desc) : h('p', { class: 'dim small' }, 'Sin descripción')),
+      h('h3', {}, `Miembros (${g.members.length}/${MAX_GROUP})`), ...g.members.map((u) => personRow(u, false)),
+      ...(g.invited.length ? [h('h3', {}, 'Invitaciones pendientes'), ...g.invited.map((u) => personRow(u, true))] : []),
+      isOwner()
+        ? h('div', { class: 'stack' },
+          h('div', { class: 'row gap' },
+            h('button', { class: 'btn outline', onclick: editDialog }, icon('pen', 18), ' Editar'),
+            h('button', { class: 'btn outline', disabled: g.members.length + g.invited.length >= MAX_GROUP, onclick: inviteDialog }, icon('userPlus', 18), ' Invitar')),
+          h('button', { class: 'text-btn danger', onclick: async () => {
+            if (!(await confirmDialog('Eliminar grupo', 'Se eliminará para todos y se perderán sus mensajes.', 'Eliminar'))) return;
+            try { await deleteGroup(g.id); m.close(); onGone?.(); } catch (e) { toast(e.message || 'No se pudo eliminar'); }
+          } }, 'Eliminar grupo'))
+        : h('button', { class: 'text-btn danger', onclick: async () => {
+          if (!(await confirmDialog('Salir del grupo', 'Dejarás de ver sus mensajes.', 'Salir'))) return;
+          try { await leaveGroup(g.id); m.close(); onGone?.(); } catch (e) { toast(e.message || 'No se pudo salir'); }
+        } }, 'Salir del grupo'));
+  }
+  m = modal({ title: 'Grupo', content: body, wide: true, actions: [{ label: 'Cerrar', primary: true }] });
+  body.replaceChildren(h('p', { class: 'dim' }, 'Cargando…'));
+  reload().catch(() => { paint(); });
+  return m;
+}
+let onGroupsChanged = null; // la pantalla de amigos se refresca cuando cambia un grupo desde su chat
+
+/** Chat con un amigo o con un grupo (`friend.group`): los mensajes se ven en cuanto llegan (se consultan cada 3 s mientras la pantalla está abierta). */
 function openChat(friend) {
+  const group = friend.group || null; // si es un grupo: { id, name, desc, photo, owner, members, invited }
+  let profs = new Map(); // uid -> perfil de quienes escriben en el grupo
+  const knowProfs = async (uids) => { const miss = [...new Set(uids)].filter((u) => u && !profs.has(u)); if (group && miss.length) { try { profs = new Map([...profs, ...(await profilesOf(miss))]); } catch { /* se reintenta */ } } };
+  const profsReady = group ? knowProfs(group.members) : Promise.resolve();
+  const who = (u) => (u === session?.uid ? 'Tú' : group ? (profs.get(u)?.username || 'Alguien') : friend.username);
   const listEl = h('div', { class: 'chat-list' });
   const input = h('input', { class: 'field', placeholder: 'Mensaje', maxlength: 5000, autocomplete: 'off' });
   const clipBtn = h('button', { class: 'icon-btn', 'aria-label': 'Minijuegos', onclick: () => openGames(
@@ -514,13 +721,13 @@ function openChat(friend) {
   } });
   const photoBtn = h('button', { class: 'icon-btn', 'aria-label': 'Foto', onclick: () => fileInput.click() }, icon('clip'));
   const actionBtn = h('button', { class: 'icon-btn accent' });
-  const normalRow = h('div', { class: 'rec-row' }, clipBtn, photoBtn, fileInput, input, actionBtn);
+  const normalRow = h('div', { class: 'rec-row' }, group ? null : clipBtn, photoBtn, fileInput, input, actionBtn);
   let replyTo = null;
   const replyBar = h('div', { class: 'reply-bar', style: { display: 'none' } });
   const previewOf = (m) => m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? 'Audio' : m.kind === 'chess' ? 'Evadrez' : m.text.slice(0, 100);
   function setReply(m) {
     replyTo = m;
-    replyBar.replaceChildren(h('div', { class: 'grow' }, h('b', {}, m ? (m.mine ? 'Tú' : friend.username) : ''), h('small', {}, m ? previewOf(m) : '')),
+    replyBar.replaceChildren(h('div', { class: 'grow' }, h('b', {}, m ? who(m.from) : ''), h('small', {}, m ? previewOf(m) : '')),
       h('button', { class: 'icon-btn', 'aria-label': 'Cancelar respuesta', onclick: () => setReply(null) }, icon('close', 18)));
     replyBar.style.display = m ? '' : 'none';
     if (m) input.focus();
@@ -530,9 +737,16 @@ function openChat(friend) {
   const recRow = h('div', { class: 'rec-row', style: { display: 'none' } },
     h('button', { class: 'icon-btn', 'aria-label': 'Cancelar', onclick: () => cancelRec() }, icon('trash')), recDot, wave, h('span', { class: 'rtime' }, recTime),
     h('button', { class: 'icon-btn accent', 'aria-label': 'Enviar audio', onclick: () => finishRec(true) }, icon('send')));
+  // en un grupo, la cabecera (foto, nombre y número de miembros) abre la información del grupo
+  const headBtn = group ? h('button', { class: 'chat-head', type: 'button', 'aria-label': 'Información del grupo', onclick: () => openGroupInfo(group, {
+    onChanged: (g) => { Object.assign(group, g); paintHead(); onGroupsChanged?.(); },
+    onGone: () => { onGroupsChanged?.(); close(); },
+  }) }) : null;
+  const paintHead = () => headBtn?.replaceChildren(avatar(group.name, group.photo, 38), h('div', { class: 'grow' }, h('h1', {}, group.name), h('small', { class: 'dim' }, `${group.members.length} miembro${group.members.length === 1 ? '' : 's'} · toca para ver el grupo`)));
+  paintHead();
   const root = h('div', { class: 'pomo chat' },
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')),
-      avatar(friend.username, friend.photo, 38), h('h1', {}, friend.username)),
+      group ? headBtn : avatar(friend.username, friend.photo, 38), group ? null : h('h1', {}, friend.username)),
     listEl, replyBar, h('div', { class: 'chat-input' }, normalRow, recRow));
   const seen = new Set(); let lastAt = 0, firstAt = 0, timer, hasMore = true, loadingOlder = false, recording = null, recTimer = null;
   const cardTimers = [];
@@ -540,7 +754,7 @@ function openChat(friend) {
   const myself = myProfile().catch(() => ({ photo: '' }));
   const fmt = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
   // La foto sale junto al último mensaje de cada racha de la misma persona; en los demás queda el hueco.
-  const refreshAvatars = () => rows.forEach((r, i) => r.av.classList.toggle('hide', rows[i + 1]?.mine === r.mine));
+  const refreshAvatars = () => rows.forEach((r, i) => r.av.classList.toggle('hide', rows[i + 1]?.by === r.by));
 
   function audioBubble(m) {
     const btn = h('button', { class: 'icon-btn', 'aria-label': 'Reproducir', style: { color: 'inherit' } }, icon('play', 20));
@@ -627,14 +841,15 @@ function openChat(friend) {
 
   const makeRow = (m, me) => {
     seen.add(m.id);
-    const av = m.mine ? avatar(session?.username || '', me.photo, 32, null, session?.uid) : avatar(friend.username, friend.photo, 32, null, friend.uid);
-    const quote = m.rq ? h('div', { class: 'quote' }, h('b', {}, m.rf === session?.uid ? 'Tú' : friend.username), h('span', {}, m.rq)) : null;
+    const sender = group && !m.mine ? profs.get(m.from) : null;
+    const av = m.mine ? avatar(session?.username || '', me.photo, 32, null, session?.uid) : group ? avatar(sender?.username || '?', sender?.photo || '', 32, null, m.from) : avatar(friend.username, friend.photo, 32, null, friend.uid);
+    const quote = m.rq ? h('div', { class: 'quote' }, h('b', {}, who(m.rf)), h('span', {}, m.rq)) : null;
     const replyBtn = h('button', { class: 'reply-btn', 'aria-label': 'Responder', onclick: () => setReply(m) }, icon('reply', 16));
     const delBtn = h('button', { class: 'reply-btn', 'aria-label': 'Borrar', onclick: async () => {
       if (!(await confirmDialog('Borrar mensaje', '', 'Borrar'))) return;
       try { await deleteMessage(friend.uid, m.id, m.kind); markGone(m.id); } catch (e) { toast(e.message || 'No se pudo borrar'); }
     } }, icon('trash', 16));
-    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, group && !m.mine ? h('b', { class: 'sender' }, who(m.from)) : null, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
     const swipeIco = h('span', { class: 'swipe-ico' }, icon('reply', 20));
     const el = h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, swipeIco, ...(m.mine ? [delBtn, replyBtn, bubble, av] : [av, bubble, replyBtn]));
     // deslizar el mensaje hacia la derecha para responderle, como en WhatsApp
@@ -657,7 +872,7 @@ function openChat(friend) {
     ['pointerup', 'pointercancel'].forEach((ev) => el.addEventListener(ev, endSwipe));
     rowsById.set(m.id, { bubble, el, m, gone: false });
     if (m.del) { rowsById.get(m.id).gone = true; goneContent(bubble, m); delBtn.remove(); replyBtn.remove(); }
-    return { mine: m.mine, av, el };
+    return { mine: m.mine, by: m.from, av, el };
   };
   let loads = 0;
   async function load() {
@@ -669,6 +884,7 @@ function openChat(friend) {
     if (!fresh.length) return false;
     changed = true;
     const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80 || !seen.size;
+    await profsReady; await knowProfs(fresh.flatMap((m) => [m.from, m.rf]));
     const me = await myself;
     for (const m of fresh) { const r = makeRow(m, me); rows.push(r); listEl.append(r.el); }
     if (!firstAt) firstAt = Math.min(...fresh.map((m) => m.at));
@@ -687,6 +903,7 @@ function openChat(friend) {
       hasMore = raw.length >= 50;
       const older = raw.filter((m) => !seen.has(m.id));
       if (!older.length) return;
+      await profsReady; await knowProfs(older.flatMap((m) => [m.from, m.rf]));
       const me = await myself, before = listEl.scrollHeight, made = older.map((m) => makeRow(m, me));
       listEl.prepend(...made.map((r) => r.el)); rows.unshift(...made);
       firstAt = Math.min(...older.map((m) => m.at));
@@ -1060,7 +1277,12 @@ export function openSocial(onClose) {
     };
     myAvatar.onclick = () => picker.click();
     const search_ = h('input', { class: 'field', type: 'search', placeholder: 'Buscar personas por nombre de usuario', autocapitalize: 'none' });
-    const resultsEl = h('div', {}), incomingEl = h('div', {}), friendsEl = h('div', {});
+    const resultsEl = h('div', {}), incomingEl = h('div', {}), groupInvitesEl = h('div', {}), friendsEl = h('div', {}), groupsEl = h('div', {});
+    const groupChat = (g) => ({ uid: 'g:' + g.id, username: g.name, photo: g.photo, group: g });
+    const newGroup = () => {
+      if (!ov?.friends.length) { toast('Primero necesitas amigos para crear un grupo'); return; }
+      openCreateGroup(ov.friends.map((f) => f.profile), async (id) => { await refresh(); const g = ov?.groups.find((x) => x.id === id); if (g) root.append(openChat(groupChat(g))); });
+    };
     let st;
     search_.addEventListener('input', () => {
       clearTimeout(st);
@@ -1080,6 +1302,15 @@ export function openSocial(onClose) {
     }
     function paintLists() {
       if (!ov) { friendsEl.replaceChildren(h('p', { class: 'dim' }, 'Cargando…')); return; }
+      groupInvitesEl.replaceChildren(...(ov.groupInvites?.length ? [h('h3', {}, 'Invitaciones a grupos'), ...ov.groupInvites.map((g) => h('div', { class: 'person' }, avatar(g.name, g.photo, 42),
+        h('div', { class: 'grow' }, h('div', {}, g.name), h('div', { class: 'small dim' }, `${g.ownerName} te invita`)),
+        h('button', { class: 'icon-btn', style: { color: 'var(--accent)' }, 'aria-label': 'Aceptar', onclick: act(() => acceptGroup(g.id)) }, icon('check')),
+        h('button', { class: 'icon-btn', 'aria-label': 'Rechazar', onclick: act(() => declineGroup(g.id)) }, icon('close'))))] : []));
+      groupsEl.replaceChildren(h('div', { class: 'group-sep' }, h('h3', {}, 'Mis grupos'), h('button', { class: 'text-btn', onclick: newGroup }, icon('plus', 18), ' Nuevo grupo')),
+        ...(ov.groups?.length ? ov.groups.map((g) => h('div', { class: 'person group-row', onclick: (e) => { if (e.target.closest('.chat-btn')) return; root.append(openChat(groupChat(g))); } },
+          avatar(g.name, g.photo, 46), h('div', { class: 'grow' }, h('div', {}, g.name), h('div', { class: 'small dim' }, `Grupo · ${g.members.length} miembro${g.members.length === 1 ? '' : 's'}`)),
+          h('button', { class: 'icon-btn chat-btn', 'aria-label': 'Chat del grupo', onclick: () => root.append(openChat(groupChat(g))) }, icon('chat'), unread.get('g:' + g.id) ? h('i', { class: 'badge' }) : null)))
+          : [h('p', { class: 'dim small' }, 'Crea un grupo con tus amigos para chatear todos juntos.')]));
       incomingEl.replaceChildren(...(ov.incoming.length ? [h('h3', {}, 'Solicitudes'), ...ov.incoming.map((p) => personRow(p,
         h('button', { class: 'icon-btn', style: { color: 'var(--accent)' }, 'aria-label': 'Aceptar', onclick: act(() => accept(p.uid)) }, icon('check')),
         h('button', { class: 'icon-btn', 'aria-label': 'Rechazar', onclick: act(() => decline(p.uid)) }, icon('close'))))] : []));
@@ -1100,9 +1331,10 @@ export function openSocial(onClose) {
     body.replaceChildren(
       h('div', { class: 'me-card' }, myAvatar, h('div', { class: 'grow' }, h('div', { class: 'strong', style: { fontSize: '20px' } }, me.username), h('div', { class: 'dim small' }, 'Toca la foto para cambiarla · mantenla pulsada para verla grande')),
         h('button', { class: 'text-btn', onclick: () => { stopHost(); signOut(); showLogin(); } }, 'Salir'), picker),
-      search_, resultsEl, incomingEl, friendsEl);
+      search_, resultsEl, incomingEl, groupInvitesEl, friendsEl, groupsEl);
     myProfile().then((p) => { myPhoto = p.photo; paintMe(); }).catch(() => {});
     paintLists(); refresh();
+    onGroupsChanged = () => refresh();
     timers.push(setInterval(() => { if (!document.hidden) refresh(); }, 45000));
     // cuenta atrás de los corazones
     timers.push(setInterval(() => root.querySelectorAll('.seen').forEach((el) => paintPresence(el, Number(el.dataset.ts), el.dataset.st === '1')), 5000));
@@ -1113,7 +1345,7 @@ export function openSocial(onClose) {
     }), 1000));
   }
 
-  function close() { timers.forEach(clearInterval); root.remove(); onClose?.(); }
+  function close() { timers.forEach(clearInterval); onGroupsChanged = null; root.remove(); onClose?.(); }
   if (session) showPanel(); else showLogin();
   return root;
 }

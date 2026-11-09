@@ -37,6 +37,10 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -471,7 +475,7 @@ fun HomeScreen(
     }
     if (showTrash) TrashDialog(store, onChanged) { showTrash = false }
     sending?.let { SendDialog(it, store) { sending = null } }
-    if (showSettings) SettingsDialog(version, onCheckUpdate = { showSettings = false; onCheckUpdate() }) { showSettings = false }
+    if (showSettings) SettingsDialog(version, store, onChanged, onCheckUpdate = { showSettings = false; onCheckUpdate() }) { showSettings = false }
 
     renaming?.let { doc ->
         TextPromptDialog(
@@ -687,23 +691,24 @@ private fun TopRow(version: String, onAnalyze: () -> Unit, onSocial: () -> Unit,
     }
     Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(58.dp).scale(scale).clip(CircleShape)
+            // Cuadrado con las esquinas redondeadas, como el icono de la app: así no se corta la cabeza del Ternurín.
+            Modifier.size(58.dp).scale(scale).clip(RoundedCornerShape(15.dp))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                     bounce = true
-                    player?.let { it.seekTo(0); it.start() }
+                    if (!Prefs.logoMuted) player?.let { it.seekTo(0); it.start() }
                 }
-                .background(Brush.radialGradient(listOf(Surface2, Surface1)), CircleShape)
-                .border(1.dp, Outline, CircleShape),
+                .background(Color(0xFF1B1D24), RoundedCornerShape(15.dp))
+                .border(1.dp, Outline, RoundedCornerShape(15.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Image(painterResource(R.drawable.logo), contentDescription = "Evability", modifier = Modifier.padding(6.dp).fillMaxSize())
+            Image(painterResource(R.drawable.ic_fg), contentDescription = "Evability", modifier = Modifier.fillMaxSize().scale(1.3f))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text("Evability", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = OnSurface, letterSpacing = 0.4.sp)
             Text("v$version", fontSize = 12.sp, color = OnSurfaceDim)
         }
-        RoundIconButton(Icons.Default.People, "Amigos", onSocial, badge = Social.unread.values.any { it })
+        RoundIconButton(Icons.Default.People, "Amigos", onSocial, badge = Social.unread.values.any { it } || Social.pending > 0)
         Spacer(Modifier.width(10.dp))
         RoundIconButton(Icons.Default.SmartToy, "Analizar", onAnalyze)
         Spacer(Modifier.width(10.dp))
@@ -995,7 +1000,34 @@ private fun TrashDialog(store: Store, onChanged: () -> Unit, onDismiss: () -> Un
 }
 
 @Composable
-private fun SettingsDialog(version: String, onCheckUpdate: () -> Unit, onDismiss: () -> Unit) {
+private fun SettingsDialog(version: String, store: Store, onChanged: () -> Unit, onCheckUpdate: () -> Unit, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var logoMuted by remember { mutableStateOf(Prefs.logoMuted) }
+    var busy by remember { mutableStateOf(false) }
+    val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            try {
+                val n = withContext(Dispatchers.IO) { ctx.contentResolver.openOutputStream(uri)!!.use { Backup.export(store, it) } }
+                Toast.makeText(ctx, "Copia guardada con $n documento${if (n == 1) "" else "s"}", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(ctx, "No se pudo crear la copia", Toast.LENGTH_LONG).show()
+            } finally { busy = false }
+        }
+    }
+    val openBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            try {
+                val n = withContext(Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)!!.use { Backup.import(ctx, store, it) } }
+                Toast.makeText(ctx, if (n > 0) "Se han recuperado $n documento${if (n == 1) "" else "s"}" else "No había documentos nuevos en esa copia", Toast.LENGTH_LONG).show()
+                onChanged()
+            } catch (e: Exception) {
+                Toast.makeText(ctx, "No se pudo leer esa copia de seguridad", Toast.LENGTH_LONG).show()
+            } finally { busy = false }
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Ajustes") },
@@ -1018,6 +1050,24 @@ private fun SettingsDialog(version: String, onCheckUpdate: () -> Unit, onDismiss
                 BackgroundRow("Oscuros", Prefs.BACKGROUNDS)
                 BackgroundRow("Claros", Prefs.LIGHT_BACKGROUNDS)
                 GeminiKeySection()
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Copia de seguridad", color = OnSurfaceDim)
+                    Text(
+                        "Guarda todos tus documentos y anotaciones en un archivo .zip (por ejemplo en Google Drive) y recupéralos cuando quieras.",
+                        fontSize = 12.sp, color = OnSurfaceDim,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(enabled = !busy, onClick = { saveBackup.launch("evability-copia-${java.time.LocalDate.now()}.zip") }) { Text(if (busy) "Trabajando…" else "Exportar copia") }
+                        OutlinedButton(enabled = !busy, onClick = { openBackup.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) }) { Text("Importar copia") }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Silenciar icono del Ternurín", color = OnSurface)
+                        Text("El logo de arriba no suena al tocarlo", fontSize = 12.sp, color = OnSurfaceDim)
+                    }
+                    Switch(checked = logoMuted, onCheckedChange = { logoMuted = it; Prefs.logoMuted = it })
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Actualizaciones", color = OnSurfaceDim)
                     TextButton(onClick = onCheckUpdate, contentPadding = PaddingValues(0.dp)) {

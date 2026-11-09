@@ -1,7 +1,7 @@
 // Ternurín (método pomodoro): estudio y descanso se alternan con una alarma hasta que se pulsa Detener.
 // En el iPad una web no puede sonar con la app cerrada: el aviso funciona con la app abierta (se mantiene la pantalla encendida).
 
-import { h, icon, toast, modal } from './ui.js';
+import { h, icon, toast, modal, confirmDialog } from './ui.js';
 
 const KEY = 'ev.pomo';
 const S = Object.assign({ phase: 'IDLE', endAt: 0, phaseMs: 0, completed: 0, study: 25, rest: 5, muted: false }, JSON.parse(localStorage.getItem(KEY) || '{}'));
@@ -33,7 +33,7 @@ function addStudy(from, to) {
 
 /** Guarda el estudio transcurrido hasta ahora (nunca más allá del fin de la fase). Sin `force` espera a juntar 5 s. */
 function accrue(force) {
-  if (S.phase !== 'STUDY') return;
+  if (S.phase !== 'STUDY' || S.paused) return;
   const to = Math.min(Date.now(), S.endAt);
   if (!S.mark) S.mark = to;
   if (to - S.mark < (force ? 1 : 5000)) return;
@@ -45,7 +45,7 @@ function accrue(force) {
 /** Milisegundos estudiados en un día, incluido el tramo en curso que aún no se ha guardado. */
 export function studyMs(key) {
   let ms = studyLog()[key] || 0;
-  if (key === dayKey(new Date()) && S.phase === 'STUDY' && S.mark) ms += Math.max(0, Math.min(Date.now(), S.endAt) - S.mark);
+  if (key === dayKey(new Date()) && S.phase === 'STUDY' && !S.paused && S.mark) ms += Math.max(0, Math.min(Date.now(), S.endAt) - S.mark);
   if (key === dayKey(new Date()) && SS.start) ms += Math.max(0, Date.now() - SS.mark);
   return ms;
 }
@@ -80,7 +80,7 @@ function ring() {
 }
 
 function begin(phase) {
-  S.phase = phase;
+  S.phase = phase; S.paused = false; S.pausedLeft = 0;
   S.phaseMs = (phase === 'STUDY' ? S.study : S.rest) * 60000;
   S.endAt = Date.now() + S.phaseMs;
   S.mark = phase === 'STUDY' ? Date.now() : 0;
@@ -88,6 +88,7 @@ function begin(phase) {
 }
 
 function tick() {
+  if (S.paused) { emit(); return; } // en pausa el reloj no avanza
   accrue(false);
   if (S.phase !== 'IDLE' && Date.now() >= S.endAt) {
     accrue(true);
@@ -128,9 +129,25 @@ export function start(study, rest) {
   emit();
 }
 
+/** Pausa el reloj (guarda lo estudiado y lo que queda de la fase) o lo reanuda donde estaba. */
+export function togglePause() {
+  if (S.phase === 'IDLE') return;
+  if (!S.paused) {
+    accrue(true);
+    S.pausedLeft = Math.max(0, S.endAt - Date.now());
+    S.paused = true; S.mark = 0;
+  } else {
+    S.paused = false;
+    S.endAt = Date.now() + S.pausedLeft; S.pausedLeft = 0;
+    S.mark = S.phase === 'STUDY' ? Date.now() : 0;
+  }
+  save();
+  emit();
+}
+
 export function stop() {
   accrue(true);
-  S.phase = 'IDLE'; S.endAt = 0; S.mark = 0;
+  S.phase = 'IDLE'; S.endAt = 0; S.mark = 0; S.paused = false; S.pausedLeft = 0;
   save();
   clearInterval(timer); timer = null;
   keepAwake(false);
@@ -151,7 +168,7 @@ const SS = Object.assign({ start: 0, mark: 0 }, JSON.parse(localStorage.getItem(
 const saveSimple = () => localStorage.setItem(SKEY, JSON.stringify(SS));
 export const simpleRunning = () => SS.start > 0;
 /** Se está estudiando ahora mismo (fase de estudio del Ternurín o contador simple en marcha). */
-export const studying = () => S.phase === 'STUDY' || SS.start > 0;
+export const studying = () => (S.phase === 'STUDY' && !S.paused) || SS.start > 0;
 /** Hay algún método de tiempo en marcha (Ternurín o contador simple). */
 export const timeRunning = () => running() || simpleRunning();
 const startOfDay = (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
@@ -266,18 +283,20 @@ export function openPomodoro(onClose) {
   function update() {
     const run = S.phase !== 'IDLE';
     const total = run ? S.phaseMs : study * 60000;
-    const left = run ? Math.max(0, Math.min(total, S.endAt - Date.now())) : total;
+    const left = run ? (S.paused ? Math.min(total, S.pausedLeft) : Math.max(0, Math.min(total, S.endAt - Date.now()))) : total;
     const secs = Math.ceil(left / 1000);
     time.textContent = String(Math.floor(secs / 60)).padStart(2, '0') + ':' + String(secs % 60).padStart(2, '0');
-    label.textContent = S.phase === 'STUDY' ? 'Estudio' : S.phase === 'REST' ? 'Descanso' : 'Listo';
+    label.textContent = (S.phase === 'STUDY' ? 'Estudio' : S.phase === 'REST' ? 'Descanso' : 'Listo') + (S.paused ? ' · en pausa' : '');
     prog.style.stroke = S.phase === 'REST' ? '#A8E6CF' : 'var(--accent)';
     prog.setAttribute('stroke-dashoffset', C * (1 - (total ? left / total : 1)));
-    const sig = run ? 'run' : 'idle';
+    const sig = run ? (S.paused ? 'paused' : 'run') : 'idle';
     if (body.dataset.sig !== sig) {
       body.dataset.sig = sig;
       body.replaceChildren(...(run
         ? [h('p', { class: 'dim' }, ''), h('p', { class: 'dim small' }, 'Mantén esta pantalla abierta: el aviso suena con la app abierta.'),
-          h('button', { class: 'btn big', onclick: () => stop() }, icon('stop', 22), ' Detener')]
+          h('div', { class: 'row gap', style: { justifyContent: 'center' } },
+            h('button', { class: 'btn big outline', style: { minWidth: '150px' }, onclick: () => togglePause() }, icon(S.paused ? 'play' : 'pause', 22), S.paused ? ' Reanudar' : ' Pausar'),
+            h('button', { class: 'btn big', style: { minWidth: '150px' }, onclick: async () => { if (await confirmDialog('¿Quieres finalizar la sesión?', 'El tiempo estudiado hasta ahora se queda guardado.', 'Sí')) stop(); } }, icon('stop', 22), ' Detener'))]
         : [stepper('Estudio', () => study, (v) => { study = v; }, 1, 180), stepper('Descanso', () => rest, (v) => { rest = v; }, 1, 60),
           h('button', { class: 'btn big', onclick: () => start(study, rest) }, icon('play', 22), ' Empezar'),
           h('p', { class: 'dim small' }, 'Al terminar cada fase suena una alarma y empieza la siguiente hasta que pulses Detener. Con la app cerrada el iPad no puede avisar.'), h('p', { class: 'dim small mute-note' })]));

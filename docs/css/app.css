@@ -49,8 +49,8 @@ textarea.field { resize: vertical; }
 .home { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: calc(var(--safe-top) + 10px) 28px calc(60px + var(--safe-bottom)); }
 .home > * { max-width: 1400px; margin-left: auto; margin-right: auto; }
 .top-row { display: flex; align-items: center; gap: 10px; padding-top: 6px; margin-bottom: 18px; }
-.logo { width: 58px; height: 58px; border-radius: 50%; background: radial-gradient(var(--surface2), var(--surface1)); border: 1px solid var(--outline); margin-right: 4px; transition: transform .15s; }
-.logo img { width: 100%; height: 100%; object-fit: contain; padding: 6px; }
+.logo { width: 58px; height: 58px; border-radius: 15px; overflow: hidden; background: #1B1D24; border: 1px solid var(--outline); margin-right: 4px; padding: 0; transition: transform .15s; }
+.logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .logo.bounce { transform: scale(1.16); }
 .app-title { font-size: 28px; font-weight: 700; letter-spacing: .4px; }
 .actions { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
@@ -763,3 +763,20 @@ textarea.field { resize: vertical; }
 .game-row.q-leg small { color: #E3A94A; }
 .game-row.q-rare { box-shadow: inset 3px 0 0 #5AA0E6; }
 .game-row.q-rare small { color: #7FB8F0; }
+
+/* ───────── grupos de amigos ───────── */
+.group-sep { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--outline); }
+.group-sep h3 { margin: 8px 0 0; }
+.group-sep .text-btn { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-weight: 600; }
+.group-row { cursor: pointer; border-radius: 14px; } .group-row:active { background: var(--surface1); }
+.chat-head { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 2px 6px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 12px; }
+.chat-head:active { background: var(--surface1); }
+.chat-head > div { display: flex; flex-direction: column; min-width: 0; } .chat-head h1 { font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .chat-head small { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bubble .sender { display: block; margin-bottom: 2px; font-size: 12px; color: var(--accent); }
+.group-head { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; } .group-head h2 { margin: 6px 0 0; font-size: 22px; } .group-head p { margin: 0; max-width: 34ch; }
+.group-info h3 { margin: 10px 0 0; font-size: 15px; }
+.group-photo { display: flex; justify-content: center; } .group-photo-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; color: inherit; }
+.pick-list { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; border: 1px solid var(--outline); border-radius: 14px; padding: 4px 10px; }
+.pick-row { cursor: pointer; } .pick-row input { width: 20px; height: 20px; accent-color: var(--accent); }
+.text-btn.danger { color: #ff6b6b; }
+.group-info .row.gap { flex-wrap: nowrap; } .group-info .row.gap > .btn { flex: 1; justify-content: center; padding-left: 12px; padding-right: 12px; }

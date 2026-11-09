@@ -18,6 +18,21 @@ service cloud.firestore {
         && (inv.size() < 3 || areFriends(request.auth.uid, inv[2]));
     }
 
+    // grupos: miembro de un grupo, y hasta 9 invitados (todos amigos de quien invita; un grupo tiene como mucho 10 personas)
+    function inGroup(gid) { return signedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members; }
+    function groupInvitesOk(inv) {
+      return inv is list && inv.size() <= 9
+        && (inv.size() < 1 || areFriends(request.auth.uid, inv[0]))
+        && (inv.size() < 2 || areFriends(request.auth.uid, inv[1]))
+        && (inv.size() < 3 || areFriends(request.auth.uid, inv[2]))
+        && (inv.size() < 4 || areFriends(request.auth.uid, inv[3]))
+        && (inv.size() < 5 || areFriends(request.auth.uid, inv[4]))
+        && (inv.size() < 6 || areFriends(request.auth.uid, inv[5]))
+        && (inv.size() < 7 || areFriends(request.auth.uid, inv[6]))
+        && (inv.size() < 8 || areFriends(request.auth.uid, inv[7]))
+        && (inv.size() < 9 || areFriends(request.auth.uid, inv[8]));
+    }
+
     // nombre de usuario -> uid (el nombre solo se puede reservar una vez)
     match /usernames/{name} {
       allow read: if signedIn();
@@ -189,6 +204,104 @@ service cloud.firestore {
       match /audio/{audioId} {
         allow read, delete: if inChat(pairId);
         allow create: if inChat(pairId)
+          && request.resource.data.keys().hasOnly(['from', 'data'])
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.data is string && request.resource.data.data.size() <= 700000;
+      }
+    }
+
+    // grupos de amigos: groups/{id}. `members` = quienes ya están dentro (el primero es quien lo crea y manda), `invited` = invitaciones
+    // pendientes (hasta 10 personas entre los dos). Solo se puede invitar a amigos. Cada uno acepta o rechaza su invitación, y las
+    // entradas y salidas de las listas se hacen con transformaciones (añadir / quitar un uid) para que dos cambios a la vez no se pisen.
+    // El documento también guarda quién escribió el último mensaje y cuándo (punto de «mensajes sin leer»).
+    match /groups/{gid} {
+      allow read: if signedIn() && (request.auth.uid in resource.data.members || request.auth.uid in resource.data.invited);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['owner', 'name', 'desc', 'photo', 'members', 'invited', 'at'])
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.members == [request.auth.uid]
+        && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 40
+        && request.resource.data.desc is string && request.resource.data.desc.size() <= 200
+        && request.resource.data.photo is string && request.resource.data.photo.size() < 30000
+        && !(request.auth.uid in request.resource.data.invited)
+        && groupInvitesOk(request.resource.data.invited)
+        && request.resource.data.at == request.time;
+      allow update: if signedIn() && (
+        // quien lo creó cambia el nombre, la descripción o la foto
+        (request.auth.uid == resource.data.owner
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'desc', 'photo'])
+          && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 40
+          && request.resource.data.desc is string && request.resource.data.desc.size() <= 200
+          && request.resource.data.photo is string && request.resource.data.photo.size() < 30000)
+        // quien lo creó invita a más amigos
+        || (request.auth.uid == resource.data.owner
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invited'])
+          && request.resource.data.invited.hasAll(resource.data.invited)
+          && groupInvitesOk(request.resource.data.invited)
+          && request.resource.data.invited.size() + resource.data.members.size() <= 10)
+        // un invitado acepta: pasa de invitados a miembros
+        || (request.auth.uid in resource.data.invited && !(request.auth.uid in resource.data.members)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'invited'])
+          && request.resource.data.members == resource.data.members.concat([request.auth.uid])
+          && !(request.auth.uid in request.resource.data.invited)
+          && request.resource.data.invited.size() == resource.data.invited.size() - 1
+          && resource.data.invited.hasAll(request.resource.data.invited))
+        // un invitado rechaza
+        || (request.auth.uid in resource.data.invited
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invited'])
+          && !(request.auth.uid in request.resource.data.invited)
+          && request.resource.data.invited.size() == resource.data.invited.size() - 1
+          && resource.data.invited.hasAll(request.resource.data.invited))
+        // un miembro sale (menos quien lo creó, que lo elimina)
+        || (request.auth.uid in resource.data.members && request.auth.uid != resource.data.owner
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          && !(request.auth.uid in request.resource.data.members)
+          && request.resource.data.members.size() == resource.data.members.size() - 1
+          && resource.data.members.hasAll(request.resource.data.members))
+        // quien lo creó echa a un miembro
+        || (request.auth.uid == resource.data.owner
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          && request.auth.uid in request.resource.data.members
+          && request.resource.data.members.size() == resource.data.members.size() - 1
+          && resource.data.members.hasAll(request.resource.data.members))
+        // un miembro marca quién escribió el último mensaje y cuándo
+        || (request.auth.uid in resource.data.members
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastFrom', 'lastAt'])
+          && request.resource.data.lastFrom == request.auth.uid
+          && request.resource.data.lastAt == request.time)
+      );
+      allow delete: if signedIn() && request.auth.uid == resource.data.owner;
+
+      match /messages/{msgId} {
+        allow read: if inGroup(gid);
+        // borrar un mensaje propio: se vacía y queda marcado (del) con la hora (delAt), como en el chat entre amigos
+        allow update: if inGroup(gid) && resource.data.from == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['del', 'text', 'rq', 'delAt'])
+          && request.resource.data.del == true && request.resource.data.text == ''
+          && request.resource.data.delAt == request.time;
+        // texto, audio (kind = 'audio') o foto (kind = 'image'); el contenido de audios y fotos va en groups/{id}/audio/{mismo id}
+        allow create: if inGroup(gid)
+          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime', 'rid', 'rq', 'rf'])
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.at == request.time
+          && request.resource.data.text is string && request.resource.data.text.size() <= 5000
+          && (!('rid' in request.resource.data) || (request.resource.data.rid is string && request.resource.data.rid.size() < 64
+              && request.resource.data.rq is string && request.resource.data.rq.size() <= 120
+              && request.resource.data.rf is string && request.resource.data.rf.size() < 64))
+          && (
+            (!('kind' in request.resource.data) && request.resource.data.text.size() > 0)
+            || (request.resource.data.kind == 'audio' && request.resource.data.text.size() == 0
+                && request.resource.data.dur is int && request.resource.data.dur <= 125000
+                && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
+            || (request.resource.data.kind == 'image' && request.resource.data.text.size() == 0
+                && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
+          );
+      }
+
+      match /audio/{audioId} {
+        allow read: if inGroup(gid);
+        allow delete: if inGroup(gid) && resource.data.from == request.auth.uid;
+        allow create: if inGroup(gid)
           && request.resource.data.keys().hasOnly(['from', 'data'])
           && request.resource.data.from == request.auth.uid
           && request.resource.data.data is string && request.resource.data.data.size() <= 700000;

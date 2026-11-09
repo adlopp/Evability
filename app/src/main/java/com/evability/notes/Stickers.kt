@@ -105,6 +105,16 @@ object StickerBitmaps {
         return bmp
     }
 
+    /** Pegatinas propias (nombre → imagen PNG), para la copia de seguridad. */
+    fun userFiles(): Map<String, File> = listUser().associateWith { File(dir, it) }
+
+    /** Recupera una pegatina propia de una copia de seguridad (si ya existe una con ese nombre no la toca). */
+    fun restoreUser(name: String, bytes: ByteArray) {
+        if (!Regex("^[A-Za-z0-9_.-]{1,80}\\.png$").matches(name)) return
+        val f = File(dir, name)
+        if (!f.exists()) f.writeBytes(bytes)
+    }
+
     fun listUser(): List<String> =
         dir.listFiles { f -> f.name.endsWith(".png") }?.sortedBy { it.lastModified() }?.map { it.name } ?: emptyList()
 

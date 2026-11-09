@@ -295,8 +295,8 @@ export function createHome({ openDoc, onTheme }) {
     let logoTimer;
     const logo = h('button', { class: 'logo', 'aria-label': 'Evability', onclick: () => {
       logo.classList.add('bounce'); clearTimeout(logoTimer); logoTimer = setTimeout(() => logo.classList.remove('bounce'), 250);
-      const a = new Audio('easter-egg.mp3'); a.play().catch(() => {});
-    } }, h('img', { src: 'icons/logo.png', alt: '' }));
+      if (localStorage.getItem('ev.logoMuted') !== '1') { const a = new Audio('easter-egg.mp3'); a.play().catch(() => {}); }
+    } }, h('img', { src: 'icons/icon-192.png', alt: '' }));
 
     const search = h('input', { class: 'field search', type: 'search', placeholder: 'Buscar documentos', value: S.query });
     search.addEventListener('input', () => { S.query = search.value; clearTimeout(S.qt); S.qt = setTimeout(() => { render(); document.querySelector('.search')?.focus(); }, 180); });

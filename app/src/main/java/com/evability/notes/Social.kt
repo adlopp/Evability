@@ -2,6 +2,7 @@ package com.evability.notes
 
 import android.util.Base64
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -39,15 +40,23 @@ object Social {
     class Session(val uid: String, val username: String, var idToken: String, var refreshToken: String, var expiresAt: Long)
     class Profile(val uid: String, val username: String, val photo: String)
     class FriendRow(val profile: Profile, val lastSeen: Long, val lastPokeAt: Long, val studying: Boolean = false)
-    class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>)
+    /** Un grupo de amigos: `members` ya están dentro (el primero es quien lo creó), `invited` tienen la invitación pendiente. */
+    class Group(val id: String, val name: String, val desc: String, val photo: String, val owner: String, val members: List<String>, val invited: List<String>, val lastFrom: String, val lastAt: Long)
+    class GroupInvite(val group: Group, val ownerName: String)
+    class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>, val groups: List<Group> = emptyList(), val groupInvites: List<GroupInvite> = emptyList())
     class Heart(val id: Long, val x: Float, val y: Float)
-    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "", val game: String = "", val deleted: Boolean = false) {
+    class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "", val game: String = "", val deleted: Boolean = false, val from: String = "") {
         /** El mismo mensaje ya borrado: sin contenido, solo queda el aviso. */
-        fun gone() = ChatMessage(id, mine, "", at, kind, 0L, 0, "", "", game, true)
+        fun gone() = ChatMessage(id, mine, "", at, kind, 0L, 0, "", "", game, true, from)
     }
 
-    /** Amigos con mensajes sin leer (para el punto de la lista y el de la cabecera). */
+    /** Amigos y grupos con mensajes sin leer (para el punto de la lista y el de la cabecera). Los grupos van con la clave «g:<id>». */
     val unread = androidx.compose.runtime.mutableStateMapOf<String, Boolean>()
+
+    /** Solicitudes de amistad e invitaciones a grupos que esperan respuesta (también encienden el punto de la cabecera). */
+    var pending by mutableIntStateOf(0)
+        private set
+    private var groupsCache: List<Group> = emptyList()
     private var friendUidsCache: List<String> = emptyList()
     private var friendsFetchedAt = 0L
 
@@ -310,7 +319,18 @@ object Social {
             .map { d -> d.list("members").first { it != me } }
         val incomingUids = query("requests", filter("to", "EQUAL", str(me))).map { it.text("from") }
         val outgoing = query("requests", filter("from", "EQUAL", str(me))).map { it.text("to") }.toSet()
-        val profiles = getAll("users", (friendUids + incomingUids).distinct())
+        // grupos (si todavía no se han publicado las reglas nuevas, simplemente no salen)
+        var groups = emptyList<Group>()
+        var invites = emptyList<Group>()
+        try {
+            groups = query("groups", filter("members", "ARRAY_CONTAINS", str(me))).map { groupOf(it) }.sortedBy { it.name.lowercase() }
+            invites = query("groups", filter("invited", "ARRAY_CONTAINS", str(me))).map { groupOf(it) }
+        } catch (e: SocialError) { /* sin grupos */ }
+        val profiles = getAll("users", (friendUids + incomingUids + invites.map { it.owner }).distinct())
+        pending = incomingUids.size + invites.size
+        groupsCache = groups
+        for (k in unread.keys.toList()) if (isGroup(k) && groups.none { "g:${it.id}" == k }) unread.remove(k)
+        for (g in groups) unread["g:${g.id}"] = g.lastFrom.isNotEmpty() && g.lastFrom != me && g.lastAt > Prefs.chatRead("g:${g.id}")
         val presence = runCatching { getAll("presence", friendUids) }.getOrDefault(emptyMap())
         val pokes = runCatching { getAll("pokes", friendUids.map { "${it}_$me" }) }.getOrDefault(emptyMap())
         Overview(
@@ -318,6 +338,8 @@ object Social {
                 .sortedBy { it.profile.username },
             incomingUids.map { profile(it, profiles[it]) },
             outgoing,
+            groups,
+            invites.map { GroupInvite(it, profile(it.owner, profiles[it.owner]).username) },
         )
     }
 
@@ -468,13 +490,27 @@ object Social {
 
     private fun pairId(a: String, b: String) = if (a < b) "${a}_$b" else "${b}_$a"
 
+    /** Un chat es con un amigo (se identifica por su uid) o con un grupo (clave «g:<id>»). */
+    fun isGroup(key: String) = key.startsWith("g:")
+
+    /** Dónde vive el chat en Firestore: chats/<pareja> o groups/<id>. */
+    private fun chatBase(key: String) = if (isGroup(key)) "groups/${key.drop(2)}" else "chats/${pairId(live().uid, key)}"
+
+    /** Clave con la que se recuerda hasta dónde has leído. */
+    private fun chatKey(key: String, me: String) = if (isGroup(key)) key else pairId(me, key)
+
+    /** Anota quién escribió el último mensaje y cuándo (en el documento del chat o en el del grupo). */
+    private fun metaWrite(base: String, me: String): JSONObject =
+        if (base.startsWith("groups/")) writeMask(base, JSONObject().put("lastFrom", str(me)), listOf("lastFrom"), "lastAt")
+        else write(base, JSONObject().put("lastFrom", str(me)), serverTime = "lastAt")
+
     private fun queryUnder(parent: String, structured: JSONObject): List<JSONObject> {
         val arr = JSONArray(postText("$DOCS/$parent:runQuery", JSONObject().put("structuredQuery", structured).toString(), token = live().idToken))
         return (0 until arr.length()).mapNotNull { arr.getJSONObject(it).optJSONObject("document") }
     }
 
     private fun messageOf(d: JSONObject, me: String) =
-        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"), d.text("rq"), d.text("rf"), d.text("game"), d.bool("del"))
+        ChatMessage(idOf(d.getString("name")), d.text("from") == me, d.text("text"), d.time("at"), d.text("kind"), d.int("dur").toLong(), d.int("mins"), d.text("rq"), d.text("rf"), d.text("game"), d.bool("del"), d.text("from"))
 
     private fun orderByAt(direction: String) =
         JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "at")).put("direction", direction))
@@ -486,14 +522,28 @@ object Social {
             friendUidsCache = query("friends", filter("members", "ARRAY_CONTAINS", str(me))).map { d -> d.list("members").first { it != me } }
             friendsFetchedAt = System.currentTimeMillis()
         }
-        if (friendUidsCache.isEmpty()) return@withContext
-        val metas = getAll("chats", friendUidsCache.map { pairId(me, it) })
-        for (u in friendUidsCache) {
-            val pair = pairId(me, u)
-            val meta = metas[pair]
-            unread[u] = meta != null && meta.text("lastFrom") != me && meta.time("lastAt") > Prefs.chatRead(pair)
+        if (friendUidsCache.isNotEmpty()) {
+            val metas = getAll("chats", friendUidsCache.map { pairId(me, it) })
+            for (u in friendUidsCache) {
+                val pair = pairId(me, u)
+                val meta = metas[pair]
+                unread[u] = meta != null && meta.text("lastFrom") != me && meta.time("lastAt") > Prefs.chatRead(pair)
+            }
         }
+        // grupos, invitaciones a grupos y solicitudes de amistad
+        try {
+            val mine = query("groups", filter("members", "ARRAY_CONTAINS", str(me))).map { groupOf(it) }
+            val invites = query("groups", filter("invited", "ARRAY_CONTAINS", str(me))).map { groupOf(it) }
+            val reqs = query("requests", filter("to", "EQUAL", str(me)))
+            for (k in unread.keys.toList()) if (isGroup(k) && mine.none { "g:${it.id}" == k }) unread.remove(k)
+            for (g in mine) unread["g:${g.id}"] = g.lastFrom.isNotEmpty() && g.lastFrom != me && g.lastAt > Prefs.chatRead("g:${g.id}")
+            groupsCache = mine
+            groupInvitesCache = invites
+            pending = invites.size + reqs.size
+        } catch (e: SocialError) { /* sin reglas de grupos: no pasa nada */ }
     }
+
+    private var groupInvitesCache: List<Group> = emptyList()
 
     class ChatAlert(val uid: String, val name: String, val preview: String)
 
@@ -522,103 +572,127 @@ object Social {
             Prefs.setChatNotified(pair, true)
             out.add(ChatAlert(u, name, preview))
         }
+        // mensajes nuevos en grupos y grupos a los que te invitan
+        for (g in groupsCache) {
+            val key = "g:${g.id}"
+            if (unread[key] != true || Prefs.chatNotified(key)) continue
+            val q = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
+                .put("where", filter("at", "GREATER_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(Prefs.chatRead(key)).toString())))
+                .put("orderBy", orderByAt("ASCENDING")).put("limit", 5)
+            val first = queryUnder("groups/${g.id}", q).map { messageOf(it, me) }.firstOrNull { !it.mine } ?: continue
+            val who = getAll("users", listOf(first.from))[first.from]?.text("username") ?: "Alguien"
+            val what = when (first.kind) {
+                "audio" -> "ha enviado un audio"
+                "image" -> "ha enviado una foto"
+                else -> first.text.take(120)
+            }
+            Prefs.setChatNotified(key, true)
+            out.add(ChatAlert(key, g.name, if (first.kind.isEmpty()) "$who: $what" else "$who $what"))
+        }
+        for (g in groupInvitesCache) {
+            val key = "gi:${g.id}"
+            if (Prefs.chatNotified(key)) continue
+            val owner = getAll("users", listOf(g.owner))[g.owner]?.text("username") ?: "Un amigo"
+            Prefs.setChatNotified(key, true)
+            out.add(ChatAlert(key, g.name, "$owner te invita a unirte al grupo"))
+        }
         out
     }
 
     /** Mensajes del chat: los 50 últimos si `after` es 0, o solo los posteriores a `after` (ms). */
     suspend fun chatMessages(friendUid: String, after: Long): List<ChatMessage> = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val path = chatBase(friendUid)
         val base = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
         val q = if (after <= 0) base.put("orderBy", orderByAt("DESCENDING")).put("limit", 50)
         else base.put("where", filter("at", "GREATER_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(after).toString())))
             .put("orderBy", orderByAt("ASCENDING")).put("limit", 100)
-        val list = queryUnder("chats/$pair", q).map { d -> messageOf(d, me) }
+        val list = queryUnder(path, q).map { d -> messageOf(d, me) }
         if (after > 0) list else list.reversed()
     }
 
     /** Los 50 mensajes anteriores a `before` (ms): se piden al subir en la conversación, así el historial no tiene límite. */
     suspend fun chatOlder(friendUid: String, before: Long): List<ChatMessage> = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val path = chatBase(friendUid)
         val q = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
             .put("where", filter("at", "LESS_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(before).toString())))
             .put("orderBy", orderByAt("DESCENDING")).put("limit", 50)
-        queryUnder("chats/$pair", q).map { d -> messageOf(d, me) }.reversed()
+        queryUnder(path, q).map { d -> messageOf(d, me) }.reversed()
     }
 
     /** `replyTo` = mensaje al que se responde: se guarda un extracto y su autor para enseñarlo encima. */
     suspend fun sendMessage(friendUid: String, text: String, replyTo: ChatMessage? = null, replyPreview: String = "") = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val base = chatBase(friendUid)
         val t = text.trim().take(5000)
         if (t.isEmpty()) return@withContext
         commit(
             write(
-                "chats/$pair/messages/${UUID.randomUUID()}",
+                "$base/messages/${UUID.randomUUID()}",
                 JSONObject().put("from", str(me)).put("text", str(t)).also {
-                    if (replyTo != null) it.put("rid", str(replyTo.id)).put("rq", str(replyPreview.take(120))).put("rf", str(if (replyTo.mine) me else friendUid))
+                    if (replyTo != null) it.put("rid", str(replyTo.id)).put("rq", str(replyPreview.take(120))).put("rf", str(replyTo.from.ifEmpty { if (replyTo.mine) me else friendUid }))
                 },
                 serverTime = "at",
             ),
-            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+            metaWrite(base, me),
         )
     }
 
     /** Borra un mensaje propio para los dos: queda vacío y marcado, y si llevaba audio o foto se borra también su contenido. */
     suspend fun deleteMessage(friendUid: String, m: ChatMessage) = withContext(Dispatchers.IO) {
-        val pair = pairId(live().uid, friendUid)
+        val base = chatBase(friendUid)
         val writes = arrayListOf(
-            writeMask("chats/$pair/messages/${m.id}", JSONObject().put("del", bool(true)).put("text", str("")).put("rq", str("")), listOf("del", "text", "rq"), "delAt"),
+            writeMask("$base/messages/${m.id}", JSONObject().put("del", bool(true)).put("text", str("")).put("rq", str("")), listOf("del", "text", "rq"), "delAt"),
         )
-        if (m.kind == "audio" || m.kind == "image") writes.add(delete("chats/$pair/audio/${m.id}"))
+        if (m.kind == "audio" || m.kind == "image") writes.add(delete("$base/audio/${m.id}"))
         commit(*writes.toTypedArray())
     }
 
     /** Ids de los mensajes borrados desde `since` (ms) y la hora del último: el otro lado los ve sin releer todo el chat. */
     suspend fun chatDeletions(friendUid: String, since: Long): Pair<List<String>, Long> = withContext(Dispatchers.IO) {
-        val pair = pairId(live().uid, friendUid)
+        val path = chatBase(friendUid)
         val q = JSONObject().put("from", JSONArray().put(JSONObject().put("collectionId", "messages")))
             .put("where", filter("delAt", "GREATER_THAN", JSONObject().put("timestampValue", Instant.ofEpochMilli(since).toString())))
             .put("orderBy", JSONArray().put(JSONObject().put("field", JSONObject().put("fieldPath", "delAt")).put("direction", "ASCENDING")))
             .put("limit", 50)
-        val docs = queryUnder("chats/$pair", q)
+        val docs = queryUnder(path, q)
         docs.map { idOf(it.getString("name")) } to (docs.maxOfOrNull { it.time("delAt") } ?: 0L)
     }
 
     /** Manda un audio: el contenido va en su propio documento y el mensaje solo lleva la duración (así el chat carga ligero). */
     suspend fun sendAudio(friendUid: String, file: File, durMs: Long) = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val base = chatBase(friendUid)
         val b64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
         if (b64.length > 700_000) throw SocialError("El audio es demasiado largo")
         val id = UUID.randomUUID().toString()
         commit(
-            write("chats/$pair/audio/$id", JSONObject().put("from", str(me)).put("data", str(b64))),
+            write("$base/audio/$id", JSONObject().put("from", str(me)).put("data", str(b64))),
             write(
-                "chats/$pair/messages/$id",
+                "$base/messages/$id",
                 JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("audio")).put("dur", int(durMs)).put("mime", str("audio/mp4")),
                 serverTime = "at",
             ),
-            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+            metaWrite(base, me),
         )
     }
 
     /** Manda una foto (JPEG ya reducido): el contenido va en el documento `audio/{id}` y el mensaje solo avisa de que es una foto. */
     suspend fun sendPhoto(friendUid: String, jpeg: ByteArray) = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val base = chatBase(friendUid)
         val b64 = Base64.encodeToString(jpeg, Base64.NO_WRAP)
         if (b64.length > 700_000) throw SocialError("La foto es demasiado grande")
         val id = UUID.randomUUID().toString()
         commit(
-            write("chats/$pair/audio/$id", JSONObject().put("from", str(me)).put("data", str(b64))),
+            write("$base/audio/$id", JSONObject().put("from", str(me)).put("data", str(b64))),
             write(
-                "chats/$pair/messages/$id",
+                "$base/messages/$id",
                 JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("image")).put("mime", str("image/jpeg")),
                 serverTime = "at",
             ),
-            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+            metaWrite(base, me),
         )
     }
 
@@ -626,8 +700,7 @@ object Social {
     suspend fun photoFile(ctx: android.content.Context, friendUid: String, msgId: String): File = withContext(Dispatchers.IO) {
         val f = File(ctx.cacheDir, "img-$msgId.jpg")
         if (f.exists() && f.length() > 0) return@withContext f
-        val pair = pairId(live().uid, friendUid)
-        val data = getAll("chats/$pair/audio", listOf(msgId))[msgId]?.text("data").orEmpty()
+        val data = getAll("${chatBase(friendUid)}/audio", listOf(msgId))[msgId]?.text("data").orEmpty()
         if (data.isEmpty()) throw SocialError("No se pudo cargar la foto")
         f.writeBytes(Base64.decode(data, Base64.DEFAULT))
         f
@@ -637,8 +710,7 @@ object Social {
     suspend fun audioFile(ctx: android.content.Context, friendUid: String, msgId: String): File = withContext(Dispatchers.IO) {
         val f = File(ctx.cacheDir, "aud-$msgId.m4a")
         if (f.exists() && f.length() > 0) return@withContext f
-        val pair = pairId(live().uid, friendUid)
-        val data = getAll("chats/$pair/audio", listOf(msgId))[msgId]?.text("data").orEmpty()
+        val data = getAll("${chatBase(friendUid)}/audio", listOf(msgId))[msgId]?.text("data").orEmpty()
         if (data.isEmpty()) throw SocialError("No se pudo cargar el audio")
         f.writeBytes(Base64.decode(data, Base64.DEFAULT))
         f
@@ -739,6 +811,74 @@ object Social {
     }
 
     suspend fun polyRemove(id: String) = withContext(Dispatchers.IO) { commit(delete("rooms/$id")) }
+
+    // ───────── grupos ─────────
+
+    const val MAX_GROUP = 10
+
+    private fun groupOf(d: JSONObject) =
+        Group(idOf(d.getString("name")), d.text("name"), d.text("desc"), d.text("photo"), d.text("owner"), d.list("members"), d.list("invited"), d.text("lastFrom"), d.time("lastAt"))
+
+    /** Cambia listas de un documento sin pisar lo que hayan hecho otros a la vez: añade o quita uids de una lista (`op` = appendMissingElements | removeAllFromArray). */
+    private fun arrayOps(path: String, ops: List<Triple<String, String, List<String>>>): JSONObject {
+        val tr = JSONArray()
+        ops.forEach { (field, op, uids) -> tr.put(JSONObject().put("fieldPath", field).put(op, JSONObject().put("values", JSONArray(uids.map { str(it) })))) }
+        return JSONObject().put("update", JSONObject().put("name", "$DB/$path").put("fields", JSONObject()))
+            .put("updateMask", JSONObject().put("fieldPaths", JSONArray()))
+            .put("currentDocument", JSONObject().put("exists", true))
+            .put("updateTransforms", tr)
+    }
+
+    /** Crea el grupo con quien lo crea dentro y manda la invitación a los amigos elegidos (hasta 9). Devuelve el id. */
+    suspend fun createGroup(name: String, desc: String, photo: String, invite: List<String>): String = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val n = name.trim().take(40)
+        if (n.isEmpty()) throw SocialError("Ponle un nombre al grupo")
+        if (invite.size > MAX_GROUP - 1) throw SocialError("Un grupo puede tener hasta $MAX_GROUP personas")
+        val id = UUID.randomUUID().toString()
+        commit(
+            write(
+                "groups/$id",
+                JSONObject().put("owner", str(me)).put("name", str(n)).put("desc", str(desc.trim().take(200))).put("photo", str(photo))
+                    .put("members", strs(listOf(me))).put("invited", strs(invite)),
+                serverTime = "at",
+            ),
+        )
+        id
+    }
+
+    suspend fun getGroup(id: String): Group? = withContext(Dispatchers.IO) { runCatching { getAll("groups", listOf(id))[id]?.let { groupOf(it) } }.getOrNull() }
+
+    suspend fun acceptGroup(id: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(arrayOps("groups/$id", listOf(Triple("members", "appendMissingElements", listOf(me)), Triple("invited", "removeAllFromArray", listOf(me)))))
+    }
+
+    suspend fun declineGroup(id: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(arrayOps("groups/$id", listOf(Triple("invited", "removeAllFromArray", listOf(me)))))
+    }
+
+    suspend fun leaveGroup(id: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(arrayOps("groups/$id", listOf(Triple("members", "removeAllFromArray", listOf(me)))))
+    }
+
+    suspend fun kickFromGroup(id: String, uid: String) = withContext(Dispatchers.IO) {
+        commit(arrayOps("groups/$id", listOf(Triple("members", "removeAllFromArray", listOf(uid)))))
+    }
+
+    suspend fun inviteToGroup(id: String, uids: List<String>) = withContext(Dispatchers.IO) {
+        commit(arrayOps("groups/$id", listOf(Triple("invited", "appendMissingElements", uids))))
+    }
+
+    suspend fun deleteGroup(id: String) = withContext(Dispatchers.IO) { commit(delete("groups/$id")) }
+
+    suspend fun editGroup(id: String, name: String, desc: String, photo: String) = withContext(Dispatchers.IO) {
+        val n = name.trim().take(40)
+        if (n.isEmpty()) throw SocialError("Ponle un nombre al grupo")
+        commit(writeMask("groups/$id", JSONObject().put("name", str(n)).put("desc", str(desc.trim().take(200))).put("photo", str(photo)), listOf("name", "desc", "photo")))
+    }
 
     suspend fun profilesOf(uids: List<String>): Map<String, Profile> = withContext(Dispatchers.IO) {
         val d = getAll("users", uids)
@@ -842,8 +982,8 @@ object Social {
 
     fun markRead(friendUid: String, at: Long) {
         val me = session?.uid ?: return
-        Prefs.setChatRead(pairId(me, friendUid), at)
-        Prefs.setChatNotified(pairId(me, friendUid), false)
+        Prefs.setChatRead(chatKey(friendUid, me), at)
+        Prefs.setChatNotified(chatKey(friendUid, me), false)
         unread[friendUid] = false
     }
 

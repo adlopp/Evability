@@ -34,9 +34,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -72,19 +75,21 @@ fun PomodoroScreen(onClose: () -> Unit) {
     var study by remember { mutableIntStateOf(Prefs.pomoStudy) }
     var rest by remember { mutableIntStateOf(Prefs.pomoRest) }
     val running = Pomodoro.phase != PomoPhase.IDLE
+    val paused = Pomodoro.paused
+    var confirmStop by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var muted by remember { mutableStateOf(Prefs.pomoMuted) }
 
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    LaunchedEffect(running) {
-        while (running) {
+    LaunchedEffect(running, paused) {
+        while (running && !paused) {
             now = SystemClock.elapsedRealtime()
             delay(200)
         }
     }
 
     val totalMs = if (running) Pomodoro.phaseMs else study * 60_000L
-    val remainingMs = if (running) (Pomodoro.endAt - now).coerceIn(0L, totalMs) else totalMs
+    val remainingMs = if (paused) Pomodoro.pausedLeft.coerceIn(0L, totalMs) else if (running) (Pomodoro.endAt - now).coerceIn(0L, totalMs) else totalMs
     val progress = if (totalMs > 0) remainingMs / totalMs.toFloat() else 1f
     val resting = Pomodoro.phase == PomoPhase.REST
     val color = if (resting) RestColor else Accent
@@ -103,6 +108,16 @@ fun PomodoroScreen(onClose: () -> Unit) {
     if (showStats) {
         StudyStatsScreen { showStats = false }
         return
+    }
+
+    if (confirmStop) {
+        AlertDialog(
+            onDismissRequest = { confirmStop = false },
+            title = { Text("¿Quieres finalizar la sesión?") },
+            text = { Text("El tiempo estudiado hasta ahora se queda guardado.") },
+            confirmButton = { TextButton(onClick = { confirmStop = false; Pomodoro.stop(ctx) }) { Text("Sí") } },
+            dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("No") } },
+        )
     }
 
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding()) {
@@ -143,8 +158,8 @@ fun PomodoroScreen(onClose: () -> Unit) {
                     Text("%02d:%02d".format(secs / 60, secs % 60), fontSize = 60.sp, fontWeight = FontWeight.Bold, color = OnSurface)
                     Text(
                         when (Pomodoro.phase) {
-                            PomoPhase.STUDY -> "Estudio"
-                            PomoPhase.REST -> "Descanso"
+                            PomoPhase.STUDY -> if (paused) "Estudio · en pausa" else "Estudio"
+                            PomoPhase.REST -> if (paused) "Descanso · en pausa" else "Descanso"
                             PomoPhase.IDLE -> "Listo"
                         },
                         fontSize = 18.sp, color = color, fontWeight = FontWeight.SemiBold,
@@ -159,13 +174,23 @@ fun PomodoroScreen(onClose: () -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Text("Sigue funcionando aunque salgas de la app.", fontSize = 13.sp, color = OnSurfaceDim)
                 Spacer(Modifier.height(24.dp))
-                Button(
-                    onClick = { Pomodoro.stop(ctx) },
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier.widthIn(min = 200.dp).height(56.dp),
-                ) {
-                    Icon(Icons.Default.Stop, contentDescription = null)
-                    Text("  Detener", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = { Pomodoro.togglePause(ctx) },
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.widthIn(min = 150.dp).height(56.dp),
+                    ) {
+                        Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = null)
+                        Text(if (paused) "  Reanudar" else "  Pausar", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = { confirmStop = true },
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.widthIn(min = 150.dp).height(56.dp),
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null)
+                        Text("  Detener", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             } else {
                 Stepper("Estudio", study, 1, 180) { study = it }

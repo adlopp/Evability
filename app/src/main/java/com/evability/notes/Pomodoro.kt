@@ -41,6 +41,13 @@ object Pomodoro {
     var phaseMs by mutableLongStateOf(0L)
     var completed by mutableIntStateOf(0)
 
+    /** En pausa: el reloj no avanza (en [pausedLeft] queda lo que faltaba de la fase). */
+    var paused by mutableStateOf(false)
+    var pausedLeft by mutableLongStateOf(0L)
+
+    /** Se está estudiando ahora mismo: fase de estudio y sin pausa. */
+    val studying: Boolean get() = phase == PomoPhase.STUDY && !paused
+
     /** Instante ([SystemClock.elapsedRealtime]) hasta el que el tiempo de estudio ya está guardado en [StudyLog]. */
     @Volatile var studyMark = 0L
 
@@ -55,6 +62,11 @@ object Pomodoro {
 
     fun stop(ctx: Context) {
         ctx.stopService(Intent(ctx, PomodoroService::class.java))
+    }
+
+    /** Pausa o reanuda el reloj. */
+    fun togglePause(ctx: Context) {
+        ctx.startService(Intent(ctx, PomodoroService::class.java).setAction(PomodoroService.ACTION_TOGGLE))
     }
 }
 
@@ -79,7 +91,7 @@ class PomodoroService : Service() {
 
     /** Guarda en [StudyLog] el tiempo de estudio transcurrido desde la última vez (los descansos no cuentan). */
     private fun flushStudy() {
-        if (Pomodoro.phase != PomoPhase.STUDY) return
+        if (!Pomodoro.studying) return
         val now = SystemClock.elapsedRealtime()
         val delta = now - Pomodoro.studyMark
         if (delta <= 0) return
@@ -95,11 +107,16 @@ class PomodoroService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent.action == ACTION_TOGGLE) {
+            if (Pomodoro.phase != PomoPhase.IDLE) togglePause()
+            return START_NOT_STICKY
+        }
         studyMs = intent.getIntExtra("study", 25).coerceAtLeast(1) * 60_000L
         restMs = intent.getIntExtra("rest", 5).coerceAtLeast(1) * 60_000L
         createChannels()
         flushStudy()
         Pomodoro.completed = 0
+        Pomodoro.paused = false
         begin(PomoPhase.STUDY)
         ServiceCompat.startForeground(
             this, RUNNING_ID, runningNotification(),
@@ -126,6 +143,30 @@ class PomodoroService : Service() {
             Pomodoro.studyMark = SystemClock.elapsedRealtime()
             handler.postDelayed(saveStudy, 10_000)
         }
+    }
+
+    /** Pausa el reloj (guarda lo estudiado y lo que queda de la fase) o lo reanuda donde estaba. */
+    @SuppressLint("MissingPermission")
+    private fun togglePause() {
+        val now = SystemClock.elapsedRealtime()
+        if (!Pomodoro.paused) {
+            flushStudy()
+            Pomodoro.pausedLeft = (Pomodoro.endAt - now).coerceAtLeast(0L)
+            Pomodoro.paused = true
+            handler.removeCallbacks(advance)
+            handler.removeCallbacks(saveStudy)
+            handler.removeCallbacks(stopRing)
+            ringtone?.stop()
+        } else {
+            Pomodoro.paused = false
+            Pomodoro.endAt = now + Pomodoro.pausedLeft
+            handler.postDelayed(advance, Pomodoro.pausedLeft)
+            if (Pomodoro.phase == PomoPhase.STUDY) {
+                Pomodoro.studyMark = now
+                handler.postDelayed(saveStudy, 10_000)
+            }
+        }
+        NotificationManagerCompat.from(this).notify(RUNNING_ID, runningNotification())
     }
 
     @SuppressLint("MissingPermission")
@@ -181,19 +222,25 @@ class PomodoroService : Service() {
             this, 1, Intent(this, PomodoroService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val toggle = PendingIntent.getService(
+            this, 2, Intent(this, PomodoroService::class.java).setAction(ACTION_TOGGLE),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
         val studying = Pomodoro.phase == PomoPhase.STUDY
+        val paused = Pomodoro.paused
         return NotificationCompat.Builder(this, CH_RUNNING)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle(if (studying) "Estudiando" else "Descanso")
+            .setContentTitle(if (paused) "En pausa" else if (studying) "Estudiando" else "Descanso")
             .setContentText("Ternurines completados: ${Pomodoro.completed}")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
-            .setShowWhen(true)
-            .setUsesChronometer(true)
+            .setShowWhen(!paused)
+            .setUsesChronometer(!paused)
             .setChronometerCountDown(true)
             .setWhen(System.currentTimeMillis() + (Pomodoro.endAt - SystemClock.elapsedRealtime()))
             .setContentIntent(openApp())
+            .addAction(0, if (paused) "Reanudar" else "Pausar", toggle)
             .addAction(0, "Detener", stop)
             .build()
     }
@@ -219,11 +266,13 @@ class PomodoroService : Service() {
         wakeLock = null
         NotificationManagerCompat.from(this).cancel(ALERT_ID)
         Pomodoro.phase = PomoPhase.IDLE
+        Pomodoro.paused = false
         super.onDestroy()
     }
 
     companion object {
         private const val ACTION_STOP = "com.evability.notes.POMODORO_STOP"
+        const val ACTION_TOGGLE = "com.evability.notes.POMODORO_TOGGLE"
         private const val CH_RUNNING = "pomodoro_running"
         private const val CH_ALERT = "pomodoro_alert"
         private const val RUNNING_ID = 4101

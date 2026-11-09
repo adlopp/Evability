@@ -56,7 +56,7 @@ class FriendsWatchService : Service() {
                             stopSelf()
                             break
                         }
-                        if (!AppVisibility.foreground && (Pomodoro.phase == PomoPhase.STUDY || SimpleCounter.running)) {
+                        if (!AppVisibility.foreground && (Pomodoro.studying || SimpleCounter.running)) {
                             try { Social.heartbeat(true) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
                         }
                         if (!AppVisibility.foreground) {

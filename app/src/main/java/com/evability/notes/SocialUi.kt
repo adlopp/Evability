@@ -63,6 +63,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Close
@@ -140,7 +141,7 @@ fun SocialHost() {
         if (s == null || !foreground) return@LaunchedEffect
         launch {
             while (true) {
-                try { Social.heartbeat(Pomodoro.phase == PomoPhase.STUDY || SimpleCounter.running) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
+                try { Social.heartbeat(Pomodoro.studying || SimpleCounter.running) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
                 delay(30_000)
             }
         }
@@ -273,7 +274,7 @@ private fun PhotoZoom(target: ZoomTarget) {
 }
 
 /** Abre la foto elegida (reducida para no gastar memoria) para poder recortarla. */
-private fun loadForCrop(ctx: android.content.Context, uri: Uri): Bitmap {
+internal fun loadForCrop(ctx: android.content.Context, uri: Uri): Bitmap {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, bounds) }
     var sample = 1
@@ -282,7 +283,7 @@ private fun loadForCrop(ctx: android.content.Context, uri: Uri): Bitmap {
 }
 
 /** Recorte cuadrado → miniatura de 256 px (para las listas, < 28.000 caracteres) y foto grande de hasta 800 px (< 140.000). */
-private fun encodePhoto(square: Bitmap): Pair<String, String> {
+internal fun encodePhoto(square: Bitmap): Pair<String, String> {
     fun jpeg(size: Int, startQuality: Int, maxChars: Int): String {
         val small = Bitmap.createScaledBitmap(square, size, size, true)
         var quality = startQuality
@@ -299,7 +300,7 @@ private fun encodePhoto(square: Bitmap): Pair<String, String> {
 
 /** Recortar la foto: se arrastra y se pellizca (o se usa el deslizador) para encuadrarla dentro del círculo. */
 @Composable
-private fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> Unit) {
+internal fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> Unit) {
     val side = 280.dp
     val px = with(LocalDensity.current) { side.toPx() }
     val base = px / minOf(src.width, src.height)
@@ -483,6 +484,9 @@ private fun FriendsPanel() {
     var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
     var zoomed by remember { mutableStateOf<ZoomTarget?>(null) }
     var chatWith by remember { mutableStateOf<Social.Profile?>(null) }
+    var chatGroup by remember { mutableStateOf<Social.Group?>(null) }
+    var creatingGroup by remember { mutableStateOf(false) }
+    var openAfter by remember { mutableStateOf<String?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var refresh by remember { mutableLongStateOf(0L) }
 
@@ -499,6 +503,14 @@ private fun FriendsPanel() {
     }
     LaunchedEffect(Unit) {
         try { myPhoto = Social.myProfile().photo } catch (e: CancellationException) { throw e } catch (e: Exception) { }
+    }
+    // al crear un grupo, se abre su chat en cuanto aparece en la lista
+    LaunchedEffect(overview, openAfter) {
+        val id = openAfter ?: return@LaunchedEffect
+        val g = overview?.groups?.firstOrNull { it.id == id } ?: return@LaunchedEffect
+        openAfter = null
+        chatGroup = g
+        chatWith = Social.Profile("g:${g.id}", g.name, g.photo)
     }
     LaunchedEffect(Unit) {
         while (true) {
@@ -631,6 +643,23 @@ private fun FriendsPanel() {
             }
         }
 
+        if (o != null && o.groupInvites.isNotEmpty()) {
+            Spacer(Modifier.height(18.dp))
+            Text("Invitaciones a grupos", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
+            o.groupInvites.forEach { inv ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(inv.group.name, inv.group.photo, 42)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(inv.group.name, fontSize = 16.sp, color = OnSurface)
+                        Text("${inv.ownerName} te invita", fontSize = 12.sp, color = OnSurfaceDim)
+                    }
+                    IconButton(onClick = { act { Social.acceptGroup(inv.group.id); Prefs.setChatNotified("gi:${inv.group.id}", false) } }) { Icon(Icons.Default.Check, "Aceptar", tint = Accent) }
+                    IconButton(onClick = { act { Social.declineGroup(inv.group.id); Prefs.setChatNotified("gi:${inv.group.id}", false) } }) { Icon(Icons.Default.Close, "Rechazar", tint = OnSurfaceDim) }
+                }
+            }
+        }
+
         Spacer(Modifier.height(18.dp))
         Text("Mis amigos", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
         when {
@@ -664,10 +693,48 @@ private fun FriendsPanel() {
                 }
             }
         }
+        // Mis grupos: debajo de los amigos, separados por una línea, y cada grupo sale como un contacto más
+        Spacer(Modifier.height(20.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Outline))
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Mis grupos", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.weight(1f))
+            TextButton(onClick = { if (o?.friends.isNullOrEmpty()) toast("Primero necesitas amigos para crear un grupo") else creatingGroup = true }) {
+                Icon(Icons.Default.Add, null, Modifier.size(18.dp), tint = Accent)
+                Text(" Nuevo grupo", color = Accent, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        when {
+            o == null -> Text("Cargando…", color = OnSurfaceDim, modifier = Modifier.padding(top = 4.dp))
+            o.groups.isEmpty() -> Text("Crea un grupo con tus amigos para chatear todos juntos.", color = OnSurfaceDim, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+            else -> o.groups.forEach { g ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { chatGroup = g; chatWith = Social.Profile("g:${g.id}", g.name, g.photo) }.padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Avatar(g.name, g.photo, 46)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(g.name, fontSize = 17.sp, color = OnSurface, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text("Grupo · ${g.members.size} miembro${if (g.members.size == 1) "" else "s"}", fontSize = 12.sp, color = OnSurfaceDim)
+                    }
+                    Box {
+                        IconButton(onClick = { chatGroup = g; chatWith = Social.Profile("g:${g.id}", g.name, g.photo) }) { Icon(Icons.Default.ChatBubbleOutline, "Chat del grupo", tint = OnSurface) }
+                        if (Social.unread["g:${g.id}"] == true) {
+                            Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(10.dp).background(Accent, CircleShape))
+                        }
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(24.dp))
     }
     zoomed?.let { PhotoZoom(it) }
-    chatWith?.let { ChatScreen(it) { chatWith = null } }
+    if (creatingGroup) CreateGroupDialog(
+        friends = o?.friends?.map { it.profile }.orEmpty(),
+        onDismiss = { creatingGroup = false },
+        onCreated = { id -> creatingGroup = false; openAfter = id; refresh++ },
+    )
+    chatWith?.let { ChatScreen(it, chatGroup) { chatWith = null; chatGroup = null; refresh++ } }
     }
 }
 

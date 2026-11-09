@@ -19,7 +19,7 @@ class Store(context: Context) {
     fun thumbFile(id: String) = File(dir, "$id.png")
     private fun annFile(id: String) = File(dir, "$id.ann.json")
 
-    private fun parseInfo(o: JSONObject) = DocInfo(
+    fun parseInfo(o: JSONObject) = DocInfo(
         id = o.getString("id"),
         name = o.getString("name"),
         pages = o.getInt("pages"),
@@ -36,7 +36,7 @@ class Store(context: Context) {
         bookmarks = o.optJSONArray("bookmarks")?.let { a -> (0 until a.length()).map { a.getInt(it) } } ?: emptyList(),
     )
 
-    private fun infoJson(it: DocInfo) =
+    fun infoJson(it: DocInfo) =
         JSONObject().put("id", it.id).put("name", it.name).put("pages", it.pages)
             .put("lastOpened", it.lastOpened).put("added", it.added).put("lastPage", it.lastPage).put("extra", it.extra)
             .put("favorite", it.favorite).put("folder", it.folder).put("template", it.template)
@@ -286,6 +286,21 @@ class Store(context: Context) {
         update(info.id) { it.copy(from = from, folder = keep?.folder ?: "", favorite = keep?.favorite ?: false) }
         if (old.isNotEmpty()) softDelete(old.map { it.id })
         return info.copy(from = from) to old.isNotEmpty()
+    }
+
+    /** Anotaciones del documento tal y como se guardan (texto JSON), para la copia de seguridad. */
+    fun annsText(id: String): String = annFile(id).takeIf { it.exists() }?.readText() ?: "[]"
+
+    /** Recupera un documento de una copia de seguridad. Si ya existe uno con ese id no hace nada y devuelve false. */
+    @Synchronized
+    fun restoreDoc(info: DocInfo, pdf: File, anns: String?, thumb: ByteArray?): Boolean {
+        val list = loadIndex()
+        if (list.any { it.id == info.id }) return false
+        pdf.copyTo(pdfFile(info.id), overwrite = true)
+        if (!anns.isNullOrBlank() && anns.trim() != "[]") writeAtomic(annFile(info.id), anns)
+        if (thumb != null) thumbFile(info.id).writeBytes(thumb)
+        saveIndex(list + info)
+        return true
     }
 
     @Synchronized

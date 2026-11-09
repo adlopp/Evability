@@ -6,7 +6,7 @@ import * as store from './store.js';
 import { getKey, setKey, KEY_URL } from './gemini.js';
 import { shareOrDownload } from './editor.js';
 
-export const VERSION = '1.12.11 web';
+export const VERSION = '1.13.0 web';
 
 const standalone = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
@@ -33,15 +33,16 @@ export async function importBackup(file) {
   const mf = zip.file('manifest.json');
   if (!mf) throw new Error('No es una copia de Evability');
   const manifest = JSON.parse(await mf.async('string'));
+  const sameSystem = manifest.platform !== 'android'; // las anotaciones de Android se guardan con otros campos: no se pueden leer aquí
   let added = 0;
   for (const { thumb, ...info } of manifest.docs) {
     const pdf = await zip.file(`pdf/${info.id}.pdf`)?.async('arraybuffer');
     if (!pdf) continue;
-    const anns = JSON.parse((await zip.file(`anns/${info.id}.json`)?.async('string')) || '[]');
+    const anns = sameSystem ? JSON.parse((await zip.file(`anns/${info.id}.json`)?.async('string')) || '[]') : [];
     if (await store.restoreDoc(info, pdf, anns, thumb)) added++;
   }
   for (const f of manifest.folders || []) await store.addFolder(f);
-  for (const [name, url] of Object.entries(manifest.stickers || {})) await store.putUserSticker(name, url);
+  if (sameSystem) for (const [name, url] of Object.entries(manifest.stickers || {})) await store.putUserSticker(name, url);
   return added;
 }
 
@@ -69,6 +70,9 @@ export function openSettings(onChanged) {
   const keyInput = h('input', { class: 'field', type: 'password', placeholder: 'Pega aquí tu clave (AIza…)', value: getKey(), autocomplete: 'off' });
   keyInput.addEventListener('input', () => setKey(keyInput.value));
   const show = h('button', { class: 'text-btn', onclick: () => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; show.textContent = keyInput.type === 'password' ? 'Ver' : 'Ocultar'; } }, 'Ver');
+
+  const logoMute = h('input', { type: 'checkbox', checked: localStorage.getItem('ev.logoMuted') === '1' });
+  logoMute.addEventListener('change', () => localStorage.setItem('ev.logoMuted', logoMute.checked ? '1' : '0'));
 
   const storageInfo = h('p', { class: 'dim small' }, 'Calculando…');
   (async () => {
@@ -117,6 +121,8 @@ export function openSettings(onChanged) {
       } }, 'Proteger mis datos')),
     standalone() ? null : section('Instalar en el iPad',
       h('p', { class: 'dim small pre' }, '1. Abre esta página en Safari.\n2. Pulsa el botón Compartir (el cuadrado con la flecha).\n3. Elige «Añadir a pantalla de inicio».\nAsí se abre como una app y funciona sin conexión.')),
+    section('Sonido',
+      h('label', { class: 'row gap', style: { alignItems: 'center' } }, logoMute, h('span', {}, 'Silenciar icono del Ternurín'))),
     section('Actualizaciones',
       h('button', { class: 'text-btn link', onclick: checkUpdate }, 'Comprobar actualizaciones')),
     h('p', { class: 'dim small' }, `Evability ${VERSION}`));

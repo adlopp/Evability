@@ -99,7 +99,7 @@ import androidx.compose.material.icons.filled.SportsEsports
 /** Chat con un amigo: los mensajes se ven en cuanto llegan (se consultan cada 3 s mientras la pantalla está abierta). */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
+fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -118,6 +118,11 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
     var recMs by remember { mutableLongStateOf(0L) }
     var myPhoto by remember { mutableStateOf("") }
     val myName = Social.session?.username ?: ""
+    // Si es un grupo: el grupo (se actualiza al editarlo), si está abierta su información y los perfiles de quienes escriben.
+    var shownGroup by remember { mutableStateOf(group) }
+    var showInfo by remember { mutableStateOf(false) }
+    var profs by remember { mutableStateOf<Map<String, Social.Profile>>(emptyMap()) }
+    fun who(u: String) = if (u == Social.session?.uid) "Tú" else if (group != null) profs[u]?.username ?: "Alguien" else friend.username
     val listState = rememberLazyListState()
     val hour = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -142,6 +147,10 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         if (lastAt == 0L && raw.size < 50) hasMore = false
         val fresh = raw.filter { m -> messages.none { it.id == m.id } }
         if (fresh.isEmpty()) return false
+        if (group != null) {
+            val miss = (fresh.flatMap { listOf(it.from, it.replyFrom) } + group.members).filter { it.isNotEmpty() && it !in profs }.distinct()
+            if (miss.isNotEmpty()) runCatching { profs = profs + Social.profilesOf(miss) }
+        }
         messages.addAll(fresh)
         lastAt = maxOf(lastAt, fresh.maxOf { it.at })
         Social.markRead(friend.uid, lastAt)
@@ -172,6 +181,10 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                     hasMore = raw.size >= 50
                     val older = raw.filter { m -> messages.none { it.id == m.id } }
                     if (older.isNotEmpty()) {
+                        if (group != null) {
+                            val miss = older.flatMap { listOf(it.from, it.replyFrom) }.filter { it.isNotEmpty() && it !in profs }.distinct()
+                            if (miss.isNotEmpty()) runCatching { profs = profs + Social.profilesOf(miss) }
+                        }
                         messages.addAll(0, older)
                         listState.scrollToItem(older.size)
                     }
@@ -349,12 +362,30 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
         )
     }
 
+    val sg = shownGroup
+    if (showInfo && sg != null) GroupInfoDialog(sg, onChanged = { shownGroup = it }, onGone = { showInfo = false; onClose() }, onDismiss = { showInfo = false })
+
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
-            Avatar(friend.username, friend.photo, 38)
-            Spacer(Modifier.padding(start = 12.dp))
-            Text(friend.username, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            if (sg != null) {
+                // la cabecera de un grupo (foto, nombre y miembros) abre su información
+                Row(
+                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable { showInfo = true }.padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Avatar(sg.name, sg.photo, 38)
+                    Spacer(Modifier.padding(start = 12.dp))
+                    Column {
+                        Text(sg.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1)
+                        Text("${sg.members.size} miembro${if (sg.members.size == 1) "" else "s"} · toca para ver el grupo", fontSize = 12.sp, color = OnSurfaceDim, maxLines = 1)
+                    }
+                }
+            } else {
+                Avatar(friend.username, friend.photo, 38)
+                Spacer(Modifier.padding(start = 12.dp))
+                Text(friend.username, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
@@ -365,11 +396,13 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
             ) {
                 itemsIndexed(messages, key = { _, m -> m.id }) { index, m ->
                     // La foto sale junto al último mensaje de cada racha de la misma persona; en los demás queda el hueco.
-                    val showAvatar = messages.getOrNull(index + 1)?.mine != m.mine
+                    val showAvatar = messages.getOrNull(index + 1)?.from != m.from
                     @Composable
                     fun Photo() {
-                        if (showAvatar) Avatar(if (m.mine) myName else friend.username, if (m.mine) myPhoto else friend.photo, 32)
-                        else Spacer(Modifier.width(32.dp))
+                        if (showAvatar) {
+                            if (group != null && !m.mine) Avatar(profs[m.from]?.username ?: "?", profs[m.from]?.photo ?: "", 32)
+                            else Avatar(if (m.mine) myName else friend.username, if (m.mine) myPhoto else friend.photo, 32)
+                        } else Spacer(Modifier.width(32.dp))
                     }
                     // deslizar un mensaje hacia la derecha para responderle, como en WhatsApp
                     var dragX by remember(m.id) { mutableFloatStateOf(0f) }
@@ -412,11 +445,12 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                                 .combinedClickable(onClick = {}, onLongClick = { if (!m.deleted) menuMsg = m })
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                         ) {
+                            if (group != null && !m.mine && !m.deleted) Text(who(m.from), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Accent)
                             if (m.deleted) Text("Mensaje borrado", fontSize = 15.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = (if (m.mine) OnAccent else OnSurface).copy(alpha = 0.65f))
                             else if (m.replyText.isNotEmpty()) {
                                 val fg = if (m.mine) OnAccent else OnSurface
                                 Column(Modifier.padding(bottom = 6.dp).background(fg.copy(alpha = 0.15f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                                    Text(if (m.replyFrom == Social.session?.uid) "Tú" else friend.username, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = fg.copy(alpha = 0.85f))
+                                    Text(who(m.replyFrom), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = fg.copy(alpha = 0.85f))
                                     Text(m.replyText, fontSize = 13.sp, maxLines = 2, color = fg.copy(alpha = 0.85f))
                                 }
                             }
@@ -445,7 +479,7 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
-                    Text(if (r.mine) "Tú" else friend.username, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Accent)
+                    Text(who(r.from), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Accent)
                     Text(previewOf(r), fontSize = 13.sp, maxLines = 1, color = OnSurfaceDim)
                 }
                 IconButton(onClick = { replyTo = null }) { Icon(Icons.Default.Close, "Cancelar respuesta", tint = OnSurfaceDim) }
@@ -473,7 +507,7 @@ fun ChatScreen(friend: Social.Profile, onClose: () -> Unit) {
                 Text(mmss(recMs), color = OnSurface, fontSize = 15.sp)
                 IconButton(onClick = { finishRecording(true) }) { Icon(Icons.AutoMirrored.Filled.Send, "Enviar audio", tint = Accent) }
             } else {
-                IconButton(onClick = { showGames = true }) { Icon(Icons.Default.SportsEsports, "Minijuegos", tint = OnSurface) }
+                if (group == null) IconButton(onClick = { showGames = true }) { Icon(Icons.Default.SportsEsports, "Minijuegos", tint = OnSurface) }
                 IconButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.AttachFile, "Foto", tint = OnSurface) }
                 OutlinedTextField(
                     value = input, onValueChange = { input = it.take(5000) }, modifier = Modifier.weight(1f),

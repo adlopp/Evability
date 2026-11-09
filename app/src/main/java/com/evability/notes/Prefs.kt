@@ -64,6 +64,11 @@ object Prefs {
         get() = sp.getInt("pomo_rest", 5)
         set(v) = sp.edit().putInt("pomo_rest", v).apply()
 
+    /** Icono del Ternurín (el logo de arriba) sin sonido al tocarlo. */
+    var logoMuted: Boolean
+        get() = sp.getBoolean("logo_muted", false)
+        set(v) = sp.edit().putBoolean("logo_muted", v).apply()
+
     /** Ternurín en silencio: el temporizador sigue, pero sin alarma ni vibración. */
     var pomoMuted: Boolean
         get() = sp.getBoolean("pomo_muted", false)
