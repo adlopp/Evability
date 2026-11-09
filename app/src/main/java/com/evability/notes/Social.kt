@@ -291,7 +291,10 @@ object Social {
     suspend fun fullPhoto(uid: String, thumb: String): String? = withContext(Dispatchers.IO) {
         val key = "$uid:${thumb.length}:${thumb.takeLast(16)}"
         fullCache[key]?.let { return@withContext it }
-        val data = runCatching { getAll("photos", listOf(uid))[uid]?.text("data") }.getOrNull()
+        // «g:<id>» es la foto de un grupo; si no, la de una persona
+        val data = runCatching {
+            if (isGroup(uid)) getAll("groupPhotos", listOf(uid.drop(2)))[uid.drop(2)]?.text("data") else getAll("photos", listOf(uid))[uid]?.text("data")
+        }.getOrNull()
         if (!data.isNullOrEmpty()) fullCache[key] = data
         data?.takeIf { it.isNotEmpty() }
     }
@@ -722,6 +725,8 @@ object Social {
     class PolyRoom(
         val id: String, val host: String, val invited: List<String>, val players: List<String>, val tok: Map<String, Int>,
         val money: Int, val goBonus: Boolean, val auction: Boolean, val pot: Boolean, val dblBonus: Boolean, val rails: Boolean, val ownerFree: Boolean, val shop: Boolean, val events: Boolean, val goals: Boolean, val status: String, val seed: Int, val acts: List<String>,
+        /** Si la sala se creó desde un grupo, el id del grupo: entra cualquier miembro hasta que se llene. */
+        val group: String = "",
     )
 
     private fun roomOf(d: JSONObject?, id: String): PolyRoom? = d?.let {
@@ -730,7 +735,7 @@ object Social {
         if (tf != null) for (k in tf.keys()) tok[k] = tf.getJSONObject(k).optString("integerValue").toIntOrNull() ?: 0
         PolyRoom(
             id, it.text("host"), it.list("invited"), it.list("players"), tok, it.int("money").takeIf { m -> m > 0 } ?: 1500,
-            it.bool("goBonus"), it.bool("auction"), it.optJSONObject("fields")?.has("pot") != true || it.bool("pot"), it.bool("dblBonus"), it.bool("rails"), it.bool("ownerFree"), it.bool("shop"), it.bool("events"), it.bool("goals"), it.text("status"), it.int("seed"), it.list("acts"),
+            it.bool("goBonus"), it.bool("auction"), it.optJSONObject("fields")?.has("pot") != true || it.bool("pot"), it.bool("dblBonus"), it.bool("rails"), it.bool("ownerFree"), it.bool("shop"), it.bool("events"), it.bool("goals"), it.text("status"), it.int("seed"), it.list("acts"), it.text("group"),
         )
     }
 
@@ -742,17 +747,18 @@ object Social {
     /** Crea la sala y manda la invitación al chat del amigo (el id de la sala es el del mensaje). */
     suspend fun createPoly(friendUid: String): String = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val base = chatBase(friendUid)
+        val grp = if (isGroup(friendUid)) friendUid.drop(2) else null
         val id = UUID.randomUUID().toString()
         commit(
             write(
                 "rooms/$id",
-                JSONObject().put("host", str(me)).put("invited", strs(listOf(friendUid))).put("players", strs(listOf(me))).put("tok", tokMap(me, 0))
+                JSONObject().also { if (grp != null) it.put("group", str(grp)) }.put("host", str(me)).put("invited", strs(if (grp != null) emptyList() else listOf(friendUid))).put("players", strs(listOf(me))).put("tok", tokMap(me, 0))
                     .put("money", int(1500)).put("goBonus", bool(false)).put("auction", bool(true)).put("pot", bool(true)).put("dblBonus", bool(false)).put("rails", bool(false)).put("ownerFree", bool(false)).put("shop", bool(false)).put("events", bool(false)).put("goals", bool(false)).put("status", str("lobby")).put("seed", int(0)).put("acts", strs(emptyList())),
                 serverTime = "at",
             ),
-            write("chats/$pair/messages/$id", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("poly")).put("game", str(id)), serverTime = "at"),
-            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+            write("$base/messages/$id", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("poly")).put("game", str(id)), serverTime = "at"),
+            metaWrite(base, me),
         )
         id
     }
@@ -830,7 +836,7 @@ object Social {
     }
 
     /** Crea el grupo con quien lo crea dentro y manda la invitación a los amigos elegidos (hasta 9). Devuelve el id. */
-    suspend fun createGroup(name: String, desc: String, photo: String, invite: List<String>): String = withContext(Dispatchers.IO) {
+    suspend fun createGroup(name: String, desc: String, photo: String, full: String, invite: List<String>): String = withContext(Dispatchers.IO) {
         val me = live().uid
         val n = name.trim().take(40)
         if (n.isEmpty()) throw SocialError("Ponle un nombre al grupo")
@@ -844,7 +850,16 @@ object Social {
                 serverTime = "at",
             ),
         )
+        if (photo.isNotEmpty() && full.isNotEmpty()) saveGroupPhoto(id, photo, full)
         id
+    }
+
+    /** La foto grande del grupo va aparte (solo se descarga al ampliarla). Si faltan las reglas nuevas se amplía la miniatura. */
+    private fun saveGroupPhoto(id: String, thumb: String, full: String) {
+        try {
+            commit(write("groupPhotos/$id", JSONObject().put("data", str(full))))
+            fullCache["g:$id:${thumb.length}:${thumb.takeLast(16)}"] = full
+        } catch (e: SocialError) { /* sin reglas nuevas */ }
     }
 
     suspend fun getGroup(id: String): Group? = withContext(Dispatchers.IO) { runCatching { getAll("groups", listOf(id))[id]?.let { groupOf(it) } }.getOrNull() }
@@ -874,10 +889,11 @@ object Social {
 
     suspend fun deleteGroup(id: String) = withContext(Dispatchers.IO) { commit(delete("groups/$id")) }
 
-    suspend fun editGroup(id: String, name: String, desc: String, photo: String) = withContext(Dispatchers.IO) {
+    suspend fun editGroup(id: String, name: String, desc: String, photo: String, full: String) = withContext(Dispatchers.IO) {
         val n = name.trim().take(40)
         if (n.isEmpty()) throw SocialError("Ponle un nombre al grupo")
         commit(writeMask("groups/$id", JSONObject().put("name", str(n)).put("desc", str(desc.trim().take(200))).put("photo", str(photo)), listOf("name", "desc", "photo")))
+        if (photo.isNotEmpty() && full.isNotEmpty()) saveGroupPhoto(id, photo, full)
     }
 
     suspend fun profilesOf(uids: List<String>): Map<String, Profile> = withContext(Dispatchers.IO) {
@@ -909,29 +925,29 @@ object Social {
     }
 
     suspend fun chessGame(friendUid: String, id: String): ChessGame? = withContext(Dispatchers.IO) {
-        val pair = pairId(live().uid, friendUid)
-        gameOf(getAll("chats/$pair/games", listOf(id))[id], id)
+        val base = chatBase(friendUid)
+        gameOf(getAll("$base/games", listOf(id))[id], id)
     }
 
     /** Crea la partida y manda al chat la invitación (el id de la partida es el del mensaje). `mins` = minutos por jugador, 0 = sin tiempo. */
     suspend fun createChess(friendUid: String, mins: Int): String = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val base = chatBase(friendUid)
         val id = UUID.randomUUID().toString()
         commit(
             write(
-                "chats/$pair/games/$id",
+                "$base/games/$id",
                 JSONObject().put("creator", str(me)).put("joiner", str("")).put("white", str("")).put("black", str("")).put("status", str("waiting"))
                     .put("mins", int(mins.toLong())).put("moves", strs(emptyList())).put("wms", int(0)).put("bms", int(0))
                     .put("result", str("")).put("reason", str("")).put("drawOffer", str("")),
                 serverTime = "lastAt",
             ),
             write(
-                "chats/$pair/messages/$id",
+                "$base/messages/$id",
                 JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("chess")).put("game", str(id)).put("mins", int(mins.toLong())),
                 serverTime = "at",
             ),
-            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+            metaWrite(base, me),
         )
         id
     }
@@ -939,12 +955,12 @@ object Social {
     /** Unirse a una partida: los colores se reparten al azar entre los dos. */
     suspend fun joinChess(friendUid: String, g: ChessGame) = withContext(Dispatchers.IO) {
         val me = live().uid
-        val pair = pairId(me, friendUid)
+        val base = chatBase(friendUid)
         val iAmWhite = Random.nextBoolean()
         val ms = g.mins * 60_000L
         commit(
             writeMask(
-                "chats/$pair/games/${g.id}",
+                "$base/games/${g.id}",
                 JSONObject().put("status", str("playing")).put("joiner", str(me)).put("white", str(if (iAmWhite) me else g.creator))
                     .put("black", str(if (iAmWhite) g.creator else me)).put("wms", int(ms)).put("bms", int(ms)),
                 listOf("status", "joiner", "white", "black", "wms", "bms"), "lastAt",
@@ -954,21 +970,21 @@ object Social {
 
     /** Manda una jugada: la lista completa de jugadas, los relojes y, si la partida acaba con ella, el resultado. */
     suspend fun chessMove(friendUid: String, id: String, moves: List<String>, wms: Long, bms: Long, endResult: String?, endReason: String?) = withContext(Dispatchers.IO) {
-        val pair = pairId(live().uid, friendUid)
+        val base = chatBase(friendUid)
         val fields = JSONObject().put("moves", strs(moves)).put("wms", int(wms)).put("bms", int(bms)).put("drawOffer", str(""))
         val mask = arrayListOf("moves", "wms", "bms", "drawOffer")
         if (endResult != null && endReason != null) {
             fields.put("status", str("finished")).put("result", str(endResult)).put("reason", str(endReason))
             mask.addAll(listOf("status", "result", "reason"))
         }
-        commit(writeMask("chats/$pair/games/$id", fields, mask, "lastAt"))
+        commit(writeMask("$base/games/$id", fields, mask, "lastAt"))
     }
 
     suspend fun chessEnd(friendUid: String, id: String, result: String, reason: String) = withContext(Dispatchers.IO) {
-        val pair = pairId(live().uid, friendUid)
+        val base = chatBase(friendUid)
         commit(
             writeMask(
-                "chats/$pair/games/$id",
+                "$base/games/$id",
                 JSONObject().put("status", str("finished")).put("result", str(result)).put("reason", str(reason)).put("drawOffer", str("")),
                 listOf("status", "result", "reason", "drawOffer"),
             ),
@@ -976,8 +992,8 @@ object Social {
     }
 
     suspend fun chessOffer(friendUid: String, id: String, uidOrEmpty: String) = withContext(Dispatchers.IO) {
-        val pair = pairId(live().uid, friendUid)
-        commit(writeMask("chats/$pair/games/$id", JSONObject().put("drawOffer", str(uidOrEmpty)), listOf("drawOffer")))
+        val base = chatBase(friendUid)
+        commit(writeMask("$base/games/$id", JSONObject().put("drawOffer", str(uidOrEmpty)), listOf("drawOffer")))
     }
 
     fun markRead(friendUid: String, at: Long) {

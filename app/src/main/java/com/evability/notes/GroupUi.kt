@@ -8,6 +8,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -57,7 +61,7 @@ private val Danger = Color(0xFFFF6B6B)
 
 /** Foto del grupo: al tocarla se abre la galería y luego el recorte. */
 @Composable
-private fun GroupPhotoPicker(name: String, photo: String, onPhoto: (String) -> Unit) {
+private fun GroupPhotoPicker(name: String, photo: String, onPhoto: (thumb: String, full: String) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
@@ -71,7 +75,7 @@ private fun GroupPhotoPicker(name: String, photo: String, onPhoto: (String) -> U
             src, onCancel = { cropSrc = null },
             onApply = { square ->
                 cropSrc = null
-                scope.launch { onPhoto(withContext(Dispatchers.IO) { encodePhoto(square).first }) }
+                scope.launch { val (thumb, full) = withContext(Dispatchers.IO) { encodePhoto(square) }; onPhoto(thumb, full) }
             },
         )
     }
@@ -116,6 +120,7 @@ fun CreateGroupDialog(friends: List<Social.Profile>, onDismiss: () -> Unit, onCr
     var name by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
     var photo by remember { mutableStateOf("") }
+    var fullPhoto by remember { mutableStateOf("") }
     val picked = remember { mutableStateListOf<String>() }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
@@ -124,7 +129,7 @@ fun CreateGroupDialog(friends: List<Social.Profile>, onDismiss: () -> Unit, onCr
         title = { Text("Nuevo grupo") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                GroupPhotoPicker(name.trim().take(1).uppercase(), photo) { photo = it }
+                GroupPhotoPicker(name.trim().take(1).uppercase(), photo) { t, f -> photo = t; fullPhoto = f }
                 OutlinedTextField(name, { name = it.take(40); error = "" }, singleLine = true, label = { Text("Nombre del grupo") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(desc, { desc = it.take(200) }, maxLines = 3, label = { Text("Descripción (opcional)") }, modifier = Modifier.fillMaxWidth())
                 Text("Invitar amigos", fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(top = 4.dp))
@@ -143,7 +148,7 @@ fun CreateGroupDialog(friends: List<Social.Profile>, onDismiss: () -> Unit, onCr
                         scope.launch {
                             busy = true
                             try {
-                                val id = Social.createGroup(name, desc, photo, picked.toList())
+                                val id = Social.createGroup(name, desc, photo, fullPhoto, picked.toList())
                                 Toast.makeText(ctx, "Grupo creado", Toast.LENGTH_SHORT).show()
                                 onCreated(id)
                             } catch (e: CancellationException) {
@@ -169,13 +174,14 @@ private fun EditGroupDialog(g: Social.Group, onDismiss: () -> Unit, onSaved: () 
     var name by remember { mutableStateOf(g.name) }
     var desc by remember { mutableStateOf(g.desc) }
     var photo by remember { mutableStateOf(g.photo) }
+    var fullPhoto by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Editar grupo") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                GroupPhotoPicker(name.trim().take(1).uppercase(), photo) { photo = it }
+                GroupPhotoPicker(name.trim().take(1).uppercase(), photo) { t, f -> photo = t; fullPhoto = f }
                 OutlinedTextField(name, { name = it.take(40) }, singleLine = true, label = { Text("Nombre del grupo") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(desc, { desc = it.take(200) }, maxLines = 3, label = { Text("Descripción") }, modifier = Modifier.fillMaxWidth())
             }
@@ -187,7 +193,7 @@ private fun EditGroupDialog(g: Social.Group, onDismiss: () -> Unit, onSaved: () 
                     scope.launch {
                         busy = true
                         try {
-                            Social.editGroup(g.id, name, desc, photo)
+                            Social.editGroup(g.id, name, desc, photo, fullPhoto)
                             onSaved()
                         } catch (e: CancellationException) {
                             throw e
@@ -257,6 +263,7 @@ fun GroupInfoDialog(group: Social.Group, onChanged: (Social.Group) -> Unit, onGo
     var editing by remember { mutableStateOf(false) }
     var inviting by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) } // «delete», «leave» o «kick:<uid>»
+    var zoom by remember { mutableStateOf(false) }
     val isOwner = g.owner == me
 
     fun toast(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
@@ -278,6 +285,9 @@ fun GroupInfoDialog(group: Social.Group, onChanged: (Social.Group) -> Unit, onGo
         }
     }
 
+    if (zoom) Dialog(onDismissRequest = { zoom = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().clickable { zoom = false }) { PhotoZoom(ZoomTarget(g.name, g.photo, "g:${g.id}")) }
+    }
     if (editing) EditGroupDialog(g, onDismiss = { editing = false }, onSaved = { editing = false; refreshAfter { } })
     if (inviting) InviteToGroupDialog(g, friends, onDismiss = { inviting = false }, onDone = { inviting = false; refreshAfter { } })
     confirm?.let { what ->
@@ -331,7 +341,7 @@ fun GroupInfoDialog(group: Social.Group, onChanged: (Social.Group) -> Unit, onGo
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Avatar(g.name, g.photo, 84)
+                    Avatar(g.name, g.photo, 84, onTap = { zoom = true })
                     Text(g.name, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = OnSurface, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
                     Text(
                         g.desc.ifBlank { "Sin descripción" }, fontSize = 14.sp, color = OnSurfaceDim, textAlign = TextAlign.Center,

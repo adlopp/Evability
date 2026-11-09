@@ -157,7 +157,10 @@ export async function fullPhoto(uid, thumb) {
   const key = photoKey(uid, thumb);
   if (fullCache.has(key)) return fullCache.get(key);
   try {
-    const data = text((await getAll('photos', [uid]))[uid], 'data');
+    // «g:<id>» es la foto de un grupo; si no, la de una persona
+    const grupo = typeof uid === 'string' && uid.startsWith('g:');
+    const gid = grupo ? uid.slice(2) : uid;
+    const data = text((await getAll(grupo ? 'groupPhotos' : 'photos', [gid]))[gid], 'data');
     if (data) { fullCache.set(key, data); return data; }
   } catch { /* sin foto grande */ }
   return null;
@@ -225,12 +228,17 @@ const arrayOps = (path, ops) => ({
 export const MAX_GROUP = 10;
 
 /** Crea el grupo con quien lo crea dentro y manda la invitación a los amigos elegidos (hasta 9). */
-export async function createGroup({ name, desc, photo, invite }) {
+export async function createGroup({ name, desc, photo, full, invite }) {
   const me = (await live()).uid, id = uid(), n = name.trim().slice(0, 40);
   if (!n) throw new Error('Ponle un nombre al grupo');
   if (invite.length > MAX_GROUP - 1) throw new Error(`Un grupo puede tener hasta ${MAX_GROUP} personas`);
   await commit(write(`groups/${id}`, { owner: str(me), name: str(n), desc: str((desc || '').trim().slice(0, 200)), photo: str(photo || ''), members: strs([me]), invited: strs(invite) }, { serverTime: 'at' }));
+  if (photo && full) await saveGroupPhoto(id, photo, full);
   return id;
+}
+/** La foto grande del grupo va aparte (solo se descarga al ampliarla). Si faltan las reglas nuevas se amplía la miniatura. */
+async function saveGroupPhoto(id, thumb, full) {
+  try { await commit(write(`groupPhotos/${id}`, { data: str(full) })); fullCache.set(photoKey('g:' + id, thumb), full); } catch { /* sin reglas nuevas */ }
 }
 export async function getGroup(id) { const d = (await getAll('groups', [id]).catch(() => ({})))[id]; return d ? groupOf(d) : null; }
 export async function acceptGroup(id) { const me = (await live()).uid; await commit(arrayOps(`groups/${id}`, [['members', 'appendMissingElements', [me]], ['invited', 'removeAllFromArray', [me]]])); }
@@ -239,10 +247,11 @@ export async function leaveGroup(id) { const me = (await live()).uid; await comm
 export async function kickFromGroup(id, uidToRemove) { await commit(arrayOps(`groups/${id}`, [['members', 'removeAllFromArray', [uidToRemove]]])); }
 export async function inviteToGroup(id, uids) { await commit(arrayOps(`groups/${id}`, [['invited', 'appendMissingElements', uids]])); }
 export async function deleteGroup(id) { await commit(del(`groups/${id}`)); }
-export async function editGroup(id, { name, desc, photo }) {
+export async function editGroup(id, { name, desc, photo, full }) {
   const n = name.trim().slice(0, 40);
   if (!n) throw new Error('Ponle un nombre al grupo');
   await commit(writeMask(`groups/${id}`, { name: str(n), desc: str((desc || '').trim().slice(0, 200)), photo: str(photo || '') }, ['name', 'desc', 'photo']));
+  if (photo && full) await saveGroupPhoto(id, photo, full);
 }
 /** Perfiles (nombre y foto) de varias personas, por uid. */
 async function profilesOf(uids) { const d = await getAll('users', [...new Set(uids)]); return new Map(uids.map((u) => [u, profile(u, d[u])])); }
@@ -362,44 +371,44 @@ const gameOf = (d, id) => (d ? {
 } : null);
 
 async function getGame(friendUid, id) {
-  const pair = pairId((await live()).uid, friendUid);
-  return gameOf((await getAll(`chats/${pair}/games`, [id]))[id], id);
+  const base = await chatBase(friendUid);
+  return gameOf((await getAll(`${base}/games`, [id]))[id], id);
 }
 
 /** Crea la partida y manda al chat la invitación (el id de la partida es el del mensaje). `mins` = minutos por jugador, 0 = sin tiempo. */
 async function createGame(friendUid, mins) {
-  const me = (await live()).uid, pair = pairId(me, friendUid), id = uid();
+  const me = (await live()).uid, base = await chatBase(friendUid), id = uid();
   await commit(
-    write(`chats/${pair}/games/${id}`, { creator: str(me), joiner: str(''), white: str(''), black: str(''), status: str('waiting'), mins: intV(mins), moves: strs([]), wms: intV(0), bms: intV(0), result: str(''), reason: str(''), drawOffer: str('') }, { serverTime: 'lastAt' }),
-    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('chess'), game: str(id), mins: intV(mins) }, { serverTime: 'at' }),
-    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+    write(`${base}/games/${id}`, { creator: str(me), joiner: str(''), white: str(''), black: str(''), status: str('waiting'), mins: intV(mins), moves: strs([]), wms: intV(0), bms: intV(0), result: str(''), reason: str(''), drawOffer: str('') }, { serverTime: 'lastAt' }),
+    write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('chess'), game: str(id), mins: intV(mins) }, { serverTime: 'at' }),
+    metaWrite(base, me));
   return id;
 }
 
 /** Unirse a una partida: los colores se reparten al azar entre los dos. */
 async function joinGame(friendUid, g) {
-  const me = (await live()).uid, pair = pairId(me, friendUid), iAmWhite = Math.random() < 0.5, ms = g.mins * 60000;
-  await commit(writeMask(`chats/${pair}/games/${g.id}`,
+  const me = (await live()).uid, base = await chatBase(friendUid), iAmWhite = Math.random() < 0.5, ms = g.mins * 60000;
+  await commit(writeMask(`${base}/games/${g.id}`,
     { status: str('playing'), joiner: str(me), white: str(iAmWhite ? me : g.creator), black: str(iAmWhite ? g.creator : me), wms: intV(ms), bms: intV(ms) },
     ['status', 'joiner', 'white', 'black', 'wms', 'bms'], 'lastAt'));
 }
 
 /** Manda una jugada: la lista completa de jugadas, los relojes y, si la partida acaba con ella, el resultado. */
 async function sendMove(friendUid, id, moves, wms, bms, end) {
-  const pair = pairId((await live()).uid, friendUid);
+  const base = await chatBase(friendUid);
   const fields = { moves: strs(moves), wms: intV(wms), bms: intV(bms), drawOffer: str('') }, mask = ['moves', 'wms', 'bms', 'drawOffer'];
   if (end) { Object.assign(fields, { status: str('finished'), result: str(end.result), reason: str(end.reason) }); mask.push('status', 'result', 'reason'); }
-  await commit(writeMask(`chats/${pair}/games/${id}`, fields, mask, 'lastAt'));
+  await commit(writeMask(`${base}/games/${id}`, fields, mask, 'lastAt'));
 }
 
 async function endGame(friendUid, id, result, reason) {
-  const pair = pairId((await live()).uid, friendUid);
-  await commit(writeMask(`chats/${pair}/games/${id}`, { status: str('finished'), result: str(result), reason: str(reason), drawOffer: str('') }, ['status', 'result', 'reason', 'drawOffer']));
+  const base = await chatBase(friendUid);
+  await commit(writeMask(`${base}/games/${id}`, { status: str('finished'), result: str(result), reason: str(reason), drawOffer: str('') }, ['status', 'result', 'reason', 'drawOffer']));
 }
 
 async function offerDraw(friendUid, id, uidOrEmpty) {
-  const pair = pairId((await live()).uid, friendUid);
-  await commit(writeMask(`chats/${pair}/games/${id}`, { drawOffer: str(uidOrEmpty) }, ['drawOffer']));
+  const base = await chatBase(friendUid);
+  await commit(writeMask(`${base}/games/${id}`, { drawOffer: str(uidOrEmpty) }, ['drawOffer']));
 }
 
 const chessApi = (friend, id) => ({
@@ -410,6 +419,7 @@ const chessApi = (friend, id) => ({
   end: (result, reason) => endGame(friend.uid, id, result, reason),
   offer: (u) => offerDraw(friend.uid, id, u),
   serverNow,
+  profile: async (u) => (await profilesOf([u])).get(u),
   meInfo: async () => ({ username: session.username, photo: (await myProfile().catch(() => ({ photo: '' }))).photo }),
 });
 
@@ -434,17 +444,17 @@ const roomOf = (d, id) => (d ? {
   tok: Object.fromEntries(Object.entries(d.fields?.tok?.mapValue?.fields || {}).map(([k, v]) => [k, Number(v.integerValue)])),
   money: Number(d.fields?.money?.integerValue || 1500), goBonus: d.fields?.goBonus?.booleanValue === true, auction: d.fields?.auction?.booleanValue === true,
   pot: d.fields?.pot?.booleanValue !== false, dblBonus: d.fields?.dblBonus?.booleanValue === true, rails: d.fields?.rails?.booleanValue === true, ownerFree: d.fields?.ownerFree?.booleanValue === true, shop: d.fields?.shop?.booleanValue === true, events: d.fields?.events?.booleanValue === true, goals: d.fields?.goals?.booleanValue === true,
-  seed: Number(d.fields?.seed?.integerValue || 0),
+  seed: Number(d.fields?.seed?.integerValue || 0), group: text(d, 'group'),
 } : null);
 const getRoom = async (id) => roomOf((await getAll('rooms', [id]).catch(() => ({})))[id], id);
 
 /** Crea la sala (con la ficha 0 para quien la crea) y manda la invitación al chat del amigo. */
 async function createRoom(friendUid) {
-  const me = (await live()).uid, pair = pairId(me, friendUid), id = uid();
+  const me = (await live()).uid, base = await chatBase(friendUid), id = uid(), grp = isGroup(friendUid) ? friendUid.slice(2) : null;
   await commit(
-    write(`rooms/${id}`, { host: str(me), invited: strs([friendUid]), players: strs([me]), tok: { mapValue: { fields: { [me]: intV(0) } } }, money: intV(1500), goBonus: boolV(false), auction: boolV(true), pot: boolV(true), dblBonus: boolV(false), rails: boolV(false), ownerFree: boolV(false), shop: boolV(false), events: boolV(false), goals: boolV(false), status: str('lobby'), seed: intV(0), acts: strs([]) }, { serverTime: 'at' }),
-    write(`chats/${pair}/messages/${id}`, { from: str(me), text: str(''), kind: str('poly'), game: str(id) }, { serverTime: 'at' }),
-    write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+    write(`rooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), tok: { mapValue: { fields: { [me]: intV(0) } } }, money: intV(1500), goBonus: boolV(false), auction: boolV(true), pot: boolV(true), dblBonus: boolV(false), rails: boolV(false), ownerFree: boolV(false), shop: boolV(false), events: boolV(false), goals: boolV(false), status: str('lobby'), seed: intV(0), acts: strs([]) }, { serverTime: 'at' }),
+    write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('poly'), game: str(id) }, { serverTime: 'at' }),
+    metaWrite(base, me));
   return id;
 }
 
@@ -579,7 +589,7 @@ function friendPicker(friends, exclude, max) {
 
 /** Foto del grupo: botón con la vista previa; al tocarlo se elige y se recorta. */
 function groupPhotoPicker(name, initial) {
-  let photo = initial || '';
+  let photo = initial || '', fullPhoto_ = '';
   const holder = h('button', { class: 'plain group-photo-btn', type: 'button', 'aria-label': 'Elegir foto del grupo' });
   const placeholder = () => h('div', { class: 'avatar', style: { width: '84px', height: '84px' } }, icon('people', 38));
   const paint = () => holder.replaceChildren(photo || name() ? avatar(name() || '?', photo, 84) : placeholder(), h('small', { class: 'dim' }, photo ? 'Cambiar foto' : 'Añadir foto'));
@@ -588,11 +598,11 @@ function groupPhotoPicker(name, initial) {
     const f = file.files[0]; file.value = '';
     if (!f) return;
     const b = await openCrop(f);
-    if (b) { photo = b.thumb; paint(); }
+    if (b) { photo = b.thumb; fullPhoto_ = b.full; paint(); }
   };
   holder.onclick = () => file.click();
   paint();
-  return { el: h('div', { class: 'group-photo' }, holder, file), value: () => photo, repaint: paint };
+  return { el: h('div', { class: 'group-photo' }, holder, file), value: () => photo, full: () => fullPhoto_, repaint: paint };
 }
 
 /** «Nuevo grupo»: nombre, descripción, foto y a qué amigos se invita. `onCreated(id)` se llama al terminar. */
@@ -607,7 +617,7 @@ function openCreateGroup(friends, onCreated) {
       h('small', { class: 'dim' }, 'Les llegará una invitación y entrarán cuando la acepten.')),
     actions: [{ label: 'Cancelar' }, { label: 'Crear grupo', primary: true, onClick: async () => {
       if (!name.value.trim()) { toast('Ponle un nombre al grupo'); return false; }
-      try { const id = await createGroup({ name: name.value, desc: desc.value, photo: photo.value(), invite: pick.selected() }); toast('Grupo creado'); onCreated?.(id); }
+      try { const id = await createGroup({ name: name.value, desc: desc.value, photo: photo.value(), full: photo.full(), invite: pick.selected() }); toast('Grupo creado'); onCreated?.(id); }
       catch (e) { toast(e.message || 'No se pudo crear el grupo'); return false; }
     } }],
   });
@@ -640,7 +650,7 @@ function openGroupInfo(group0, { onChanged, onGone } = {}) {
     modal({
       title: 'Editar grupo', content: h('div', { class: 'stack' }, photo.el, name, desc),
       actions: [{ label: 'Cancelar' }, { label: 'Guardar', primary: true, onClick: async () => {
-        try { await editGroup(g.id, { name: name.value, desc: desc.value, photo: photo.value() }); await reload(); }
+        try { await editGroup(g.id, { name: name.value, desc: desc.value, photo: photo.value(), full: photo.full() }); await reload(); }
         catch (e) { toast(e.message || 'No se pudo guardar'); return false; }
       } }],
     });
@@ -669,7 +679,7 @@ function openGroupInfo(group0, { onChanged, onGone } = {}) {
   }
   function paint() {
     body.replaceChildren(
-      h('div', { class: 'group-head' }, avatar(g.name, g.photo, 84), h('h2', {}, g.name), g.desc ? h('p', { class: 'dim' }, g.desc) : h('p', { class: 'dim small' }, 'Sin descripción')),
+      h('div', { class: 'group-head' }, avatar(g.name, g.photo, 84, null, 'g:' + g.id), h('h2', {}, g.name), g.desc ? h('p', { class: 'dim' }, g.desc) : h('p', { class: 'dim small' }, 'Sin descripción')),
       h('h3', {}, `Miembros (${g.members.length}/${MAX_GROUP})`), ...g.members.map((u) => personRow(u, false)),
       ...(g.invited.length ? [h('h3', {}, 'Invitaciones pendientes'), ...g.invited.map((u) => personRow(u, true))] : []),
       isOwner()
@@ -721,7 +731,7 @@ function openChat(friend) {
   } });
   const photoBtn = h('button', { class: 'icon-btn', 'aria-label': 'Foto', onclick: () => fileInput.click() }, icon('clip'));
   const actionBtn = h('button', { class: 'icon-btn accent' });
-  const normalRow = h('div', { class: 'rec-row' }, group ? null : clipBtn, photoBtn, fileInput, input, actionBtn);
+  const normalRow = h('div', { class: 'rec-row' }, clipBtn, photoBtn, fileInput, input, actionBtn);
   let replyTo = null;
   const replyBar = h('div', { class: 'reply-bar', style: { display: 'none' } });
   const previewOf = (m) => m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? 'Audio' : m.kind === 'chess' ? 'Evadrez' : m.text.slice(0, 100);
@@ -742,7 +752,7 @@ function openChat(friend) {
     onChanged: (g) => { Object.assign(group, g); paintHead(); onGroupsChanged?.(); },
     onGone: () => { onGroupsChanged?.(); close(); },
   }) }) : null;
-  const paintHead = () => headBtn?.replaceChildren(avatar(group.name, group.photo, 38), h('div', { class: 'grow' }, h('h1', {}, group.name), h('small', { class: 'dim' }, `${group.members.length} miembro${group.members.length === 1 ? '' : 's'} · toca para ver el grupo`)));
+  const paintHead = () => headBtn?.replaceChildren(avatar(group.name, group.photo, 38, null, 'g:' + group.id), h('div', { class: 'grow' }, h('h1', {}, group.name), h('small', { class: 'dim' }, `${group.members.length} miembro${group.members.length === 1 ? '' : 's'} · toca para ver el grupo`)));
   paintHead();
   const root = h('div', { class: 'pomo chat' },
     h('div', { class: 'pomo-top' }, h('button', { class: 'icon-btn', 'aria-label': 'Volver', onclick: () => close() }, icon('back')),
@@ -791,13 +801,20 @@ function openChat(friend) {
   function chessCard(m) {
     const status = h('small', {}, ''), btn = h('button', { class: 'btn small-btn' }, 'Abrir');
     const mins = m.mins ? `${m.mins} min` : 'Sin tiempo';
-    const paint = (g) => {
+    // en un grupo juegan quien la crea y la primera persona que se une: las demás la ven ocupada
+    let last = null;
+    const nm = (u) => (u === session?.uid ? session.username : who(u));
+    const paintText = () => {
+      const g = last;
       if (!g) { status.textContent = ''; return; }
-      const mine = g.creator === session?.uid;
-      status.textContent = g.status === 'waiting' ? (mine ? 'Esperando rival' : 'Te invitan a jugar') : g.status === 'playing' ? 'En juego'
-        : g.result === 'd' ? 'Tablas' : `Gana ${(g.result === 'w' ? g.white : g.black) === session?.uid ? session.username : friend.username}`;
-      btn.textContent = g.status === 'waiting' && !mine ? 'Unirse' : 'Abrir';
+      const mine = g.creator === session?.uid, player = g.white === session?.uid || g.black === session?.uid, full = !!group && g.status !== 'waiting' && !mine && !player;
+      status.textContent = g.status === 'waiting' ? (mine ? 'Esperando rival' : group ? 'Busca rival' : 'Te invitan a jugar')
+        : g.status === 'playing' ? (group ? `${nm(g.white)} contra ${nm(g.black)}` : 'En juego')
+          : g.result === 'd' ? 'Tablas' : `Gana ${nm(g.result === 'w' ? g.white : g.black)}`;
+      btn.textContent = full ? 'Completa' : g.status === 'waiting' && !mine ? 'Unirse' : 'Abrir';
+      btn.disabled = full;
     };
+    const paint = (g) => { last = g; paintText(); if (group && g) knowProfs([g.white, g.black, g.creator]).then(paintText); };
     const refresh = () => getGame(friend.uid, m.id).then(paint).catch(() => {});
     btn.onclick = () => root.append(openChess({ friend, gameId: m.id, api: chessApi(friend, m.id), onClose: refresh }));
     const pl = poller(async () => { const g = await getGame(friend.uid, m.id); paint(g); if (!g || g.status === 'finished') pl.stop(); return false; }, 20000, 60000);
@@ -812,7 +829,9 @@ function openChat(friend) {
       if (!r) { status.textContent = ''; return; }
       const inRoom = r.players.includes(session?.uid);
       status.textContent = r.status === 'lobby' ? `Sala · ${r.players.length}/4` : r.status === 'playing' ? 'En juego' : 'Terminada';
-      btn.textContent = r.status === 'lobby' && !inRoom ? 'Unirse' : 'Abrir';
+      btn.textContent = r.status === 'lobby' && !inRoom ? (r.players.length >= 4 ? 'Completa' : 'Unirse') : 'Abrir';
+      // en un grupo, quien no está en la sala no puede abrirla cuando ya está llena o empezada
+      btn.disabled = !!group && !inRoom && (r.status !== 'lobby' || r.players.length >= 4);
     };
     const refresh = () => getRoom(m.game).then(paint).catch(() => {});
     btn.onclick = () => root.append(openEvapoly({ roomId: m.game, api: polyApi(m.game), onClose: refresh }));
@@ -1302,13 +1321,13 @@ export function openSocial(onClose) {
     }
     function paintLists() {
       if (!ov) { friendsEl.replaceChildren(h('p', { class: 'dim' }, 'Cargando…')); return; }
-      groupInvitesEl.replaceChildren(...(ov.groupInvites?.length ? [h('h3', {}, 'Invitaciones a grupos'), ...ov.groupInvites.map((g) => h('div', { class: 'person' }, avatar(g.name, g.photo, 42),
+      groupInvitesEl.replaceChildren(...(ov.groupInvites?.length ? [h('h3', {}, 'Invitaciones a grupos'), ...ov.groupInvites.map((g) => h('div', { class: 'person' }, avatar(g.name, g.photo, 42, null, 'g:' + g.id),
         h('div', { class: 'grow' }, h('div', {}, g.name), h('div', { class: 'small dim' }, `${g.ownerName} te invita`)),
         h('button', { class: 'icon-btn', style: { color: 'var(--accent)' }, 'aria-label': 'Aceptar', onclick: act(() => acceptGroup(g.id)) }, icon('check')),
         h('button', { class: 'icon-btn', 'aria-label': 'Rechazar', onclick: act(() => declineGroup(g.id)) }, icon('close'))))] : []));
       groupsEl.replaceChildren(h('div', { class: 'group-sep' }, h('h3', {}, 'Mis grupos'), h('button', { class: 'text-btn', onclick: newGroup }, icon('plus', 18), ' Nuevo grupo')),
         ...(ov.groups?.length ? ov.groups.map((g) => h('div', { class: 'person group-row', onclick: (e) => { if (e.target.closest('.chat-btn')) return; root.append(openChat(groupChat(g))); } },
-          avatar(g.name, g.photo, 46), h('div', { class: 'grow' }, h('div', {}, g.name), h('div', { class: 'small dim' }, `Grupo · ${g.members.length} miembro${g.members.length === 1 ? '' : 's'}`)),
+          avatar(g.name, g.photo, 46, null, 'g:' + g.id), h('div', { class: 'grow' }, h('div', {}, g.name), h('div', { class: 'small dim' }, `Grupo · ${g.members.length} miembro${g.members.length === 1 ? '' : 's'}`)),
           h('button', { class: 'icon-btn chat-btn', 'aria-label': 'Chat del grupo', onclick: () => root.append(openChat(groupChat(g))) }, icon('chat'), unread.get('g:' + g.id) ? h('i', { class: 'badge' }) : null)))
           : [h('p', { class: 'dim small' }, 'Crea un grupo con tus amigos para chatear todos juntos.')]));
       incomingEl.replaceChildren(...(ov.incoming.length ? [h('h3', {}, 'Solicitudes'), ...ov.incoming.map((p) => personRow(p,

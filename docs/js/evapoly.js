@@ -216,7 +216,7 @@ export function openEvapoly({ roomId, api, onClose }) {
   const sigOf = () => JSON.stringify([room.players, room.tok, room.invited, room.money, room.goBonus, room.auction, room.pot, room.dblBonus, room.rails, room.ownerFree, room.shop, room.events, room.goals, room.status]);
   function renderLobby() {
     lobbySig = sigOf();
-    const isHost = room.host === me, inRoom = room.players.includes(me), invitedOnly = !inRoom && room.invited.includes(me);
+    const isHost = room.host === me, inRoom = room.players.includes(me), invitedOnly = !inRoom && (room.invited.includes(me) || (!!room.group && room.players.length < 4)); // en la sala de un grupo entra cualquier miembro hasta que se llene
     const taken = new Set(Object.entries(room.tok).filter(([u]) => room.players.includes(u) && u !== me).map(([, t]) => t));
     const myTok = room.tok[me];
 
@@ -250,7 +250,7 @@ export function openEvapoly({ roomId, api, onClose }) {
     const buttons = [];
     if (invitedOnly) buttons.push(h('button', { class: 'btn big', onclick: async () => { try { await api.join(room, firstFreeTok()); await poll(); } catch (e) { toast(e.message); } } }, 'Unirse'));
     if (isHost) {
-      buttons.push(h('button', { class: 'btn outline', onclick: inviteMore }, 'Invitar'));
+      if (!room.group) buttons.push(h('button', { class: 'btn outline', onclick: inviteMore }, 'Invitar'));
       buttons.push(h('button', { class: 'btn big', disabled: room.players.length < 2, onclick: async () => {
         try { await api.start(room, Math.floor(Math.random() * 2147483647)); await poll(); } catch (e) { toast(e.message); }
       } }, 'Empezar'));

@@ -50,6 +50,12 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.Job
 import kotlin.math.abs
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -634,6 +640,8 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
             }
         }
 
+        PageScroller(listState, count, Modifier.align(Alignment.TopEnd).fillMaxHeight().padding(top = 12.dp, bottom = 64.dp))
+
         Surface(
             modifier = Modifier.align(Alignment.BottomCenter).padding(14.dp),
             shape = RoundedCornerShape(50),
@@ -683,6 +691,87 @@ private fun Viewer(state: EditorState, listState: LazyListState, onAddPage: () -
 }
 
 private const val FLING_BOOST = 1.3f
+
+/**
+ * Bolita en el borde derecho para ir a una página lejana: aparece al desplazarse (y se esconde al rato), se arrastra con el dedo
+ * y deja el documento donde la sueltes. Mientras se arrastra muestra a qué página llegarías.
+ */
+@Composable
+private fun PageScroller(listState: LazyListState, count: Int, modifier: Modifier) {
+    if (count < 2) return
+    val scope = rememberCoroutineScope()
+    var dragging by remember { mutableStateOf(false) }
+    var shown by remember { mutableStateOf(false) }
+    var lastMove by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex * 1_000_000 + listState.firstVisibleItemScrollOffset }.collect {
+            shown = true
+            lastMove = System.nanoTime()
+        }
+    }
+    LaunchedEffect(lastMove, dragging) {
+        if (!dragging) {
+            delay(1800)
+            shown = false
+        }
+    }
+    val alpha by animateFloatAsState(if (shown || dragging) 1f else 0f, label = "scroller")
+
+    BoxWithConstraints(modifier) {
+        val knob = 68.dp // alto de la barra ovalada
+        val trackPx = with(LocalDensity.current) { (maxHeight - knob).toPx() }.coerceAtLeast(1f)
+        // posición actual: página + cuánto se ha recorrido de ella
+        val first = listState.firstVisibleItemIndex
+        val size = (listState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 1).coerceAtLeast(1)
+        val pos = first + listState.firstVisibleItemScrollOffset / size.toFloat()
+        val frac = (pos / (count - 1).coerceAtLeast(1)).coerceIn(0f, 1f)
+        val pageNow = (pos.roundToInt() + 1).coerceIn(1, count)
+        val y = with(LocalDensity.current) { (frac * trackPx).toDp() }
+        val curPx by rememberUpdatedState(frac * trackPx)
+        val acc = remember { FloatArray(1) }
+
+        if (alpha > 0.02f) {
+            if (dragging) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopEnd).offset(x = -40.dp, y = y + (knob - 44.dp) / 2).height(44.dp).graphicsLayer { this.alpha = alpha },
+                    shape = RoundedCornerShape(50),
+                    color = Surface1.copy(alpha = 0.96f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Outline),
+                    shadowElevation = 4.dp,
+                ) {
+                    Box(Modifier.padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+                        Text("Página $pageNow de $count", color = OnSurface, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            Box(
+                // zona táctil ancha y la barra ovalada dentro, pegada al borde, como la barra de desplazamiento de un chat
+                Modifier.align(Alignment.TopEnd).offset(y = y).width(36.dp).height(knob).graphicsLayer { this.alpha = alpha }
+                    .pointerInput(count, trackPx) {
+                        detectVerticalDragGestures(
+                            onDragStart = { dragging = true; acc[0] = curPx },
+                            onDragEnd = { dragging = false },
+                            onDragCancel = { dragging = false },
+                        ) { change, dy ->
+                            change.consume()
+                            // la bolita sigue al dedo: su posición en la pista decide la página (con la fracción de página)
+                            acc[0] = (acc[0] + dy).coerceIn(0f, trackPx)
+                            val target = acc[0] / trackPx * (count - 1)
+                            val idx = target.toInt().coerceIn(0, count - 1)
+                            val within = ((target - idx) * size).roundToInt()
+                            scope.launch { listState.scrollToItem(idx, within) }
+                        }
+                    },
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Box(
+                    Modifier.padding(end = 4.dp).width(if (dragging) 12.dp else 8.dp).fillMaxHeight()
+                        .shadow(3.dp, RoundedCornerShape(50)).background(Accent, RoundedCornerShape(50)),
+                )
+            }
+        }
+    }
+}
 
 /** Trazo -> línea recta de su primer a su último punto. Si queda casi horizontal o vertical (menos de ~4°), se endereza del todo. */
 private fun straightLine(pts: List<Offset>): List<Offset> {

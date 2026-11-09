@@ -47,6 +47,8 @@ export function openChess({ friend, gameId, api, onClose }) {
   let g = null, moves = [], pos = null, keys = [], history = [], result = null;
   let myColor = '', sel = -1, targets = [], lastMove = null, pending = false, timer = null, ticker = null, closed = false, ending = false, promoFor = null;
   let myInfo = { username: '', photo: '' };
+  // en un grupo el rival no es fijo: es quien se une a la partida (se pone su perfil en cuanto se sabe)
+  let their = friend.group ? { username: '…', photo: '' } : friend;
 
   const board = h('div', { class: 'cboard' });
   const squares = Array.from({ length: 64 }, () => h('div', { class: 'csq' }));
@@ -141,7 +143,7 @@ export function openChess({ friend, gameId, api, onClose }) {
         h('span', { class: 'ccap' }, ...took.map((c) => h('img', { src: IMG(color === 'w' ? c.toLowerCase() : c.toUpperCase()), alt: '' })), lead > 0 ? h('b', {}, '+' + lead) : null),
         clk ? h('span', { class: 'cclock' + (turn ? ' on' : '') + (clk[color] < 10000 ? ' low' : '') }, mmss(clk[color])) : null);
     };
-    bar(topBar, theirs, friend.username, friend.photo);
+    bar(topBar, theirs, their.username, their.photo);
     topBar.append(h('button', { class: 'icon-btn cfull-exit cfull-dark', 'aria-label': 'Fondo oscuro', onclick: toggleDark }, icon('moon')), h('button', { class: 'icon-btn cfull-exit', 'aria-label': 'Salir de pantalla completa', onclick: () => setFull(false) }, icon('shrink')));
     bar(botBar, mine, myInfo.username || 'Tú', myInfo.photo);
   }
@@ -153,7 +155,7 @@ export function openChess({ friend, gameId, api, onClose }) {
     if (g.status === 'waiting') { banner.append(h('span', { class: 'cstate' }, g.creator === me ? 'Esperando rival…' : 'Uniéndose…')); return; }
     const o = pos ? outcome(pos, keys) : { check: false };
     if (playing() && o.check) banner.append(h('span', { class: 'cstate chk' }, 'Jaque'));
-    else if (playing()) banner.append(h('span', { class: 'cstate' }, myTurn() ? 'Tu turno' : `Turno de ${friend.username}`));
+    else if (playing()) banner.append(h('span', { class: 'cstate' }, myTurn() ? 'Tu turno' : `Turno de ${their.username}`));
     if (playing() && g.drawOffer && g.drawOffer !== me) {
       banner.append(h('span', { class: 'cstate' }, 'Propone tablas'),
         h('button', { class: 'btn small-btn', onclick: () => finish('d', 'agreement') }, 'Aceptar'),
@@ -180,7 +182,7 @@ export function openChess({ friend, gameId, api, onClose }) {
     const won = res.result === myColor, draw = res.result === 'd';
     overlay.classList.add('show');
     overlay.append(h('div', { class: 'cend' },
-      h('h2', {}, draw ? 'Tablas' : 'Gana ' + (won ? myInfo.username || 'Tú' : friend.username)),
+      h('h2', {}, draw ? 'Tablas' : 'Gana ' + (won ? myInfo.username || 'Tú' : their.username)),
       h('p', { class: 'dim' }, (REASONS[res.reason] || '') + (!draw && res.reason === 'mate' ? '' : '')),
       h('button', { class: 'btn', onclick: () => close() }, 'Cerrar')));
   }
@@ -242,6 +244,10 @@ export function openChess({ friend, gameId, api, onClose }) {
     const before = moves.length;
     g = remote;
     myColor = g.white === me ? 'w' : g.black === me ? 'b' : '';
+    if (friend.group) {
+      const ou = g.white === me ? g.black : g.black === me ? g.white : '';
+      if (ou && their.uid !== ou) { their = { uid: ou, username: '…', photo: '' }; api.profile?.(ou).then((p) => { if (p && their.uid === ou) { their = p; paintBars(); } }).catch(() => {}); }
+    }
     if (g.moves.length > moves.length || !pos) {
       const r = replay(g.moves);
       if (!r) { toast('La partida tiene una jugada no válida'); return; }
@@ -265,7 +271,11 @@ export function openChess({ friend, gameId, api, onClose }) {
     try {
       let remote = await api.get();
       if (!remote) return;
-      if (remote.status === 'waiting' && remote.creator !== me) { await api.join(remote); remote = await api.get(); }
+      if (remote.status === 'waiting' && remote.creator !== me) {
+        try { await api.join(remote); } catch (e) { if (!friend.group) throw e; } // en un grupo puede que otra persona se haya unido antes
+        remote = await api.get();
+      }
+      if (friend.group && remote.status !== 'waiting' && remote.white !== me && remote.black !== me) { toast('Esta partida ya tiene rival'); close(); return; }
       if (remote.moves.length >= moves.length || remote.status === 'finished') applyRemote(remote);
     } catch { /* sin red: se reintenta */ }
   }

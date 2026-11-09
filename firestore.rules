@@ -281,7 +281,7 @@ service cloud.firestore {
           && request.resource.data.delAt == request.time;
         // texto, audio (kind = 'audio') o foto (kind = 'image'); el contenido de audios y fotos va en groups/{id}/audio/{mismo id}
         allow create: if inGroup(gid)
-          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime', 'rid', 'rq', 'rf'])
+          && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'dur', 'mime', 'game', 'mins', 'rid', 'rq', 'rf'])
           && request.resource.data.from == request.auth.uid
           && request.resource.data.at == request.time
           && request.resource.data.text is string && request.resource.data.text.size() <= 5000
@@ -295,7 +295,41 @@ service cloud.firestore {
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
             || (request.resource.data.kind == 'image' && request.resource.data.text.size() == 0
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
+            || (request.resource.data.kind == 'poly' && request.resource.data.text.size() == 0
+                && request.resource.data.game is string && request.resource.data.game.size() < 64)
+            || (request.resource.data.kind == 'chess' && request.resource.data.text.size() == 0
+                && request.resource.data.game is string && request.resource.data.game.size() < 64
+                && request.resource.data.mins is int && request.resource.data.mins >= 0 && request.resource.data.mins <= 60)
           );
+      }
+
+      // partidas de ajedrez del grupo: como en el chat entre amigos, pero se une la primera persona del grupo que lo intenta
+      // (el estado «waiting» pasa a «playing» una sola vez) y las demás ya no pueden jugar ni mover.
+      match /games/{gameId} {
+        allow read: if inGroup(gid);
+        allow create: if inGroup(gid)
+          && request.resource.data.keys().hasOnly(['creator', 'joiner', 'white', 'black', 'status', 'mins', 'moves', 'wms', 'bms', 'lastAt', 'result', 'reason', 'drawOffer'])
+          && request.resource.data.creator == request.auth.uid
+          && request.resource.data.status == 'waiting'
+          && request.resource.data.moves.size() == 0
+          && request.resource.data.joiner == '' && request.resource.data.white == '' && request.resource.data.black == ''
+          && request.resource.data.mins is int && request.resource.data.mins >= 0 && request.resource.data.mins <= 60
+          && request.resource.data.result == '' && request.resource.data.drawOffer == '';
+        allow update: if inGroup(gid) && (
+          (resource.data.status == 'waiting' && resource.data.creator != request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'joiner', 'white', 'black', 'wms', 'bms', 'lastAt'])
+            && request.resource.data.status == 'playing' && request.resource.data.joiner == request.auth.uid
+            && ((request.resource.data.white == resource.data.creator && request.resource.data.black == request.auth.uid)
+                || (request.resource.data.white == request.auth.uid && request.resource.data.black == resource.data.creator)))
+          || (resource.data.status == 'playing'
+            && (request.auth.uid == resource.data.white || request.auth.uid == resource.data.black)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['moves', 'wms', 'bms', 'lastAt', 'status', 'result', 'reason', 'drawOffer'])
+            && request.resource.data.moves.size() == resource.data.moves.size() + 1
+            && request.auth.uid == (resource.data.moves.size() % 2 == 0 ? resource.data.white : resource.data.black))
+          || (resource.data.status == 'playing'
+            && (request.auth.uid == resource.data.white || request.auth.uid == resource.data.black)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'result', 'reason', 'drawOffer']))
+        );
       }
 
       match /audio/{audioId} {
@@ -308,17 +342,31 @@ service cloud.firestore {
       }
     }
 
+    // foto del grupo en alta resolución (se descarga al ampliarla; la miniatura de las listas va en groups/{id}); solo la sube quien lo creó
+    match /groupPhotos/{gid} {
+      allow read: if signedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members;
+      allow create, update: if signedIn() && get(/databases/$(database)/documents/groups/$(gid)).data.owner == request.auth.uid
+        && request.resource.data.keys().hasOnly(['data'])
+        && request.resource.data.data is string
+        && request.resource.data.data.size() < 150000;
+      allow delete: if signedIn() && get(/databases/$(database)/documents/groups/$(gid)).data.owner == request.auth.uid;
+    }
+
     // salas del Evapoly (Monopoly) de hasta 4 jugadores: rooms/{id}. `players` = asientos por orden de llegada (el primero es quien
     // la crea), `tok` = ficha de cada uno, `acts` = lista de acciones de la partida (cada jugador añade una; las reglas del juego las
-    // aplica y valida cada dispositivo con el mismo motor y la semilla `seed`).
+    // aplica y valida cada dispositivo con el mismo motor y la semilla `seed`). Si la sala se crea desde un grupo lleva `group` (id del
+    // grupo): cualquier miembro puede verla y entrar hasta que se llene, sin invitación.
     match /rooms/{id} {
       allow read: if signedIn()
-        && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players);
+        && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players
+          || ('group' in resource.data && inGroup(resource.data.group)));
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'tok', 'money', 'goBonus', 'auction', 'pot', 'dblBonus', 'rails', 'ownerFree', 'shop', 'events', 'goals', 'status', 'seed', 'acts', 'at'])
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'tok', 'money', 'goBonus', 'auction', 'pot', 'dblBonus', 'rails', 'ownerFree', 'shop', 'events', 'goals', 'group', 'status', 'seed', 'acts', 'at'])
         && request.resource.data.host == request.auth.uid
         && request.resource.data.players == [request.auth.uid]
-        && invitedOk(request.resource.data.invited)
+        && (('group' in request.resource.data)
+          ? (request.resource.data.group is string && inGroup(request.resource.data.group) && request.resource.data.invited.size() == 0)
+          : invitedOk(request.resource.data.invited))
         && request.resource.data.status == 'lobby'
         && request.resource.data.money is int && request.resource.data.money >= 500 && request.resource.data.money <= 2500
         && request.resource.data.goBonus is bool && request.resource.data.auction is bool
@@ -346,7 +394,9 @@ service cloud.firestore {
           && (!('goals' in request.resource.data) || request.resource.data.goals is bool)
           && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
         // un invitado entra
-        || (resource.data.status == 'lobby' && request.auth.uid in resource.data.invited && !(request.auth.uid in resource.data.players)
+        || (resource.data.status == 'lobby'
+          && (request.auth.uid in resource.data.invited || ('group' in resource.data && inGroup(resource.data.group)))
+          && !(request.auth.uid in resource.data.players)
           && resource.data.players.size() < 4
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'tok'])
           && request.resource.data.players == resource.data.players.concat([request.auth.uid]))

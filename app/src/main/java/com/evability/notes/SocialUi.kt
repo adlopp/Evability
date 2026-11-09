@@ -254,7 +254,7 @@ internal fun Avatar(
 
 /** Foto ampliada en el centro de la pantalla, mientras se mantiene pulsado el perfil. Primero la miniatura y, al llegar, la grande. */
 @Composable
-private fun PhotoZoom(target: ZoomTarget) {
+internal fun PhotoZoom(target: ZoomTarget) {
     var photo by remember(target) { mutableStateOf(target.photo) }
     LaunchedEffect(target) { Social.fullPhoto(target.uid, target.photo)?.let { photo = it } }
     val bmp = remember(photo) { decodePhoto(photo) }
@@ -364,7 +364,7 @@ internal fun CropDialog(src: Bitmap, onCancel: () -> Unit, onApply: (Bitmap) -> 
     }
 }
 
-private class ZoomTarget(val name: String, val photo: String, val uid: String)
+internal class ZoomTarget(val name: String, val photo: String, val uid: String)
 
 @Composable
 fun SocialScreen(onClose: () -> Unit) {
@@ -648,7 +648,7 @@ private fun FriendsPanel() {
             Text("Invitaciones a grupos", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = OnSurface)
             o.groupInvites.forEach { inv ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(inv.group.name, inv.group.photo, 42)
+                    Avatar(inv.group.name, inv.group.photo, 42, onHold = { held -> zoomed = if (held) ZoomTarget(inv.group.name, inv.group.photo, "g:${inv.group.id}") else null })
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(inv.group.name, fontSize = 16.sp, color = OnSurface)
@@ -711,7 +711,7 @@ private fun FriendsPanel() {
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { chatGroup = g; chatWith = Social.Profile("g:${g.id}", g.name, g.photo) }.padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Avatar(g.name, g.photo, 46)
+                    Avatar(g.name, g.photo, 46, onHold = { held -> zoomed = if (held) ZoomTarget(g.name, g.photo, "g:${g.id}") else null })
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(g.name, fontSize = 17.sp, color = OnSurface, fontWeight = FontWeight.Medium, maxLines = 1)

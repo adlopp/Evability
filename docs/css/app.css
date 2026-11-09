@@ -780,3 +780,13 @@ textarea.field { resize: vertical; }
 .pick-row { cursor: pointer; } .pick-row input { width: 20px; height: 20px; accent-color: var(--accent); }
 .text-btn.danger { color: #ff6b6b; }
 .group-info .row.gap { flex-wrap: nowrap; } .group-info .row.gap > .btn { flex: 1; justify-content: center; padding-left: 12px; padding-right: 12px; }
+
+/* ───────── barra ovalada para saltar de página ───────── */
+.fastscroll { position: fixed; width: 0; z-index: 13; pointer-events: none; opacity: 0; transition: opacity .25s; }
+.fastscroll.on, .fastscroll.drag { opacity: 1; }
+.fs-knob { position: absolute; right: 0; width: 36px; height: 64px; display: flex; align-items: center; justify-content: flex-end; padding-right: 4px; box-sizing: border-box; touch-action: none; cursor: grab; }
+.fastscroll.on .fs-knob, .fastscroll.drag .fs-knob { pointer-events: auto; }
+.fs-knob i { display: block; width: 8px; height: 100%; border-radius: 99px; background: var(--accent); box-shadow: 0 1px 5px rgba(0,0,0,.4); transition: width .12s; }
+.fastscroll.drag .fs-knob i { width: 12px; }
+.fs-label { position: absolute; right: 44px; height: 40px; display: flex; align-items: center; padding: 0 16px; border-radius: 99px; background: var(--surface1); border: 1px solid var(--outline); font-weight: 600; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.35); opacity: 0; transition: opacity .12s; pointer-events: none; }
+.fastscroll.drag .fs-label { opacity: 1; }

@@ -862,9 +862,12 @@ fun PolyCard(m: Social.ChatMessage, fg: Color, onOpen: (String) -> Unit) {
         }
         Spacer(Modifier.width(14.dp))
         Button(
-            onClick = { onOpen(roomId) }, shape = RoundedCornerShape(12.dp),
+            onClick = { onOpen(roomId) },
+            // en un grupo, quien no está en la sala no puede abrirla cuando ya está llena o empezada
+            enabled = !(r != null && r.group.isNotEmpty() && !inRoom && (r.status != "lobby" || r.players.size >= 4)),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = fg.copy(alpha = 0.18f), contentColor = fg),
-        ) { Text(if (r?.status == "lobby" && !inRoom) "Unirse" else "Abrir") }
+        ) { Text(if (r?.status == "lobby" && !inRoom) (if (r.players.size >= 4) "Completa" else "Unirse") else "Abrir") }
     }
 }
 
@@ -1499,7 +1502,7 @@ private fun PolyLobby(
 ) {
     val isHost = r.host == me
     val inRoom = me in r.players
-    val invitedOnly = !inRoom && me in r.invited
+    val invitedOnly = !inRoom && (me in r.invited || (r.group.isNotEmpty() && r.players.size < 4)) // en la sala de un grupo entra cualquier miembro hasta que se llene
     val taken = r.tok.filterKeys { it in r.players && it != me }.values.toSet()
     var money by remember(r.money) { mutableStateOf(r.money.toFloat()) }
     val pending = r.invited.filter { it !in r.players }
@@ -1598,7 +1601,7 @@ private fun PolyLobby(
             // botones
             if (invitedOnly) PolyButton("Unirse", true, true) { onJoin() }
             if (isHost) {
-                PolyButton("Invitar", false, r.invited.size < 3) { onInvite() }
+                if (r.group.isEmpty()) PolyButton("Invitar", false, r.invited.size < 3) { onInvite() }
                 PolyButton("Empezar", true, r.players.size >= 2) { onStart() }
                 TextButton(onClick = onRemove, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cerrar sala", color = Accent) }
             } else if (inRoom) {

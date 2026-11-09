@@ -458,7 +458,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                             else if (m.kind == "image") PhotoRow(m, friend.uid)
                             else if (m.kind == "audio") AudioRow(m, friend.uid, if (m.mine) OnAccent else OnSurface)
                             else if (m.kind == "poly") PolyCard(m, if (m.mine) OnAccent else OnSurface) { polyId = it }
-                            else if (m.kind == "chess") ChessCard(m, friend, if (m.mine) OnAccent else OnSurface) { chessId = m.id }
+                            else if (m.kind == "chess") ChessCard(m, friend, if (m.mine) OnAccent else OnSurface, nameOf = { u -> if (group != null) profs[u]?.username ?: "…" else friend.username }) { chessId = m.id }
                             else Text(m.text, fontSize = 16.sp, color = if (m.mine) OnAccent else OnSurface)
                             Text(
                                 hour.format(Date(m.at)), fontSize = 10.sp, modifier = Modifier.align(Alignment.End),
@@ -507,7 +507,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                 Text(mmss(recMs), color = OnSurface, fontSize = 15.sp)
                 IconButton(onClick = { finishRecording(true) }) { Icon(Icons.AutoMirrored.Filled.Send, "Enviar audio", tint = Accent) }
             } else {
-                if (group == null) IconButton(onClick = { showGames = true }) { Icon(Icons.Default.SportsEsports, "Minijuegos", tint = OnSurface) }
+                IconButton(onClick = { showGames = true }) { Icon(Icons.Default.SportsEsports, "Minijuegos", tint = OnSurface) }
                 IconButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.AttachFile, "Foto", tint = OnSurface) }
                 OutlinedTextField(
                     value = input, onValueChange = { input = it.take(5000) }, modifier = Modifier.weight(1f),

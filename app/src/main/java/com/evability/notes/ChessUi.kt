@@ -125,7 +125,7 @@ fun ChessTimeDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
 
 /** Invitación a una partida de ajedrez dentro del chat: muestra cómo va y deja unirse o abrirla. */
 @Composable
-fun ChessCard(m: Social.ChatMessage, friend: Social.Profile, fg: Color, onOpen: () -> Unit) {
+fun ChessCard(m: Social.ChatMessage, friend: Social.Profile, fg: Color, nameOf: (String) -> String = { friend.username }, onOpen: () -> Unit) {
     var game by remember(m.id) { mutableStateOf<Social.ChessGame?>(null) }
     LaunchedEffect(m.id) {
         while (true) {
@@ -136,12 +136,17 @@ fun ChessCard(m: Social.ChatMessage, friend: Social.Profile, fg: Color, onOpen: 
         }
     }
     val g = game
+    // en un grupo juegan quien la crea y la primera persona que se une: las demás la ven ocupada
+    val inGroup = Social.isGroup(friend.uid)
+    val meUid = Social.session?.uid
+    fun nm(u: String) = if (u == meUid) (Social.session?.username ?: "") else nameOf(u)
+    val full = inGroup && g != null && g.status != "waiting" && !m.mine && g.white != meUid && g.black != meUid
     val status = when {
         g == null -> ""
-        g.status == "waiting" -> if (m.mine) "Esperando rival" else "Te invitan a jugar"
-        g.status == "playing" -> "En juego"
+        g.status == "waiting" -> if (m.mine) "Esperando rival" else if (inGroup) "Busca rival" else "Te invitan a jugar"
+        g.status == "playing" -> if (inGroup) "${nm(g.white)} contra ${nm(g.black)}" else "En juego"
         g.result == "d" -> "Tablas"
-        else -> "Gana ${if ((if (g.result == "w") g.white else g.black) == Social.session?.uid) (Social.session?.username ?: "") else friend.username}"
+        else -> "Gana ${nm(if (g.result == "w") g.white else g.black)}"
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(44.dp).background(DarkSq, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) { PieceIcon('N', 40.dp) }
@@ -153,9 +158,9 @@ fun ChessCard(m: Social.ChatMessage, friend: Social.Profile, fg: Color, onOpen: 
         }
         Spacer(Modifier.width(14.dp))
         Button(
-            onClick = onOpen, shape = RoundedCornerShape(12.dp),
+            onClick = onOpen, enabled = !full, shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = fg.copy(alpha = 0.18f), contentColor = fg),
-        ) { Text(if (g?.status == "waiting" && !m.mine) "Unirse" else "Abrir") }
+        ) { Text(if (full) "Completa" else if (g?.status == "waiting" && !m.mine) "Unirse" else "Abrir") }
     }
 }
 
@@ -171,6 +176,9 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     remember { ChessPieces.load(ctx); true }
     val me = Social.session?.uid ?: ""
     val myName = Social.session?.username ?: ""
+    // en un grupo el rival no es fijo: es quien se une a la partida (se pone su perfil en cuanto se sabe)
+    val inGroup = Social.isGroup(friend.uid)
+    var rival by remember { mutableStateOf(if (inGroup) Social.Profile("", "…", "") else friend) }
 
     var g by remember { mutableStateOf<Social.ChessGame?>(null) }
     var pos by remember { mutableStateOf<ChessPos?>(null) }
@@ -235,6 +243,13 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
     fun applyRemote(remote: Social.ChessGame) {
         val before = moves.size
         g = remote
+        if (inGroup) {
+            val ou = if (remote.white == me) remote.black else if (remote.black == me) remote.white else ""
+            if (ou.isNotEmpty() && rival.uid != ou) {
+                rival = Social.Profile(ou, "…", "")
+                scope.launch { runCatching { Social.profilesOf(listOf(ou))[ou] }.getOrNull()?.let { p -> if (rival.uid == ou) rival = p } }
+            }
+        }
         if (remote.moves.size > moves.size || pos == null) {
             val r = Chess.replay(remote.moves)
             if (r == null) { message = "La partida tiene una jugada no válida"; return }
@@ -265,8 +280,13 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
         if (pending) return
         var remote = Social.chessGame(friend.uid, gameId) ?: return
         if (remote.status == "waiting" && remote.creator != me) {
-            Social.joinChess(friend.uid, remote)
+            try { Social.joinChess(friend.uid, remote) } catch (e: CancellationException) { throw e } catch (e: Exception) { if (!inGroup) throw e } // en un grupo puede que otra persona se haya unido antes
             remote = Social.chessGame(friend.uid, gameId) ?: return
+        }
+        if (inGroup && remote.status != "waiting" && remote.white != me && remote.black != me) {
+            android.widget.Toast.makeText(ctx, "Esta partida ya tiene rival", android.widget.Toast.LENGTH_SHORT).show()
+            onClose()
+            return
         }
         if (remote.moves.size >= moves.size || remote.status == "finished") applyRemote(remote)
     }
@@ -573,7 +593,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
                             Modifier.background(Surface1, RoundedCornerShape(20.dp)).border(1.dp, Outline, RoundedCornerShape(20.dp)).padding(horizontal = 30.dp, vertical = 22.dp),
                             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(if (res.first == 'd') "Tablas" else "Gana ${if (res.first == myColor) myName.ifEmpty { "Tú" } else friend.username}", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnSurface)
+                            Text(if (res.first == 'd') "Tablas" else "Gana ${if (res.first == myColor) myName.ifEmpty { "Tú" } else rival.username}", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = OnSurface)
                             Text(Reasons[res.second] ?: "", color = OnSurfaceDim)
                             Button(onClick = onClose, shape = RoundedCornerShape(14.dp)) { Text("Cerrar", fontWeight = FontWeight.SemiBold) }
                         }
@@ -596,7 +616,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
                         if (playing() && inCheckNow) {
                             Surface(color = Color(0xFFC62828), shape = RoundedCornerShape(50)) { Text("Jaque", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) }
                         } else if (playing()) {
-                            Text(if (myTurn()) "Tu turno" else "Turno de ${friend.username}", fontWeight = FontWeight.SemiBold, color = OnSurface)
+                            Text(if (myTurn()) "Tu turno" else "Turno de ${rival.username}", fontWeight = FontWeight.SemiBold, color = OnSurface)
                         }
                         if (playing() && cur.drawOffer.isNotEmpty() && cur.drawOffer != me) {
                             Text("Propone tablas", color = OnSurface)
@@ -632,7 +652,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
             val side = (if (land) minOf(maxHeight - 8.dp, maxWidth - 560.dp) else minOf(maxWidth, maxHeight - 130.dp)).coerceAtLeast(200.dp)
             Box(Modifier.fillMaxSize()) {
                 Box(Modifier.align(Alignment.Center)) { Board(side) }
-                Bar(opp, friend.username, friend.photo, Modifier.align(Alignment.TopStart).padding(8.dp).width(260.dp))
+                Bar(opp, rival.username, rival.photo, Modifier.align(Alignment.TopStart).padding(8.dp).width(260.dp))
                 Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.align(Alignment.BottomEnd).padding(8.dp).width(260.dp))
                 Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) { ExitFullScreen() }
             }
@@ -643,7 +663,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = Alignment.CenterHorizontally) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Header()
-                        Bar(opp, friend.username, friend.photo, Modifier.fillMaxWidth())
+                        Bar(opp, rival.username, rival.photo, Modifier.fillMaxWidth())
                     }
                     StatusPanel()
                     Bar(mine, myName.ifEmpty { "Tú" }, myPhoto, Modifier.fillMaxWidth())
@@ -655,7 +675,7 @@ fun ChessScreen(friend: Social.Profile, gameId: String, onClose: () -> Unit) {
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     val side = minOf(maxWidth - 8.dp, maxHeight - 104.dp, 900.dp).coerceAtLeast(200.dp)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Bar(opp, friend.username, friend.photo, Modifier.width(side))
+                        Bar(opp, rival.username, rival.photo, Modifier.width(side))
                         Spacer(Modifier.height(4.dp))
                         Board(side)
                         Spacer(Modifier.height(4.dp))

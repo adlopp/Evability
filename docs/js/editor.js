@@ -47,11 +47,15 @@ export class Editor {
     this.viewer = h('div', { class: 'viewer' });
     this.pagesEl = h('div', { class: 'pages' });
     this.counter = h('div', { class: 'pagecount' });
+    // barra ovalada en el borde derecho para saltar rápido a una página lejana (aparece al desplazarse y se arrastra)
+    this.fastLabel = h('div', { class: 'fs-label' });
+    this.fastKnob = h('div', { class: 'fs-knob', role: 'slider', 'aria-label': 'Ir a una página' }, h('i', {}));
+    this.fast = h('div', { class: 'fastscroll' }, this.fastLabel, this.fastKnob);
     this.selbar = h('div', { class: 'floatbar', style: { display: 'none' } });
     this.objbar = h('div', { class: 'floatbar', style: { display: 'none' } });
     this.viewer.append(this.pagesEl);
     this.searchbar = h('div', { class: 'searchbar', style: { display: 'none' } });
-    this.root.append(this.topbar, this.optbar, this.searchbar, this.viewer, this.counter, this.selbar, this.objbar);
+    this.root.append(this.topbar, this.optbar, this.searchbar, this.viewer, this.counter, this.fast, this.selbar, this.objbar);
     this.showBars = true;
     this.hits = []; this.hitIndex = 0; this.searchOpen = false; this.textCache = new Map();
 
@@ -568,8 +572,9 @@ export class Editor {
     const viewer = this.viewer;
     viewer.addEventListener('scroll', () => {
       cancelAnimationFrame(this.scrollRaf);
-      this.scrollRaf = requestAnimationFrame(() => { this.updateVisible(); this.counterUpdate(); });
+      this.scrollRaf = requestAnimationFrame(() => { this.updateVisible(); this.counterUpdate(); this.fastPlace(true); });
     }, { passive: true });
+    this.bindFast();
 
     const blocks = (t) => {
       if (t.touchType === 'stylus') return true; // el Apple Pencil dibuja, no desplaza
@@ -629,6 +634,46 @@ export class Editor {
     this.viewer.scrollTop = y * k - ay;
     this.renderToolbar();
     if (render) { this.invalidateRenders(); this.updateVisible(); }
+  }
+
+  /** Coloca la barra ovalada según lo desplazado; `wake` la deja ver y la esconde a los 1,8 s sin moverse. */
+  fastPlace(wake) {
+    const v = this.viewer, fs = this.fast;
+    if (!fs || !this.views || this.views.length < 2) return;
+    const r = v.getBoundingClientRect(), KH = 64, max = v.scrollHeight - v.clientHeight;
+    const top = r.top + 8, h = Math.max(KH + 8, r.height - 16 - 56); // deja libre el contador de abajo
+    fs.style.top = top + 'px'; fs.style.height = h + 'px'; fs.style.right = '0px';
+    this.fastKnob.style.top = (max > 0 ? v.scrollTop / max : 0) * (h - KH) + 'px';
+    this.fastLabel.style.top = (max > 0 ? v.scrollTop / max : 0) * (h - KH) + (KH - 40) / 2 + 'px';
+    this.fastLabel.textContent = `Página ${this.position + 1} de ${this.views.length}`;
+    if (wake) {
+      fs.classList.add('on');
+      clearTimeout(this.fastHide);
+      if (!this.fastDrag) this.fastHide = setTimeout(() => fs.classList.remove('on'), 1800);
+    }
+  }
+
+  bindFast() {
+    const knob = this.fastKnob, v = this.viewer, KH = 64;
+    knob.addEventListener('pointerdown', (e) => {
+      this.fastDrag = true; clearTimeout(this.fastHide);
+      this.fast.classList.add('drag', 'on');
+      this.fastGrab = e.clientY - knob.getBoundingClientRect().top; // dónde se agarró la barra
+      knob.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    knob.addEventListener('pointermove', (e) => {
+      if (!this.fastDrag) return;
+      const r = v.getBoundingClientRect(), top = r.top + 8, h = Math.max(KH + 8, r.height - 16 - 56);
+      const f = Math.min(1, Math.max(0, (e.clientY - this.fastGrab - top) / (h - KH)));
+      v.scrollTop = f * (v.scrollHeight - v.clientHeight);
+    });
+    const end = () => {
+      if (!this.fastDrag) return;
+      this.fastDrag = false; this.fast.classList.remove('drag');
+      this.fastHide = setTimeout(() => this.fast.classList.remove('on'), 1800);
+    };
+    knob.addEventListener('pointerup', end); knob.addEventListener('pointercancel', end);
   }
 
   counterUpdate() {
