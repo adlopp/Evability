@@ -67,6 +67,7 @@ class FriendsWatchService : Service() {
                                     replaced
                                 }
                                 for (a in Social.newChatAlerts()) ChatNotifier.show(ctx, a)
+                                Social.syncStudy(ctx)
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {

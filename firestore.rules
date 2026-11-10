@@ -422,6 +422,15 @@ service cloud.firestore {
       allow delete: if signedIn() && request.auth.uid == resource.data.host;
     }
 
+    // tiempos de estudio de cada cuenta: study/{uid}. `d` = { día: { dispositivo: milisegundos } }. Cada dispositivo escribe solo su parte,
+    // así que el total de un día es la suma de sus dispositivos y volver a vincular no duplica nada. Solo los ve su dueño.
+    match /study/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['d'])
+        && request.resource.data.d is map;
+    }
+
     // toques (corazones): id = destino_origen; como mucho uno cada 15 minutos por amigo (lo comprueba el servidor)
     match /pokes/{id} {
       // (si el documento todavía no existe, se puede leer: así la lista de amigos puede preguntar por todos a la vez)

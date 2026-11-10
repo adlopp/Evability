@@ -13,6 +13,10 @@ const save = () => localStorage.setItem(KEY, JSON.stringify(S));
 // ───────── registro del tiempo de estudio (sin descansos), por día ─────────
 
 const LOG = 'ev.study';
+const RKEY = 'ev.studyRemote';
+/** Tiempos de estudio de tus otros dispositivos (de la cuenta); se suman a los de este. */
+const studyRemote = () => { try { return JSON.parse(localStorage.getItem(RKEY) || '{}'); } catch { return {}; } };
+export const setStudyRemote = (m) => localStorage.setItem(RKEY, JSON.stringify(m || {}));
 export const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 export const studyLog = () => { try { return JSON.parse(localStorage.getItem(LOG) || '{}'); } catch { return {}; } };
 
@@ -44,7 +48,7 @@ function accrue(force) {
 
 /** Milisegundos estudiados en un día, incluido el tramo en curso que aún no se ha guardado. */
 export function studyMs(key) {
-  let ms = studyLog()[key] || 0;
+  let ms = (studyLog()[key] || 0) + (studyRemote()[key] || 0);
   if (key === dayKey(new Date()) && S.phase === 'STUDY' && !S.paused && S.mark) ms += Math.max(0, Math.min(Date.now(), S.endAt) - S.mark);
   if (key === dayKey(new Date()) && SS.start && !SS.paused) ms += Math.max(0, Date.now() - SS.mark);
   return ms;

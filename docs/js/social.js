@@ -2,7 +2,7 @@
 // habla con Firebase por su API REST (sin SDK). Las claves no son secretas; la seguridad la ponen las reglas de `firestore.rules`.
 
 import { h, icon, toast, confirmDialog, modal, uid, poller } from './ui.js';
-import { studying } from './pomodoro.js';
+import { studying, studyLog, setStudyRemote } from './pomodoro.js';
 import { openWordle } from './wordle.js';
 import { openChess } from './chess.js';
 import { openEvapoly, polyIcon } from './evapoly.js';
@@ -142,7 +142,7 @@ export async function resetPassword(rawEmail) {
   catch (e) { throw e.message === 'Usuario o contraseña incorrectos' ? new Error('No hay ninguna cuenta con ese correo') : e; }
 }
 
-export function signOut() { saveSession(null); lastShownPoke = -1; unread.clear(); friendUidsCache = []; pending = 0; }
+export function signOut() { saveSession(null); lastShownPoke = -1; unread.clear(); friendUidsCache = []; pending = 0; setStudyRemote({}); studyPushed.clear(); }
 
 export async function myProfile() { const s = await live(); return profile(s.uid, (await getAll('users', [s.uid]))[s.uid]); }
 /** Guarda la miniatura (la de las listas) y, aparte, la foto en alta resolución para cuando se amplía. */
@@ -1014,6 +1014,55 @@ function openChat(friend) {
   return root;
 }
 
+// ───────── tiempos de estudio en la cuenta ─────────
+// Cada dispositivo guarda en la nube lo que ha estudiado él (study/{uid}.d[día][dispositivo]) y descarga lo de los demás, así el total
+// de cada día es la suma de todos los dispositivos de la cuenta y vincular dos veces no duplica nada.
+
+const studyDevice = () => { let d = localStorage.getItem('ev.studyDev'); if (!d) { d = uid().replace(/-/g, '').slice(0, 12); localStorage.setItem('ev.studyDev', d); } return d; };
+const studyPushed = new Map();
+/** Los tiempos de este dispositivo ya están vinculados a la cuenta con la que has iniciado sesión. */
+export const studyLinked = () => !!session && localStorage.getItem('ev.studyLinked') === session.uid;
+/** Hay sesión iniciada y todavía no se han vinculado los tiempos de este dispositivo (para enseñar el botón «Vincular tiempos»). */
+export const canLinkStudy = () => !!session && !studyLinked();
+
+async function pushStudy(force) {
+  const me = (await live()).uid, dev = studyDevice();
+  const days = Object.entries(studyLog()).filter(([d, ms]) => ms > 0 && (force || studyPushed.get(d) !== ms));
+  for (let i = 0; i < days.length; i += 120) {
+    const part = days.slice(i, i + 120);
+    const fields = { d: { mapValue: { fields: Object.fromEntries(part.map(([d, ms]) => [d, { mapValue: { fields: { [dev]: intV(ms) } } }])) } } };
+    await commit({ update: { name: `${DB}/study/${me}`, fields }, updateMask: { fieldPaths: part.map(([d]) => `d.\`${d}\`.\`${dev}\``) } });
+    part.forEach(([d, ms]) => studyPushed.set(d, ms));
+  }
+}
+
+/** Descarga lo estudiado en tus otros dispositivos. */
+async function pullStudy() {
+  const me = (await live()).uid, dev = studyDevice();
+  const doc = (await getAll('study', [me]))[me], out = {};
+  for (const [day, v] of Object.entries(doc?.fields?.d?.mapValue?.fields || {})) {
+    let sum = 0;
+    for (const [k, x] of Object.entries(v.mapValue?.fields || {})) if (k !== dev) sum += Number(x.integerValue || 0);
+    if (sum > 0) out[day] = sum;
+  }
+  setStudyRemote(out);
+}
+
+/** «Vincular tiempos»: sube los tiempos de este dispositivo a la cuenta (una sola vez) y baja los de los demás. */
+export async function linkStudy() {
+  const me = (await live()).uid;
+  await pushStudy(true);
+  localStorage.setItem('ev.studyLinked', me);
+  await pullStudy().catch(() => {});
+}
+
+/** Mantiene al día los tiempos: sube lo nuevo (si ya están vinculados) y baja lo de otros dispositivos. */
+async function syncStudy() {
+  if (!session) return;
+  if (studyLinked()) await pushStudy(false);
+  await pullStudy();
+}
+
 // ───────── presencia y toques ─────────
 
 /** Latido de presencia: cuándo estuviste por última vez y si ahora mismo estás estudiando. */
@@ -1147,7 +1196,7 @@ export function startHost() {
   if (!session) return;
   const visible = () => document.visibilityState === 'visible' && session;
   const beat = () => { if (visible()) heartbeat().catch(() => {}); };
-  const poll = () => { if (visible()) { checkPokes().catch(() => {}); checkShares().catch(() => {}); checkChats().catch(() => {}); } };
+  const poll = () => { if (visible()) { checkPokes().catch(() => {}); checkShares().catch(() => {}); checkChats().catch(() => {}); syncStudy().catch(() => {}); } };
   beat(); poll();
   hostTimers = [setInterval(beat, 30000), setInterval(poll, 60000)];
 }

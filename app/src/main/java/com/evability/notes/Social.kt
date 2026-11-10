@@ -818,6 +818,62 @@ object Social {
 
     suspend fun polyRemove(id: String) = withContext(Dispatchers.IO) { commit(delete("rooms/$id")) }
 
+    // ───────── tiempos de estudio en la cuenta ─────────
+    // Cada dispositivo guarda en la nube lo que ha estudiado él (study/{uid}.d[día][dispositivo]) y descarga lo de los demás, así el total
+    // de cada día es la suma de todos los dispositivos de la cuenta y vincular dos veces no duplica nada.
+
+    private val studyPushed = HashMap<String, Long>()
+
+    /** Los tiempos de este dispositivo ya están vinculados a la cuenta con la que has iniciado sesión. */
+    fun studyLinked(): Boolean = session?.uid?.let { it == Prefs.studyLinkedUid } == true
+
+    private fun pushStudy(ctx: android.content.Context, force: Boolean) {
+        val me = live().uid
+        val dev = Prefs.deviceId
+        val days = StudyLog.local(ctx).map { it.key.toString() to it.value }.filter { (d, ms) -> ms > 0 && (force || studyPushed[d] != ms) }
+        for (part in days.chunked(120)) {
+            val byDay = JSONObject()
+            part.forEach { (d, ms) -> byDay.put(d, JSONObject().put("mapValue", JSONObject().put("fields", JSONObject().put(dev, int(ms))))) }
+            val fields = JSONObject().put("d", JSONObject().put("mapValue", JSONObject().put("fields", byDay)))
+            commit(
+                JSONObject().put("update", JSONObject().put("name", "$DB/study/$me").put("fields", fields))
+                    .put("updateMask", JSONObject().put("fieldPaths", JSONArray(part.map { "d.`${it.first}`.`$dev`" }))),
+            )
+            part.forEach { (d, ms) -> studyPushed[d] = ms }
+        }
+    }
+
+    /** Descarga lo estudiado en tus otros dispositivos. */
+    private fun pullStudy(ctx: android.content.Context) {
+        val me = live().uid
+        val dev = Prefs.deviceId
+        val doc = getAll("study", listOf(me))[me]
+        val out = HashMap<String, Long>()
+        val days = doc?.optJSONObject("fields")?.optJSONObject("d")?.optJSONObject("mapValue")?.optJSONObject("fields")
+        if (days != null) for (day in days.keys()) {
+            val devs = days.getJSONObject(day).optJSONObject("mapValue")?.optJSONObject("fields") ?: continue
+            var sum = 0L
+            for (k in devs.keys()) if (k != dev) sum += devs.getJSONObject(k).optString("integerValue").toLongOrNull() ?: 0L
+            if (sum > 0) out[day] = sum
+        }
+        StudyLog.setRemote(ctx, out)
+    }
+
+    /** «Vincular tiempos»: sube los tiempos de este dispositivo a la cuenta (una sola vez) y baja los de los demás. */
+    suspend fun linkStudy(ctx: android.content.Context) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        pushStudy(ctx, true)
+        Prefs.studyLinkedUid = me
+        runCatching { pullStudy(ctx) }
+    }
+
+    /** Mantiene al día los tiempos: sube lo nuevo (si ya están vinculados) y baja lo de otros dispositivos. */
+    suspend fun syncStudy(ctx: android.content.Context) = withContext(Dispatchers.IO) {
+        if (session == null) return@withContext
+        if (studyLinked()) pushStudy(ctx, false)
+        pullStudy(ctx)
+    }
+
     // ───────── grupos ─────────
 
     const val MAX_GROUP = 10

@@ -124,6 +124,15 @@ object Prefs {
         get() = sp.getLong("simple_paused_el", 0L)
         set(v) = sp.edit().putLong("simple_paused_el", v).apply()
 
+    /** Identifica este dispositivo en la nube para sumar sus tiempos de estudio a los de tus otros dispositivos. */
+    val deviceId: String
+        get() = sp.getString("device_id", null) ?: java.util.UUID.randomUUID().toString().replace("-", "").take(12).also { sp.edit().putString("device_id", it).apply() }
+
+    /** Cuenta (uid) a la que ya se han vinculado los tiempos de este dispositivo (vacío = ninguna). */
+    var studyLinkedUid: String
+        get() = sp.getString("study_linked_uid", "") ?: ""
+        set(v) = sp.edit().putString("study_linked_uid", v).apply()
+
     var simpleStart: Long
         get() = sp.getLong("simple_start", 0L)
         set(v) = sp.edit().putLong("simple_start", v).apply()

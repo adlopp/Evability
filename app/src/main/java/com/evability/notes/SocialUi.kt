@@ -127,6 +127,7 @@ private val PanelWidth = 560.dp
 @Composable
 fun SocialHost() {
     val s = Social.session
+    val appCtx = LocalContext.current.applicationContext
     val owner = LocalLifecycleOwner.current
     var foreground by remember { mutableStateOf(true) }
     DisposableEffect(owner) {
@@ -150,6 +151,7 @@ fun SocialHost() {
                 try { Social.checkPokes() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red */ }
                 try { Social.checkShares() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
                 try { Social.checkChats() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
+                try { Social.syncStudy(appCtx) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* se reintenta */ }
                 delay(60_000)
             }
         }

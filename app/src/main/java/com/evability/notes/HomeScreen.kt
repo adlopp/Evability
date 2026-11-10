@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.DeleteForever
@@ -281,7 +282,9 @@ fun HomeScreen(
                 TopRow(version, onAnalyze = { showAnalyze = true }, onSocial = { showSocial = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                var linkedUid by remember { mutableStateOf(Prefs.studyLinkedUid) }
+                var linking by remember { mutableStateOf(false) }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = onImport,
                         shape = RoundedCornerShape(16.dp),
@@ -316,6 +319,35 @@ fun HomeScreen(
                         Icon(Icons.Default.Timer, contentDescription = null)
                         Spacer(Modifier.width(10.dp))
                         Text("Tiempo", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    // solo con la sesión iniciada y mientras los tiempos de este dispositivo no estén vinculados: se pulsa una vez
+                    val me = Social.session?.uid
+                    if (me != null && linkedUid != me) {
+                        OutlinedButton(
+                            enabled = !linking,
+                            onClick = {
+                                scope.launch {
+                                    linking = true
+                                    try {
+                                        Social.linkStudy(appCtx)
+                                        linkedUid = me
+                                        Toast.makeText(appCtx, "Tiempos vinculados a tu cuenta", Toast.LENGTH_SHORT).show()
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Toast.makeText(appCtx, e.message ?: "No se pudieron vincular los tiempos", Toast.LENGTH_LONG).show()
+                                    }
+                                    linking = false
+                                }
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.5.dp, Accent),
+                            contentPadding = PaddingValues(horizontal = 26.dp, vertical = 14.dp),
+                        ) {
+                            Icon(Icons.Default.Link, contentDescription = null)
+                            Spacer(Modifier.width(10.dp))
+                            Text(if (linking) "Vinculando…" else "Vincular tiempos", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
