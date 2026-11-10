@@ -108,6 +108,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
     var replyTo by remember { mutableStateOf<Social.ChatMessage?>(null) }
     var lastAt by remember { mutableLongStateOf(0L) }
     var hasMore by remember { mutableStateOf(true) }
+    var loadedOnce by remember { mutableStateOf(false) } // ya se consultó el chat al menos una vez (para el mensaje de «chat vacío»)
     var loadingOlder by remember { mutableStateOf(false) }
     var showGames by remember { mutableStateOf(false) }
     var playingWordle by remember { mutableStateOf(false) }
@@ -144,6 +145,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
             delSince = maxOf(delSince, newest)
         }
         val raw = Social.chatMessages(friend.uid, lastAt)
+        loadedOnce = true
         if (lastAt == 0L && raw.size < 50) hasMore = false
         val fresh = raw.filter { m -> messages.none { it.id == m.id } }
         if (fresh.isEmpty()) return false
@@ -389,14 +391,31 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
         }
 
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            if (loadedOnce && messages.isEmpty()) {
+                Column(Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("👋", fontSize = 56.sp)
+                    Text(
+                        if (group != null) "Este grupo acaba de empezar" else "Empieza la conversación con ${friend.username}",
+                        fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = OnSurface, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Text("¡Escribe el primer mensaje!", fontSize = 14.sp, color = OnSurfaceDim)
+                }
+            }
             LazyColumn(
                 Modifier.widthIn(max = 720.dp).fillMaxSize().padding(horizontal = 14.dp),
                 state = listState,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp),
             ) {
                 itemsIndexed(messages, key = { _, m -> m.id }) { index, m ->
                     // La foto sale junto al último mensaje de cada racha de la misma persona; en los demás queda el hueco.
                     val showAvatar = messages.getOrNull(index + 1)?.from != m.from
+                    // forma de la burbuja: redonda, con la esquina de abajo más cerrada en el último mensaje de la racha (como una colita)
+                    val bubbleShape = RoundedCornerShape(20.dp, 20.dp, if (m.mine && showAvatar) 6.dp else 20.dp, if (!m.mine && showAvatar) 6.dp else 20.dp)
+                    val prevMsg = messages.getOrNull(index - 1)
+                    val newDay = prevMsg == null || dayOf(prevMsg.at) != dayOf(m.at)
+                    Column(Modifier.fillMaxWidth().padding(top = if (index == 0 || newDay) 0.dp else if (prevMsg?.from != m.from) 10.dp else 3.dp)) {
+                    if (newDay) DaySeparator(m.at)
                     @Composable
                     fun Photo() {
                         if (showAvatar) {
@@ -441,7 +460,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                         if (!m.mine) { Photo(); Spacer(Modifier.width(8.dp)) }
                         Column(
                             Modifier.widthIn(max = 440.dp)
-                                .background(if (m.mine) Accent else Surface2, RoundedCornerShape(18.dp))
+                                .background(if (m.mine) androidx.compose.ui.graphics.Brush.linearGradient(listOf(Accent, androidx.compose.ui.graphics.lerp(Accent, Color.White, 0.2f))) else androidx.compose.ui.graphics.SolidColor(Surface2), bubbleShape)
                                 .combinedClickable(onClick = {}, onLongClick = { if (!m.deleted) menuMsg = m })
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                         ) {
@@ -466,6 +485,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                             )
                         }
                         if (m.mine) { Spacer(Modifier.width(8.dp)); Photo() }
+                    }
                     }
                     }
                 }
@@ -511,7 +531,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                 IconButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.AttachFile, "Foto", tint = OnSurface) }
                 OutlinedTextField(
                     value = input, onValueChange = { input = it.take(5000) }, modifier = Modifier.weight(1f),
-                    placeholder = { Text("Mensaje") }, maxLines = 4, shape = RoundedCornerShape(22.dp),
+                    placeholder = { Text("Escribe un mensaje…") }, maxLines = 4, shape = RoundedCornerShape(24.dp),
                 )
                 if (input.isNotBlank()) {
                     IconButton(onClick = ::send) { Icon(Icons.AutoMirrored.Filled.Send, "Enviar", tint = Accent) }
@@ -520,6 +540,27 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                 }
             }
         }
+    }
+}
+
+private fun dayOf(t: Long): java.time.LocalDate = java.time.Instant.ofEpochMilli(t).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+
+/** «Hoy», «Ayer» o la fecha, entre los mensajes de días distintos. */
+@Composable
+private fun DaySeparator(t: Long) {
+    val d = dayOf(t)
+    val today = java.time.LocalDate.now()
+    val label = when {
+        d == today -> "Hoy"
+        d == today.minusDays(1) -> "Ayer"
+        else -> d.format(java.time.format.DateTimeFormatter.ofPattern(if (d.year == today.year) "EEEE d 'de' MMMM" else "d 'de' MMMM 'de' yyyy", Locale("es", "ES")))
+            .replaceFirstChar { it.uppercase() }
+    }
+    Box(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp), contentAlignment = Alignment.Center) {
+        Text(
+            label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OnSurfaceDim,
+            modifier = Modifier.background(Surface2.copy(alpha = 0.85f), RoundedCornerShape(50)).padding(horizontal = 13.dp, vertical = 4.dp),
+        )
     }
 }
 

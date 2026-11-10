@@ -64,6 +64,11 @@ object Prefs {
         get() = sp.getInt("pomo_rest", 5)
         set(v) = sp.edit().putInt("pomo_rest", v).apply()
 
+    /** Los corazones que te mandan salen y vibran, pero sin la canción. */
+    var heartMuted: Boolean
+        get() = sp.getBoolean("heart_muted", false)
+        set(v) = sp.edit().putBoolean("heart_muted", v).apply()
+
     /** Icono del Ternurín (el logo de arriba) sin sonido al tocarlo. */
     var logoMuted: Boolean
         get() = sp.getBoolean("logo_muted", false)
@@ -111,6 +116,14 @@ object Prefs {
         set(v) = sp.edit().putString("wordle_posted", v).apply()
 
     /** Contador simple: hora de inicio (0 = parado) y hasta cuándo está guardado su tiempo en las estadísticas. */
+    /** Método Pollo en pausa: desde cuándo (0 = sin pausa) y lo que marcaba el contador en ese momento. */
+    var simplePausedAt: Long
+        get() = sp.getLong("simple_paused_at", 0L)
+        set(v) = sp.edit().putLong("simple_paused_at", v).apply()
+    var simplePausedEl: Long
+        get() = sp.getLong("simple_paused_el", 0L)
+        set(v) = sp.edit().putLong("simple_paused_el", v).apply()
+
     var simpleStart: Long
         get() = sp.getLong("simple_start", 0L)
         set(v) = sp.edit().putLong("simple_start", v).apply()

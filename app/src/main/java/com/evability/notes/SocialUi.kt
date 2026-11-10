@@ -141,7 +141,7 @@ fun SocialHost() {
         if (s == null || !foreground) return@LaunchedEffect
         launch {
             while (true) {
-                try { Social.heartbeat(Pomodoro.studying || SimpleCounter.running) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
+                try { Social.heartbeat(Pomodoro.studying || SimpleCounter.counting) } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
                 delay(30_000)
             }
         }
@@ -190,6 +190,7 @@ private object HeartSound {
     private var player: android.media.MediaPlayer? = null
 
     fun play(ctx: android.content.Context) {
+        if (Prefs.heartMuted) return
         runCatching {
             player?.release()
             player = android.media.MediaPlayer.create(ctx, R.raw.easter_egg)?.also { p ->

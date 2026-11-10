@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -70,10 +71,18 @@ object SimpleCounter {
     var running by androidx.compose.runtime.mutableStateOf(false)
         private set
 
+    /** En pausa: sigue «en marcha» (no se puede abrir el Ternurín) pero el reloj está parado y no cuenta como estudio. */
+    var paused by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    /** Contando de verdad: en marcha y sin pausa. */
+    val counting: Boolean get() = running && !paused
+
     private const val MAX_GAP = 2 * 3_600_000L
 
     fun load() {
         running = Prefs.simpleStart > 0L
+        paused = running && Prefs.simplePausedAt > 0L
     }
 
     fun start() {
@@ -85,7 +94,7 @@ object SimpleCounter {
 
     /** Guarda en [StudyLog] el tiempo contado desde la última vez. */
     fun flush(ctx: Context) {
-        if (!running) return
+        if (!running || paused) return
         val now = System.currentTimeMillis()
         // Si pasaron más de 2 h sin tocar la app (contador olvidado), solo se apuntan las primeras 2 h.
         StudyLog.add(ctx, Prefs.simpleMark, minOf(now, Prefs.simpleMark + MAX_GAP))
@@ -96,17 +105,36 @@ object SimpleCounter {
         flush(ctx)
         Prefs.simpleStart = 0L
         Prefs.simpleMark = 0L
+        Prefs.simplePausedAt = 0L
+        paused = false
         running = false
+    }
+
+    /** Para el reloj (guarda lo contado hasta ahora) o lo reanuda donde estaba. */
+    fun togglePause(ctx: Context) {
+        if (!running) return
+        val now = System.currentTimeMillis()
+        if (!paused) {
+            flush(ctx)
+            Prefs.simplePausedEl = elapsed(now)
+            Prefs.simplePausedAt = now
+            paused = true
+        } else {
+            Prefs.simpleStart += now - Prefs.simplePausedAt // el tiempo en pausa no cuenta
+            Prefs.simpleMark = now
+            Prefs.simplePausedAt = 0L
+            paused = false
+        }
     }
 
     private fun startOfDay(t: Long): Long =
         ZoneId.systemDefault().let { z -> Instant.ofEpochMilli(t).atZone(z).toLocalDate().atStartOfDay(z).toInstant().toEpochMilli() }
 
     /** Tiempo que marca el contador ahora: a las 0:00 vuelve a cero aunque siga en marcha. */
-    fun elapsed(now: Long): Long = if (running) (now - maxOf(Prefs.simpleStart, startOfDay(now))).coerceAtLeast(0L) else 0L
+    fun elapsed(now: Long): Long = if (paused) Prefs.simplePausedEl else if (running) (now - maxOf(Prefs.simpleStart, startOfDay(now))).coerceAtLeast(0L) else 0L
 
     /** Tiempo contado que todavía no está guardado en [StudyLog] (para que las estadísticas lo vean al momento). */
-    fun unflushed(now: Long): Long = if (running) (now - Prefs.simpleMark).coerceAtLeast(0L) else 0L
+    fun unflushed(now: Long): Long = if (counting) (now - Prefs.simpleMark).coerceAtLeast(0L) else 0L
 }
 
 /** Al pulsar «Tiempo» sin nada en marcha: elegir entre el método Ternurín y el contador simple. */
@@ -149,6 +177,8 @@ fun SimpleCounterScreen(onClose: () -> Unit) {
     BackHandler(onBack = onClose)
     val ctx = LocalContext.current
     val running = SimpleCounter.running
+    val paused = SimpleCounter.paused
+    var confirmStop by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var wall by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -167,8 +197,8 @@ fun SimpleCounterScreen(onClose: () -> Unit) {
 
     // Mientras cuenta, la pantalla no se apaga.
     val view = LocalView.current
-    DisposableEffect(running) {
-        view.keepScreenOn = running
+    DisposableEffect(running, paused) {
+        view.keepScreenOn = running && !paused
         onDispose { view.keepScreenOn = false }
     }
 
@@ -180,6 +210,16 @@ fun SimpleCounterScreen(onClose: () -> Unit) {
     val elapsed = SimpleCounter.elapsed(wall)
     val secsTotal = (elapsed / 1000).toInt()
     val progress = if (running) (elapsed % 3_600_000L) / 3_600_000f else 0f // una vuelta al anillo por hora
+
+    if (confirmStop) {
+        AlertDialog(
+            onDismissRequest = { confirmStop = false },
+            title = { Text("¿Quieres finalizar la sesión?") },
+            text = { Text("El tiempo contado hasta ahora se queda guardado.") },
+            confirmButton = { TextButton(onClick = { confirmStop = false; SimpleCounter.stop(ctx) }) { Text("Sí") } },
+            dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("No") } },
+        )
+    }
 
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -211,19 +251,41 @@ fun SimpleCounterScreen(onClose: () -> Unit) {
                         "%02d:%02d:%02d".format(secsTotal / 3600, secsTotal / 60 % 60, secsTotal % 60),
                         fontSize = 48.sp, fontWeight = FontWeight.Bold, color = OnSurface,
                     )
-                    Text(if (running) "Contando" else "Listo", fontSize = 18.sp, color = Accent, fontWeight = FontWeight.SemiBold)
+                    Text(if (paused) "En pausa" else if (running) "Contando" else "Listo", fontSize = 18.sp, color = Accent, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             Spacer(Modifier.height(28.dp))
 
-            Button(
-                onClick = { if (running) SimpleCounter.stop(ctx) else SimpleCounter.start() },
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.widthIn(min = 200.dp).height(56.dp),
-            ) {
-                Icon(if (running) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
-                Text(if (running) "  Detener" else "  Iniciar", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            if (running) {
+                // al iniciar sale «Pausar» a la izquierda y «Detener» a la derecha (Detener pregunta antes de finalizar)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = { SimpleCounter.togglePause(ctx) },
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.widthIn(min = 150.dp).height(56.dp),
+                    ) {
+                        Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = null)
+                        Text(if (paused) "  Reanudar" else "  Pausar", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = { confirmStop = true },
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.widthIn(min = 150.dp).height(56.dp),
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null)
+                        Text("  Detener", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { SimpleCounter.start() },
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.widthIn(min = 200.dp).height(56.dp),
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Text("  Iniciar", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
             Spacer(Modifier.height(12.dp))
             Text(

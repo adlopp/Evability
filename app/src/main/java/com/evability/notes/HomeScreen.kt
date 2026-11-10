@@ -1004,6 +1004,7 @@ private fun SettingsDialog(version: String, store: Store, onChanged: () -> Unit,
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var logoMuted by remember { mutableStateOf(Prefs.logoMuted) }
+    var heartMuted by remember { mutableStateOf(Prefs.heartMuted) }
     var busy by remember { mutableStateOf(false) }
     val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) scope.launch {
@@ -1067,6 +1068,13 @@ private fun SettingsDialog(version: String, store: Store, onChanged: () -> Unit,
                         Text("El logo de arriba no suena al tocarlo", fontSize = 12.sp, color = OnSurfaceDim)
                     }
                     Switch(checked = logoMuted, onCheckedChange = { logoMuted = it; Prefs.logoMuted = it })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Silenciar el sonido de los corazones", color = OnSurface)
+                        Text("El corazón sale y vibra, pero sin la canción", fontSize = 12.sp, color = OnSurfaceDim)
+                    }
+                    Switch(checked = heartMuted, onCheckedChange = { heartMuted = it; Prefs.heartMuted = it })
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Actualizaciones", color = OnSurfaceDim)

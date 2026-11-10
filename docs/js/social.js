@@ -711,7 +711,7 @@ function openChat(friend) {
   const profsReady = group ? knowProfs(group.members) : Promise.resolve();
   const who = (u) => (u === session?.uid ? 'Tú' : group ? (profs.get(u)?.username || 'Alguien') : friend.username);
   const listEl = h('div', { class: 'chat-list' });
-  const input = h('input', { class: 'field', placeholder: 'Mensaje', maxlength: 5000, autocomplete: 'off' });
+  const input = h('input', { class: 'field', placeholder: 'Escribe un mensaje…', maxlength: 5000, autocomplete: 'off' });
   const clipBtn = h('button', { class: 'icon-btn', 'aria-label': 'Minijuegos', onclick: () => openGames(
     () => root.append(openWordle({ friendUid: friend.uid, post: (t) => sendMessage(friend.uid, t), onClose: () => tick() })),
     async () => {
@@ -763,8 +763,24 @@ function openChat(friend) {
   const rows = []; // filas en orden: { mine, av, el }
   const myself = myProfile().catch(() => ({ photo: '' }));
   const fmt = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  // «Hoy», «Ayer» o la fecha, entre los mensajes de días distintos
+  const dayOf = (t) => { const d = new Date(t); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+  const dayLabel = (t) => {
+    const d = new Date(t), now = new Date(), start = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((start(now) - start(d)) / 86400000);
+    if (diff === 0) return 'Hoy';
+    if (diff === 1) return 'Ayer';
+    const s = d.toLocaleDateString('es-ES', d.getFullYear() === now.getFullYear() ? { weekday: 'long', day: 'numeric', month: 'long' } : { day: 'numeric', month: 'long', year: 'numeric' });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  };
+  const sepEl = (t) => h('div', { class: 'day-sep' }, h('span', {}, dayLabel(t)));
+  const emptyEl = h('div', { class: 'chat-empty' }, h('div', { class: 'ce-emoji' }, '👋'),
+    h('b', {}, group ? 'Este grupo acaba de empezar' : `Empieza la conversación con ${friend.username}`), h('small', {}, '¡Escribe el primer mensaje!'));
   // La foto sale junto al último mensaje de cada racha de la misma persona; en los demás queda el hueco.
-  const refreshAvatars = () => rows.forEach((r, i) => r.av.classList.toggle('hide', rows[i + 1]?.by === r.by));
+  const refreshAvatars = () => rows.forEach((r, i) => {
+    r.av.classList.toggle('hide', rows[i + 1]?.by === r.by);
+    r.el.classList.toggle('cont', i > 0 && rows[i - 1].by === r.by && rows[i - 1].day === r.day); // mensajes seguidos de la misma persona: más juntos
+  });
 
   function audioBubble(m) {
     const btn = h('button', { class: 'icon-btn', 'aria-label': 'Reproducir', style: { color: 'inherit' } }, icon('play', 20));
@@ -891,7 +907,7 @@ function openChat(friend) {
     ['pointerup', 'pointercancel'].forEach((ev) => el.addEventListener(ev, endSwipe));
     rowsById.set(m.id, { bubble, el, m, gone: false });
     if (m.del) { rowsById.get(m.id).gone = true; goneContent(bubble, m); delBtn.remove(); replyBtn.remove(); }
-    return { mine: m.mine, by: m.from, av, el };
+    return { mine: m.mine, by: m.from, day: dayOf(m.at), av, el };
   };
   let loads = 0;
   async function load() {
@@ -899,13 +915,19 @@ function openChat(friend) {
     if (loads++ % 3 === 0) await applyDeletions().catch(() => {});
     const raw = await chatMessages(friend.uid, lastAt);
     if (lastAt === 0 && raw.length < 50) hasMore = false;
+    if (lastAt === 0 && !raw.length && !rows.length && !emptyEl.isConnected) listEl.append(emptyEl);
     const fresh = raw.filter((m) => !seen.has(m.id));
     if (!fresh.length) return false;
+    emptyEl.remove();
     changed = true;
     const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80 || !seen.size;
     await profsReady; await knowProfs(fresh.flatMap((m) => [m.from, m.rf]));
     const me = await myself;
-    for (const m of fresh) { const r = makeRow(m, me); rows.push(r); listEl.append(r.el); }
+    for (const m of fresh) {
+      const r = makeRow(m, me);
+      if (!rows.length || rows[rows.length - 1].day !== r.day) { r.sep = sepEl(m.at); listEl.append(r.sep); }
+      rows.push(r); listEl.append(r.el);
+    }
     if (!firstAt) firstAt = Math.min(...fresh.map((m) => m.at));
     lastAt = Math.max(lastAt, ...fresh.map((m) => m.at));
     refreshAvatars();
@@ -924,7 +946,11 @@ function openChat(friend) {
       if (!older.length) return;
       await profsReady; await knowProfs(older.flatMap((m) => [m.from, m.rf]));
       const me = await myself, before = listEl.scrollHeight, made = older.map((m) => makeRow(m, me));
-      listEl.prepend(...made.map((r) => r.el)); rows.unshift(...made);
+      const nodes = [];
+      made.forEach((r, i) => { if (i === 0 || made[i - 1].day !== r.day) { r.sep = sepEl(older[i].at); nodes.push(r.sep); } nodes.push(r.el); });
+      const oldFirst = rows[0];
+      if (oldFirst?.sep && made[made.length - 1].day === oldFirst.day) { oldFirst.sep.remove(); oldFirst.sep = null; } // el mismo día: no se repite el separador
+      listEl.prepend(...nodes); rows.unshift(...made);
       firstAt = Math.min(...older.map((m) => m.at));
       refreshAvatars();
       listEl.scrollTop += listEl.scrollHeight - before; // se queda donde estabas leyendo
@@ -1105,8 +1131,8 @@ document.addEventListener('pointerdown', () => {
 }, { once: true });
 
 export function showHeart() {
-  heartSong.currentTime = 0;
-  heartSong.play().catch(() => {});
+  // con «Silenciar el sonido de los corazones» (Ajustes) el corazón sale y vibra pero no suena
+  if (localStorage.getItem('ev.heartMuted') !== '1') { heartSong.currentTime = 0; heartSong.play().catch(() => {}); }
   const el = h('div', { class: 'float-heart', style: { left: 12 + Math.random() * 76 + '%', top: 15 + Math.random() * 60 + '%' } }, '❤');
   document.body.append(el);
   navigator.vibrate?.(60);

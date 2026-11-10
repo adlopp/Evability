@@ -46,7 +46,7 @@ function accrue(force) {
 export function studyMs(key) {
   let ms = studyLog()[key] || 0;
   if (key === dayKey(new Date()) && S.phase === 'STUDY' && !S.paused && S.mark) ms += Math.max(0, Math.min(Date.now(), S.endAt) - S.mark);
-  if (key === dayKey(new Date()) && SS.start) ms += Math.max(0, Date.now() - SS.mark);
+  if (key === dayKey(new Date()) && SS.start && !SS.paused) ms += Math.max(0, Date.now() - SS.mark);
   return ms;
 }
 const emit = () => listeners.forEach((f) => f());
@@ -168,14 +168,14 @@ const SS = Object.assign({ start: 0, mark: 0 }, JSON.parse(localStorage.getItem(
 const saveSimple = () => localStorage.setItem(SKEY, JSON.stringify(SS));
 export const simpleRunning = () => SS.start > 0;
 /** Se está estudiando ahora mismo (fase de estudio del Ternurín o contador simple en marcha). */
-export const studying = () => (S.phase === 'STUDY' && !S.paused) || SS.start > 0;
+export const studying = () => (S.phase === 'STUDY' && !S.paused) || (SS.start > 0 && !SS.paused);
 /** Hay algún método de tiempo en marcha (Ternurín o contador simple). */
 export const timeRunning = () => running() || simpleRunning();
 const startOfDay = (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
-const simpleElapsed = (now = Date.now()) => (SS.start ? Math.max(0, now - Math.max(SS.start, startOfDay(now))) : 0);
+const simpleElapsed = (now = Date.now()) => (SS.paused ? SS.pausedEl : SS.start ? Math.max(0, now - Math.max(SS.start, startOfDay(now))) : 0);
 
 function flushSimple(force) {
-  if (!SS.start) return;
+  if (!SS.start || SS.paused) return;
   const now = Date.now();
   if (now - SS.mark < (force ? 1 : 5000)) return;
   addStudy(SS.mark, Math.min(now, SS.mark + 2 * 3600000)); // si pasaron más de 2 h sin tocar la app (contador olvidado), solo se apuntan 2 h
@@ -186,7 +186,15 @@ function flushSimple(force) {
 setInterval(() => { if (!document.hidden) flushSimple(false); }, 30000);
 
 function simpleStart() { SS.start = SS.mark = Date.now(); saveSimple(); keepAwake(true); }
-function simpleStop() { flushSimple(true); SS.start = SS.mark = 0; saveSimple(); keepAwake(false); }
+function simpleStop() { flushSimple(true); SS.start = SS.mark = 0; SS.paused = false; SS.pausedAt = SS.pausedEl = 0; saveSimple(); keepAwake(false); }
+/** Pausa el Método Pollo (guarda lo contado) o lo reanuda donde estaba: el tiempo en pausa no cuenta. */
+function simplePause() {
+  if (!SS.start) return;
+  const now = Date.now();
+  if (!SS.paused) { flushSimple(true); SS.pausedEl = simpleElapsed(now); SS.pausedAt = now; SS.paused = true; }
+  else { SS.start += now - SS.pausedAt; SS.mark = now; SS.paused = false; SS.pausedAt = 0; }
+  saveSimple();
+}
 
 /**
  * Botón «Tiempo»: si hay un método en marcha entra directamente en él (hasta que se detenga no se puede elegir otro);
@@ -226,13 +234,16 @@ export function openSimple(onClose) {
     flushSimple(false);
     const run = SS.start > 0, el = simpleElapsed(), secs = Math.floor(el / 1000);
     time.textContent = [Math.floor(secs / 3600), Math.floor(secs / 60) % 60, secs % 60].map((n) => String(n).padStart(2, '0')).join(':');
-    label.textContent = run ? 'Contando' : 'Listo';
+    label.textContent = SS.paused ? 'En pausa' : run ? 'Contando' : 'Listo';
     prog.setAttribute('stroke-dashoffset', C * (1 - (run ? (el % 3600000) / 3600000 : 0))); // una vuelta al anillo por hora
-    const sig = run ? 'run' : 'idle';
+    const sig = run ? (SS.paused ? 'paused' : 'run') : 'idle';
     if (body.dataset.sig !== sig) {
       body.dataset.sig = sig;
       body.replaceChildren(
-        h('button', { class: 'btn big', onclick: () => { run ? simpleStop() : simpleStart(); update(); } }, icon(run ? 'stop' : 'play', 22), run ? ' Detener' : ' Iniciar'),
+        run ? h('div', { class: 'row gap', style: { justifyContent: 'center' } },
+          h('button', { class: 'btn big outline', style: { minWidth: '150px' }, onclick: () => { simplePause(); update(); } }, icon(SS.paused ? 'play' : 'pause', 22), SS.paused ? ' Reanudar' : ' Pausar'),
+          h('button', { class: 'btn big', style: { minWidth: '150px' }, onclick: async () => { if (await confirmDialog('¿Quieres finalizar la sesión?', 'El tiempo contado hasta ahora se queda guardado.', 'Sí')) { simpleStop(); update(); } } }, icon('stop', 22), ' Detener'))
+          : h('button', { class: 'btn big', onclick: () => { simpleStart(); update(); } }, icon('play', 22), ' Iniciar'),
         h('p', { class: 'dim small' }, run ? 'Sigue contando aunque salgas de esta pantalla. Hasta que no lo detengas no puedes abrir el método Ternurín.'
           : 'Cuenta hacia arriba hasta que lo detengas. A las 0:00 vuelve a cero y el tiempo cuenta en tus estadísticas de estudio.'));
     }

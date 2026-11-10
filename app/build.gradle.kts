@@ -11,8 +11,8 @@ android {
         applicationId = "com.evability.notes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 62
-        versionName = "1.13.1"
+        versionCode = 63
+        versionName = "1.13.2"
     }
 
     buildTypes {

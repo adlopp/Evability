@@ -6,7 +6,7 @@ import * as store from './store.js';
 import { getKey, setKey, KEY_URL } from './gemini.js';
 import { shareOrDownload } from './editor.js';
 
-export const VERSION = '1.13.1 web';
+export const VERSION = '1.13.2 web';
 
 const standalone = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
@@ -74,6 +74,9 @@ export function openSettings(onChanged) {
   const logoMute = h('input', { type: 'checkbox', checked: localStorage.getItem('ev.logoMuted') === '1' });
   logoMute.addEventListener('change', () => localStorage.setItem('ev.logoMuted', logoMute.checked ? '1' : '0'));
 
+  const heartMute = h('input', { type: 'checkbox', checked: localStorage.getItem('ev.heartMuted') === '1' });
+  heartMute.addEventListener('change', () => localStorage.setItem('ev.heartMuted', heartMute.checked ? '1' : '0'));
+
   const storageInfo = h('p', { class: 'dim small' }, 'Calculando…');
   (async () => {
     try {
@@ -122,7 +125,8 @@ export function openSettings(onChanged) {
     standalone() ? null : section('Instalar en el iPad',
       h('p', { class: 'dim small pre' }, '1. Abre esta página en Safari.\n2. Pulsa el botón Compartir (el cuadrado con la flecha).\n3. Elige «Añadir a pantalla de inicio».\nAsí se abre como una app y funciona sin conexión.')),
     section('Sonido',
-      h('label', { class: 'row gap', style: { alignItems: 'center' } }, logoMute, h('span', {}, 'Silenciar icono del Ternurín'))),
+      h('label', { class: 'row gap', style: { alignItems: 'center' } }, logoMute, h('span', {}, 'Silenciar icono del Ternurín')),
+      h('label', { class: 'row gap', style: { alignItems: 'center' } }, heartMute, h('span', {}, 'Silenciar el sonido de los corazones'))),
     section('Actualizaciones',
       h('button', { class: 'text-btn link', onclick: checkUpdate }, 'Comprobar actualizaciones')),
     h('p', { class: 'dim small' }, `Evability ${VERSION}`));
