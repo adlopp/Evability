@@ -52,7 +52,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.DeleteForever
@@ -210,6 +209,7 @@ fun HomeScreen(
     var showAnalyze by remember { mutableStateOf(false) }
     var showTrash by remember { mutableStateOf(false) }
     var showPomodoro by remember { mutableStateOf(false) }
+    var showNeedLogin by remember { mutableStateOf(false) }
     var showSimple by remember { mutableStateOf(false) }
     var showTimeChooser by remember { mutableStateOf(false) }
     var showSocial by remember { mutableStateOf(false) }
@@ -282,8 +282,6 @@ fun HomeScreen(
                 TopRow(version, onAnalyze = { showAnalyze = true }, onSocial = { showSocial = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
-                var linkedUid by remember { mutableStateOf(Prefs.studyLinkedUid) }
-                var linking by remember { mutableStateOf(false) }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = onImport,
@@ -309,6 +307,8 @@ fun HomeScreen(
                             when {
                                 Pomodoro.phase != PomoPhase.IDLE -> showPomodoro = true
                                 SimpleCounter.running -> showSimple = true
+                                // los tiempos se guardan en la cuenta: sin sesión iniciada primero hay que registrarse o entrar
+                                Social.session == null -> showNeedLogin = true
                                 else -> showTimeChooser = true
                             }
                         },
@@ -319,35 +319,6 @@ fun HomeScreen(
                         Icon(Icons.Default.Timer, contentDescription = null)
                         Spacer(Modifier.width(10.dp))
                         Text("Tiempo", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                    // solo con la sesión iniciada y mientras los tiempos de este dispositivo no estén vinculados: se pulsa una vez
-                    val me = Social.session?.uid
-                    if (me != null && linkedUid != me) {
-                        OutlinedButton(
-                            enabled = !linking,
-                            onClick = {
-                                scope.launch {
-                                    linking = true
-                                    try {
-                                        Social.linkStudy(appCtx)
-                                        linkedUid = me
-                                        Toast.makeText(appCtx, "Tiempos vinculados a tu cuenta", Toast.LENGTH_SHORT).show()
-                                    } catch (e: kotlinx.coroutines.CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        Toast.makeText(appCtx, e.message ?: "No se pudieron vincular los tiempos", Toast.LENGTH_LONG).show()
-                                    }
-                                    linking = false
-                                }
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(1.5.dp, Accent),
-                            contentPadding = PaddingValues(horizontal = 26.dp, vertical = 14.dp),
-                        ) {
-                            Icon(Icons.Default.Link, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
-                            Text(if (linking) "Vinculando…" else "Vincular tiempos", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                        }
                     }
                 }
             }
@@ -507,6 +478,15 @@ fun HomeScreen(
     }
     if (showTrash) TrashDialog(store, onChanged) { showTrash = false }
     sending?.let { SendDialog(it, store) { sending = null } }
+    if (showNeedLogin) {
+        AlertDialog(
+            onDismissRequest = { showNeedLogin = false },
+            title = { Text("Inicia sesión primero") },
+            text = { Text("Para usar el tiempo tienes que registrarte o iniciar sesión: así tus tiempos de estudio se guardan en tu cuenta y los tienes en cualquier dispositivo.") },
+            confirmButton = { TextButton(onClick = { showNeedLogin = false; showSocial = true }) { Text("Ir a Amigos") } },
+            dismissButton = { TextButton(onClick = { showNeedLogin = false }) { Text("Ahora no") } },
+        )
+    }
     if (showSettings) SettingsDialog(version, store, onChanged, onCheckUpdate = { showSettings = false; onCheckUpdate() }) { showSettings = false }
 
     renaming?.let { doc ->

@@ -6,7 +6,7 @@ import { TEMPLATE_KINDS, templateCanvas } from './templates.js';
 import { openSettings, VERSION } from './settings.js';
 import { openTime, timeRunning } from './pomodoro.js';
 import { openAnalyze } from './analyze.js';
-import { openSocial, openSend, setReceiver, anyUnread, canLinkStudy, linkStudy } from './social.js';
+import { openSocial, openSend, setReceiver, anyUnread, currentUser } from './social.js';
 import { openPdf, pageSizes } from './pdfdoc.js';
 import { exportPdf } from './export.js';
 import { shareOrDownload } from './editor.js';
@@ -313,13 +313,14 @@ export function createHome({ openDoc, onTheme }) {
       h('div', { class: 'actions' },
         h('button', { class: 'btn', onclick: pickFiles }, icon('upload', 20), 'Importar PDF'),
         h('button', { class: 'btn outline', onclick: templatesDialog }, icon('grid', 20), 'Plantillas'),
-        h('button', { class: 'btn outline' + (timeRunning() ? ' live' : ''), onclick: () => openTime({ mount: (el) => document.getElementById('app').append(el), onClose: () => render() }) }, icon('timer', 20), 'Tiempo'),
-        // solo con la sesión iniciada y mientras los tiempos de este dispositivo no estén vinculados: se pulsa una vez
-        canLinkStudy() ? h('button', { class: 'btn outline', onclick: async (e) => {
-          const b = e.currentTarget; b.disabled = true;
-          try { await linkStudy(); toast('Tiempos vinculados a tu cuenta'); render(); }
-          catch (err) { toast(err.message || 'No se pudieron vincular los tiempos'); b.disabled = false; }
-        } }, icon('link', 20), 'Vincular tiempos') : null),
+        h('button', { class: 'btn outline' + (timeRunning() ? ' live' : ''), onclick: async () => {
+          // los tiempos se guardan en la cuenta: sin sesión iniciada primero hay que registrarse o entrar (si ya hay uno en marcha, se puede entrar a pararlo)
+          if (!currentUser() && !timeRunning()) {
+            if (await confirmDialog('Inicia sesión primero', 'Para usar el tiempo tienes que registrarte o iniciar sesión: así tus tiempos de estudio se guardan en tu cuenta y los tienes en cualquier dispositivo.', 'Ir a Amigos')) document.getElementById('app').append(openSocial(() => render()));
+            return;
+          }
+          openTime({ mount: (el) => document.getElementById('app').append(el), onClose: () => render() });
+        } }, icon('timer', 20), 'Tiempo')),
       last && !S.query.trim() && S.filter.kind === 'all' && !selecting ? continueCard(last) : null,
       S.docs.length ? h('div', { class: 'row search-row' }, h('div', { class: 'grow search-wrap' }, icon('search', 18), search),
         h('button', { class: 'text-btn', onclick: (e) => menu(e.currentTarget, Object.entries(SORTS).map(([k, label]) => [label, () => { S.sort = k; render(); }, S.sort === k ? 'bold' : ''])) }, icon('sort', 18), ' ' + SORTS[S.sort])) : null,

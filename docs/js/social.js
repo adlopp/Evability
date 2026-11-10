@@ -1020,11 +1020,6 @@ function openChat(friend) {
 
 const studyDevice = () => { let d = localStorage.getItem('ev.studyDev'); if (!d) { d = uid().replace(/-/g, '').slice(0, 12); localStorage.setItem('ev.studyDev', d); } return d; };
 const studyPushed = new Map();
-/** Los tiempos de este dispositivo ya están vinculados a la cuenta con la que has iniciado sesión. */
-export const studyLinked = () => !!session && localStorage.getItem('ev.studyLinked') === session.uid;
-/** Hay sesión iniciada y todavía no se han vinculado los tiempos de este dispositivo (para enseñar el botón «Vincular tiempos»). */
-export const canLinkStudy = () => !!session && !studyLinked();
-
 async function pushStudy(force) {
   const me = (await live()).uid, dev = studyDevice();
   const days = Object.entries(studyLog()).filter(([d, ms]) => ms > 0 && (force || studyPushed.get(d) !== ms));
@@ -1048,18 +1043,13 @@ async function pullStudy() {
   setStudyRemote(out);
 }
 
-/** «Vincular tiempos»: sube los tiempos de este dispositivo a la cuenta (una sola vez) y baja los de los demás. */
-export async function linkStudy() {
-  const me = (await live()).uid;
-  await pushStudy(true);
-  localStorage.setItem('ev.studyLinked', me);
-  await pullStudy().catch(() => {});
-}
-
-/** Mantiene al día los tiempos: sube lo nuevo (si ya están vinculados) y baja lo de otros dispositivos. */
+/**
+ * Mantiene los tiempos en la cuenta: con la sesión iniciada sube lo nuevo de este dispositivo (la primera vez, todo lo que ya tenía
+ * registrado) y baja lo de tus otros dispositivos. Se hace solo, nada hay que pulsar.
+ */
 async function syncStudy() {
   if (!session) return;
-  if (studyLinked()) await pushStudy(false);
+  await pushStudy(false);
   await pullStudy();
 }
 

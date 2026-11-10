@@ -824,9 +824,6 @@ object Social {
 
     private val studyPushed = HashMap<String, Long>()
 
-    /** Los tiempos de este dispositivo ya están vinculados a la cuenta con la que has iniciado sesión. */
-    fun studyLinked(): Boolean = session?.uid?.let { it == Prefs.studyLinkedUid } == true
-
     private fun pushStudy(ctx: android.content.Context, force: Boolean) {
         val me = live().uid
         val dev = Prefs.deviceId
@@ -859,18 +856,13 @@ object Social {
         StudyLog.setRemote(ctx, out)
     }
 
-    /** «Vincular tiempos»: sube los tiempos de este dispositivo a la cuenta (una sola vez) y baja los de los demás. */
-    suspend fun linkStudy(ctx: android.content.Context) = withContext(Dispatchers.IO) {
-        val me = live().uid
-        pushStudy(ctx, true)
-        Prefs.studyLinkedUid = me
-        runCatching { pullStudy(ctx) }
-    }
-
-    /** Mantiene al día los tiempos: sube lo nuevo (si ya están vinculados) y baja lo de otros dispositivos. */
+    /**
+     * Mantiene los tiempos en la cuenta: con la sesión iniciada sube lo nuevo de este dispositivo (la primera vez, todo lo que ya tenía
+     * registrado) y baja lo de tus otros dispositivos. Se hace solo, nada hay que pulsar.
+     */
     suspend fun syncStudy(ctx: android.content.Context) = withContext(Dispatchers.IO) {
         if (session == null) return@withContext
-        if (studyLinked()) pushStudy(ctx, false)
+        pushStudy(ctx, false)
         pullStudy(ctx)
     }
 
