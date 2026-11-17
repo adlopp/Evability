@@ -807,3 +807,34 @@ textarea.field { resize: vertical; }
 
 .heart-pop { position: fixed; z-index: 201; top: calc(var(--safe-top) + 14px); left: 50%; transform: translateX(-50%); max-width: 90vw; padding: 10px 16px; border-radius: 22px; background: var(--surface2); color: var(--on-surface, inherit); border: 1px solid var(--outline); box-shadow: 0 6px 18px rgba(0,0,0,.35); font-size: 14px; font-weight: 600; pointer-events: none; animation: heart-pop 3s ease forwards; }
 @keyframes heart-pop { 0% { opacity: 0; transform: translate(-50%, -12px); } 8%, 80% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, 0); } }
+
+/* Wordle versus */
+.pomo.wordle.vs { overflow: hidden; display: flex; flex-direction: column; }
+.vs-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: calc(var(--safe-bottom, 0px) + 10px); }
+.vs-game { display: flex; flex-direction: column; gap: 10px; padding: 6px 10px; max-width: 980px; margin: 0 auto; }
+.vs-col { display: flex; flex-direction: column; align-items: center; gap: 10px; order: 2; min-width: 0; }
+.vs-main { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+.vs-head { display: flex; align-items: center; gap: 12px; width: min(330px, 92vw); } .vs-head b { flex: 1; font-size: 17px; }
+.vs-pts { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--accent); } .vs-pts.big { font-size: 18px; }
+.vs-timer { font-weight: 900; font-size: 20px; font-variant-numeric: tabular-nums; padding: 2px 12px; border-radius: 999px; background: var(--surface2); } .vs-timer.low { background: #E53935; color: #fff; animation: vs-pulse .8s ease-in-out infinite; }
+@keyframes vs-pulse { 50% { transform: scale(1.08); } }
+.vs-action { width: min(330px, 92vw); display: flex; } .vs-action:empty { display: none; } .vs-action .btn { flex: 1; justify-content: center; }
+.vs-leave { opacity: .7; }
+.vs-side { order: 1; display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; } .vs-side::-webkit-scrollbar { display: none; }
+.vs-card { flex: 1 0 150px; min-width: 150px; display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 18px; border: 2px solid var(--c); background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025)); box-shadow: 0 .5em 1.4em rgba(0,0,0,.2); }
+.vs-card.waiting { box-shadow: 0 0 0 2px var(--c), 0 0 18px -2px var(--c); animation: vs-glow 1.6s ease-in-out infinite; } @keyframes vs-glow { 50% { box-shadow: 0 0 0 2px var(--c), 0 0 4px -2px var(--c); } }
+.vs-card-top { display: flex; align-items: center; gap: 7px; min-width: 0; } .vs-card-top b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+.vs-status { color: var(--on-dim); font-weight: 600; }
+.vs-mini { display: flex; flex-direction: column; gap: 2px; align-self: center; } .vs-mrow { display: flex; gap: 2px; }
+.vs-mini i { width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid var(--outline); box-sizing: border-box; } .vs-mini i.s0 { background: #3a3a3c; border-color: #3a3a3c; } .vs-mini i.s1 { background: #b59f3b; border-color: #b59f3b; } .vs-mini i.s2 { background: #538d4e; border-color: #538d4e; }
+.vs-crown { color: #E3A94A; font-size: 18px; line-height: 1; }
+.vs-rounds { display: flex; gap: 8px; } .vs-chip { flex: 1; height: 46px; border-radius: 14px; border: 2px solid var(--outline); background: var(--surface2); color: var(--on-surface); font-size: 18px; font-weight: 800; } .vs-chip.sel { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); } .vs-chip:disabled { opacity: .6; }
+.vs-rules { margin: 0; line-height: 1.4; }
+.vs-results { width: min(420px, 94vw); display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 22px; background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025)); border: 1px solid rgba(255,255,255,.08); } .vs-results h2 { margin: 0 0 4px; text-align: center; }
+.vs-res { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; border: 2px solid var(--c); flex-wrap: wrap; } .vs-res small { flex-basis: 100%; order: 5; color: var(--on-dim); } .vs-place { width: 18px; font-weight: 900; text-align: center; }
+.chess-card .wvs-ico { width: 42px; height: 42px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+@media (min-width: 820px) {
+  .vs-game { flex-direction: row; justify-content: center; align-items: flex-start; gap: 28px; }
+  .vs-col { order: 1; flex: 0 0 auto; } .vs-side { order: 2; flex-direction: column; overflow: visible; width: 260px; }
+  .vs-card { flex: none; }
+}

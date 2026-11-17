@@ -173,7 +173,7 @@ service cloud.firestore {
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
             || (request.resource.data.kind == 'image' && request.resource.data.text.size() == 0
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
-            || (request.resource.data.kind == 'poly' && request.resource.data.text.size() == 0
+            || ((request.resource.data.kind == 'poly' || request.resource.data.kind == 'wvs') && request.resource.data.text.size() == 0
                 && request.resource.data.game is string && request.resource.data.game.size() < 64)
             || (request.resource.data.kind == 'chess' && request.resource.data.text.size() == 0
                 && request.resource.data.game is string && request.resource.data.game.size() < 64
@@ -316,7 +316,7 @@ service cloud.firestore {
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
             || (request.resource.data.kind == 'image' && request.resource.data.text.size() == 0
                 && request.resource.data.mime is string && request.resource.data.mime.size() < 40)
-            || (request.resource.data.kind == 'poly' && request.resource.data.text.size() == 0
+            || ((request.resource.data.kind == 'poly' || request.resource.data.kind == 'wvs') && request.resource.data.text.size() == 0
                 && request.resource.data.game is string && request.resource.data.game.size() < 64)
             || (request.resource.data.kind == 'chess' && request.resource.data.text.size() == 0
                 && request.resource.data.game is string && request.resource.data.game.size() < 64
@@ -438,6 +438,63 @@ service cloud.firestore {
         || (resource.data.status == 'playing' && request.auth.uid in resource.data.players
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acts', 'status'])
           && request.resource.data.acts.size() == resource.data.acts.size() + 1
+          && (request.resource.data.status == 'playing' || request.resource.data.status == 'finished'))
+      );
+      allow delete: if signedIn() && request.auth.uid == resource.data.host;
+    }
+
+    // salas del Wordle versus (1 a 4 jugadores): wrooms/{id}. `players` = quienes juegan (el primero es quien la crea), `rounds` = rondas
+    // (1 a 5), `timer` = 1 minuto por palabra, `seed` = de ahí salen las palabras de cada ronda (las mismas para todos) y `g` = el avance
+    // de cada jugador { uid: { w: palabras de cada ronda, rs: puntos de las rondas terminadas, st: cuándo empezó la ronda } }; cada uno
+    // escribe solo el suyo. Si la sala se crea desde un grupo lleva `group` y cualquier miembro puede entrar hasta que se llene.
+    match /wrooms/{id} {
+      function wEntryOk(e) {
+        return e.keys().hasOnly(['w', 'rs', 'st']) && e.w is string && e.w.size() <= 220 && e.rs is string && e.rs.size() <= 24 && e.st is int;
+      }
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players
+          || ('group' in resource.data && inGroup(resource.data.group)));
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'rounds', 'timer', 'seed', 'g', 'at'])
+        && request.resource.data.host == request.auth.uid
+        && request.resource.data.players == [request.auth.uid]
+        && (('group' in request.resource.data)
+          ? (request.resource.data.group is string && inGroup(request.resource.data.group) && request.resource.data.invited.size() == 0)
+          : invitedOk(request.resource.data.invited))
+        && request.resource.data.status == 'lobby'
+        && request.resource.data.rounds is int && request.resource.data.rounds >= 1 && request.resource.data.rounds <= 5
+        && request.resource.data.timer is bool
+        && request.resource.data.g.size() == 0
+        && request.resource.data.at == request.time;
+      allow update: if signedIn() && (
+        // el anfitrión cambia las opciones o invita a más amigos (solo en la sala de espera)
+        (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rounds', 'timer', 'invited'])
+          && request.resource.data.rounds is int && request.resource.data.rounds >= 1 && request.resource.data.rounds <= 5
+          && request.resource.data.timer is bool
+          && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
+        // alguien entra
+        || (resource.data.status == 'lobby'
+          && (request.auth.uid in resource.data.invited || ('group' in resource.data && inGroup(resource.data.group)))
+          && !(request.auth.uid in resource.data.players)
+          && resource.data.players.size() < 4
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players'])
+          && request.resource.data.players == resource.data.players.concat([request.auth.uid]))
+        // un jugador sale (menos el anfitrión)
+        || (resource.data.status == 'lobby' && request.auth.uid != resource.data.host && request.auth.uid in resource.data.players
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players'])
+          && request.resource.data.players.size() == resource.data.players.size() - 1
+          && !(request.auth.uid in request.resource.data.players)
+          && resource.data.players.hasAll(request.resource.data.players))
+        // empezar la partida (también se puede jugar a solas)
+        || (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'seed'])
+          && request.resource.data.status == 'playing' && request.resource.data.seed is int && request.resource.data.seed >= 0)
+        // jugar: cada uno solo cambia lo suyo (y se marca la sala como terminada al acabar todos)
+        || (resource.data.status == 'playing' && request.auth.uid in resource.data.players
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['g', 'status'])
+          && request.resource.data.g.diff(resource.data.g).affectedKeys().hasOnly([request.auth.uid])
+          && wEntryOk(request.resource.data.g[request.auth.uid])
           && (request.resource.data.status == 'playing' || request.resource.data.status == 'finished'))
       );
       allow delete: if signedIn() && request.auth.uid == resource.data.host;

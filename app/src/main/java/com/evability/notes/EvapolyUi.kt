@@ -1613,7 +1613,7 @@ private fun PolyLobby(
 }
 
 @Composable
-private fun PolyButton(label: String, primary: Boolean, enabled: Boolean, modifier: Modifier = Modifier.fillMaxWidth(), cta: Boolean = false, compact: Boolean = false, onClick: () -> Unit) {
+internal fun PolyButton(label: String, primary: Boolean, enabled: Boolean, modifier: Modifier = Modifier.fillMaxWidth(), cta: Boolean = false, compact: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     val hgt = if (compact) 40.dp else if (cta) 58.dp else 50.dp
     if (primary) {

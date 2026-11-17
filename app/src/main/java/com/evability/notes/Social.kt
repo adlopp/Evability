@@ -851,6 +851,94 @@ object Social {
 
     suspend fun polyRemove(id: String) = withContext(Dispatchers.IO) { commit(delete("rooms/$id")) }
 
+    // ───────── Wordle versus: salas en la nube ─────────
+
+    /** Avance de un jugador: `w` = palabras de cada ronda («a,b|c»), `rs` = puntos de las rondas terminadas («10,4») y `st` = cuándo empezó la ronda. */
+    class WEntry(val w: String = "", val rs: String = "", val st: Long = 0L)
+
+    class WRoom(
+        val id: String, val host: String, val invited: List<String>, val players: List<String>, val status: String, val group: String,
+        val rounds: Int, val timer: Boolean, val seed: Int, val g: Map<String, WEntry>,
+    )
+
+    private fun wroomOf(d: JSONObject?, id: String): WRoom? = d?.let {
+        val gf = it.optJSONObject("fields")?.optJSONObject("g")?.optJSONObject("mapValue")?.optJSONObject("fields")
+        val g = HashMap<String, WEntry>()
+        if (gf != null) for (k in gf.keys()) {
+            val f = gf.getJSONObject(k).optJSONObject("mapValue")?.optJSONObject("fields")
+            g[k] = WEntry(
+                f?.optJSONObject("w")?.optString("stringValue", "") ?: "", f?.optJSONObject("rs")?.optString("stringValue", "") ?: "",
+                f?.optJSONObject("st")?.optString("integerValue")?.toLongOrNull() ?: 0L,
+            )
+        }
+        WRoom(
+            id, it.text("host"), it.list("invited"), it.list("players"), it.text("status"), it.text("group"),
+            it.int("rounds").takeIf { n -> n in 1..5 } ?: 3, it.bool("timer"), it.int("seed"), g,
+        )
+    }
+
+    suspend fun wRoom(id: String): WRoom? = withContext(Dispatchers.IO) { wroomOf(getAll("wrooms", listOf(id))[id], id) }
+
+    /** Crea la sala (3 rondas, sin temporizador) y manda la invitación al chat del amigo o del grupo. */
+    suspend fun createWRoom(friendUid: String): String = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val base = chatBase(friendUid)
+        val grp = if (isGroup(friendUid)) friendUid.drop(2) else null
+        val id = UUID.randomUUID().toString()
+        commit(
+            write(
+                "wrooms/$id",
+                JSONObject().also { if (grp != null) it.put("group", str(grp)) }.put("host", str(me)).put("invited", strs(if (grp != null) emptyList() else listOf(friendUid)))
+                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("rounds", int(3)).put("timer", bool(false)).put("seed", int(0))
+                    .put("g", JSONObject().put("mapValue", JSONObject().put("fields", JSONObject()))),
+                serverTime = "at",
+            ),
+            write("$base/messages/$id", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("wvs")).put("game", str(id)), serverTime = "at"),
+            metaWrite(base, me),
+        )
+        id
+    }
+
+    suspend fun wInvite(room: WRoom, friendUid: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        commit(
+            writeMask("wrooms/${room.id}", JSONObject().put("invited", strs(room.invited + friendUid)), listOf("invited")),
+            write("chats/$pair/messages/${UUID.randomUUID()}", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("wvs")).put("game", str(room.id)), serverTime = "at"),
+            metaWrite("chats/$pair", me),
+        )
+    }
+
+    suspend fun wJoin(room: WRoom) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("wrooms/${room.id}", JSONObject().put("players", strs(room.players + me)), listOf("players")))
+    }
+
+    suspend fun wLeave(room: WRoom) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("wrooms/${room.id}", JSONObject().put("players", strs(room.players.filter { it != me })), listOf("players")))
+    }
+
+    suspend fun wCfg(room: WRoom, rounds: Int, timer: Boolean) = withContext(Dispatchers.IO) {
+        commit(writeMask("wrooms/${room.id}", JSONObject().put("rounds", int(rounds.toLong())).put("timer", bool(timer)), listOf("rounds", "timer")))
+    }
+
+    suspend fun wStart(room: WRoom, seed: Int) = withContext(Dispatchers.IO) {
+        commit(writeMask("wrooms/${room.id}", JSONObject().put("status", str("playing")).put("seed", int(seed.toLong())), listOf("status", "seed")))
+    }
+
+    /** Guarda el avance propio; `over` marca la sala como terminada. */
+    suspend fun wProgress(room: WRoom, e: WEntry, over: Boolean) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val entry = JSONObject().put("mapValue", JSONObject().put("fields", JSONObject().put("w", str(e.w)).put("rs", str(e.rs)).put("st", int(e.st))))
+        val f = JSONObject().put("g", JSONObject().put("mapValue", JSONObject().put("fields", JSONObject().put(me, entry))))
+        val mask = arrayListOf("g.`$me`")
+        if (over) { f.put("status", str("finished")); mask.add("status") }
+        commit(writeMask("wrooms/${room.id}", f, mask))
+    }
+
+    suspend fun wRemove(id: String) = withContext(Dispatchers.IO) { commit(delete("wrooms/$id")) }
+
     // ───────── tiempos de estudio en la cuenta ─────────
     // Cada dispositivo guarda en la nube lo que ha estudiado él (study/{uid}.d[día][dispositivo]) y descarga lo de los demás, así el total
     // de cada día es la suma de todos los dispositivos de la cuenta y vincular dos veces no duplica nada.

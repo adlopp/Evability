@@ -4,6 +4,7 @@
 import { h, icon, toast, confirmDialog, modal, uid, poller, promptDialog } from './ui.js';
 import { studying, studyLog, setStudyRemote } from './pomodoro.js';
 import { openWordle } from './wordle.js';
+import { openWordleVs } from './wordlevs.js';
 import { openChess } from './chess.js';
 import { openEvapoly, polyIcon } from './evapoly.js';
 
@@ -516,6 +517,52 @@ const polyApi = (id) => ({
   remove: async (room) => { await commit(del(`rooms/${room.id}`)); },
 });
 
+// ───── Wordle versus: salas en la nube ─────
+
+const wroomOf = (d, id) => (d ? {
+  id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), group: text(d, 'group'),
+  rounds: Number(d.fields?.rounds?.integerValue || 3), timer: d.fields?.timer?.booleanValue === true, seed: Number(d.fields?.seed?.integerValue || 0),
+  g: Object.fromEntries(Object.entries(d.fields?.g?.mapValue?.fields || {}).map(([u, v]) => {
+    const f = v.mapValue?.fields || {};
+    return [u, { w: f.w?.stringValue || '', rs: f.rs?.stringValue || '', st: Number(f.st?.integerValue || 0) }];
+  })),
+} : null);
+const getWRoom = async (id) => wroomOf((await getAll('wrooms', [id]).catch(() => ({})))[id], id);
+
+/** Crea la sala del Wordle versus (3 rondas, sin temporizador) y manda la invitación al chat. */
+async function createWRoom(friendUid) {
+  const me = (await live()).uid, base = await chatBase(friendUid), id = uid(), grp = isGroup(friendUid) ? friendUid.slice(2) : null;
+  await commit(
+    write(`wrooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), rounds: intV(3), timer: boolV(false), seed: intV(0), g: { mapValue: { fields: {} } } }, { serverTime: 'at' }),
+    write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('wvs'), game: str(id) }, { serverTime: 'at' }),
+    metaWrite(base, me));
+  return id;
+}
+
+const wvsApi = (id) => ({
+  me: () => session.uid,
+  get: () => getWRoom(id),
+  profiles: async (uids) => { const d = await getAll('users', uids); return Object.fromEntries(uids.map((u) => [u, profile(u, d[u])])); },
+  friends: async () => (await overview()).friends.map((f) => f.profile),
+  invite: async (room, friendUid) => {
+    const me = (await live()).uid, pair = pairId(me, friendUid);
+    await commit(
+      writeMask(`wrooms/${room.id}`, { invited: strs([...room.invited, friendUid]) }, ['invited']),
+      write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(''), kind: str('wvs'), game: str(room.id) }, { serverTime: 'at' }),
+      metaWrite(`chats/${pair}`, me));
+  },
+  join: async (room) => { await commit(writeMask(`wrooms/${room.id}`, { players: strs([...room.players, (await live()).uid]) }, ['players'])); },
+  leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`wrooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`wrooms/${room.id}`, { rounds: intV(c.rounds), timer: boolV(c.timer) }, ['rounds', 'timer'])); },
+  start: async (room, seed) => { await commit(writeMask(`wrooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
+  /** Guarda el avance propio ({ w, rs, st }); `over` marca la sala como terminada. */
+  progress: async (room, e, over) => {
+    const me = (await live()).uid;
+    await commit(writeMask(`wrooms/${room.id}`, { g: { mapValue: { fields: { [me]: { mapValue: { fields: { w: str(e.w), rs: str(e.rs), st: intV(e.st) } } } } } }, ...(over ? { status: str('finished') } : {}) }, ['g.`' + me + '`', ...(over ? ['status'] : [])]));
+  },
+  remove: async (room) => { await commit(del(`wrooms/${room.id}`)); },
+});
+
 // ───── audios ─────
 
 const MAX_AUDIO_MS = 120000;
@@ -594,13 +641,13 @@ const stopRecording = (r) => new Promise((resolve) => {
 let playing = null; // { id, audio, stop() }: solo suena un audio a la vez
 function stopPlaying() { playing?.stop(); playing = null; }
 
-/** Lista de minijuegos del clip del chat: Wordle y Evadrez (ajedrez) disponibles; los demás salen bloqueados. */
-function openGames(onWordle, onChess, onPoly) {
-  const row = (name, sub, fn) => h('button', { class: 'game-row' + (fn ? '' : ' locked'), disabled: !fn, onclick: fn ? () => { m.close(); fn(); } : null },
-    icon(fn ? 'grid' : 'lock', 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
+/** Lista de minijuegos del clip del chat: Wordle, Evadrez, Evapoly y Wordle versus; Hundir la flota sale bloqueado. */
+function openGames(onWordle, onChess, onPoly, onWvs) {
+  const row = (name, sub, fn, ico) => h('button', { class: 'game-row' + (fn ? '' : ' locked'), disabled: !fn, onclick: fn ? () => { m.close(); fn(); } : null },
+    icon(ico || (fn ? 'grid' : 'lock'), 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
   const m = modal({
     title: 'Minijuegos',
-    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess), row('Evapoly', null, onPoly), row('???', 'Próximamente', null)),
+    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess), row('Evapoly', null, onPoly), row('Wordle versus', '1 a 4 jugadores', onWvs, 'versus'), row('Hundir la flota', 'Bloqueado · próximamente', null, 'ship')),
     actions: [{ label: 'Cerrar' }],
   });
 }
@@ -760,6 +807,10 @@ function openChat(friend) {
     async () => {
       try { const id = await createRoom(friend.uid); await load(); root.append(openEvapoly({ roomId: id, api: polyApi(id), onClose: () => tick() })); }
       catch (e) { toast(e.message || 'No se pudo crear la sala'); }
+    },
+    async () => {
+      try { const id = await createWRoom(friend.uid); await load(); root.append(openWordleVs({ roomId: id, api: wvsApi(id), onClose: () => tick() })); }
+      catch (e) { toast(e.message || 'No se pudo crear la sala'); }
     }) }, icon('gamepad'));
   const fileInput = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: async () => {
     const f = fileInput.files[0]; fileInput.value = '';
@@ -771,7 +822,7 @@ function openChat(friend) {
   const normalRow = h('div', { class: 'rec-row' }, clipBtn, photoBtn, fileInput, input, actionBtn);
   let replyTo = null;
   const replyBar = h('div', { class: 'reply-bar', style: { display: 'none' } });
-  const previewOf = (m) => m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? 'Audio' : m.kind === 'chess' ? 'Evadrez' : m.text.slice(0, 100);
+  const previewOf = (m) => m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? 'Audio' : m.kind === 'chess' ? 'Evadrez' : m.kind === 'wvs' ? 'Wordle versus' : m.text.slice(0, 100);
   function setReply(m) {
     replyTo = m;
     replyBar.replaceChildren(h('div', { class: 'grow' }, h('b', {}, m ? who(m.from) : ''), h('small', {}, m ? previewOf(m) : '')),
@@ -878,6 +929,23 @@ function openChat(friend) {
     return h('div', { class: 'chess-card' }, ico, h('div', { class: 'grow' }, h('b', {}, 'Evapoly'), status), btn);
   }
 
+  /** Invitación al Wordle versus: cómo va la sala y botón para unirse o abrirla. */
+  function wvsCard(m) {
+    const status = h('small', {}, ''), btn = h('button', { class: 'btn small-btn' }, 'Abrir');
+    const paint = (r) => {
+      if (!r) { status.textContent = ''; return; }
+      const inRoom = r.players.includes(session?.uid);
+      status.textContent = (r.status === 'lobby' ? `Sala · ${r.players.length}/4` : r.status === 'playing' ? 'En juego' : 'Terminada') + ` · ${r.rounds} ronda${r.rounds === 1 ? '' : 's'}${r.timer ? ' · 1 min' : ''}`;
+      btn.textContent = r.status === 'lobby' && !inRoom ? (r.players.length >= 4 ? 'Completa' : 'Unirse') : 'Abrir';
+      btn.disabled = !inRoom && (r.status !== 'lobby' || r.players.length >= 4);
+    };
+    const refresh = () => getWRoom(m.game).then(paint).catch(() => {});
+    btn.onclick = () => root.append(openWordleVs({ roomId: m.game, api: wvsApi(m.game), onClose: refresh }));
+    const pl = poller(async () => { const r = await getWRoom(m.game); paint(r); if (!r || r.status === 'finished') pl.stop(); return false; }, 20000, 60000);
+    cardTimers.push(() => pl.stop());
+    return h('div', { class: 'chess-card' }, h('span', { class: 'wvs-ico' }, icon('versus', 24)), h('div', { class: 'grow' }, h('b', {}, 'Wordle versus'), status), btn);
+  }
+
   const rowsById = new Map();
   let delSince = serverNow();
   const goneContent = (bubble, m) => bubble.replaceChildren(h('span', { class: 'gone' }, 'Mensaje borrado'), h('small', {}, fmt(m.at)));
@@ -906,7 +974,7 @@ function openChat(friend) {
       try { await deleteMessage(friend.uid, m.id, m.kind); markGone(m.id); } catch (e) { toast(e.message || 'No se pudo borrar'); }
     } }, icon('trash', 16));
     const tick = m.mine && !group ? h('span', { class: 'tick' }) : null; // checks de «visto» (solo en los chats entre amigos)
-    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, group && !m.mine ? h('b', { class: 'sender' }, who(m.from)) : null, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at), tick));
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, group && !m.mine ? h('b', { class: 'sender' }, who(m.from)) : null, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'wvs' ? wvsCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at), tick));
     const swipeIco = h('span', { class: 'swipe-ico' }, icon('reply', 20));
     const el = h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, swipeIco, ...(m.mine ? [delBtn, replyBtn, bubble, av] : [av, bubble, replyBtn]));
     // deslizar el mensaje hacia la derecha para responderle, como en WhatsApp

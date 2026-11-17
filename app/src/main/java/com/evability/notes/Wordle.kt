@@ -81,6 +81,9 @@ object WordleGame {
 
     fun isValid(word: String) = word in valid
 
+    /** Palabra de la ronda `r` del Wordle versus: sale de la semilla de la sala, así que es la misma en todos los dispositivos. */
+    fun versusWord(seed: Int, r: Int): String = answers[(((seed.toLong() + r * 104729L) % answers.size).toInt())]
+
     /** 2 = en su sitio, 1 = está en otro sitio, 0 = no está. */
     fun evaluate(guess: String, answer: String): IntArray {
         val res = IntArray(5)
@@ -131,11 +134,11 @@ object WordleGame {
     }
 }
 
-private val WGreen = Color(0xFF538D4E)
-private val WYellow = Color(0xFFB59F3B)
-private val WGray = Color(0xFF3A3A3C)
+internal val WGreen = Color(0xFF538D4E)
+internal val WYellow = Color(0xFFB59F3B)
+internal val WGray = Color(0xFF3A3A3C)
 
-private fun statusColor(s: Int) = when (s) {
+internal fun statusColor(s: Int) = when (s) {
     2 -> WGreen
     1 -> WYellow
     0 -> WGray
@@ -144,9 +147,9 @@ private fun statusColor(s: Int) = when (s) {
 
 /** Lista de minijuegos del clip del chat: Wordle y Evadrez (ajedrez) disponibles; los demás salen bloqueados. */
 @Composable
-fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Unit, onDismiss: () -> Unit) {
+fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Unit, onWvs: () -> Unit, onDismiss: () -> Unit) {
     @Composable
-    fun GameRow(name: String, subtitle: String?, enabled: Boolean, onClick: () -> Unit) {
+    fun GameRow(name: String, subtitle: String?, enabled: Boolean, icon: Int? = null, onClick: () -> Unit) {
         val shape = RoundedCornerShape(16.dp)
         Row(
             Modifier.fillMaxWidth().clip(shape)
@@ -156,7 +159,8 @@ fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Uni
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(if (enabled) Icons.Default.GridView else Icons.Default.Lock, null, tint = if (enabled) Accent else OnSurfaceDim)
+            if (icon != null) Icon(androidx.compose.ui.res.painterResource(icon), null, tint = if (enabled) Accent else OnSurfaceDim)
+            else Icon(if (enabled) Icons.Default.GridView else Icons.Default.Lock, null, tint = if (enabled) Accent else OnSurfaceDim)
             Spacer(Modifier.size(12.dp))
             Column {
                 Text(name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = if (enabled) OnSurface else OnSurfaceDim)
@@ -169,10 +173,11 @@ fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Uni
         title = { Text("Minijuegos") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                GameRow("Wordle", null, true, onWordle)
-                GameRow("Evadrez", null, true, onChess)
-                GameRow("Evapoly", null, true, onPoly)
-                GameRow("???", "Próximamente", false) {}
+                GameRow("Wordle", null, true, onClick = onWordle)
+                GameRow("Evadrez", null, true, onClick = onChess)
+                GameRow("Evapoly", null, true, onClick = onPoly)
+                GameRow("Wordle versus", "1 a 4 jugadores", true, R.drawable.ic_versus, onClick = onWvs)
+                GameRow("Hundir la flota", "Bloqueado · próximamente", false, R.drawable.ic_ship) {}
             }
         },
         confirmButton = {},
@@ -302,7 +307,7 @@ fun WordleScreen(friend: Social.Profile?, onClose: () -> Unit) {
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.KeyCap(label: String, weight: Float, bg: Color, fg: Color?, onClick: () -> Unit) {
+internal fun androidx.compose.foundation.layout.RowScope.KeyCap(label: String, weight: Float, bg: Color, fg: Color?, onClick: () -> Unit) {
     Box(
         Modifier.weight(weight).height(52.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,

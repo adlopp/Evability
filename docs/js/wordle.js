@@ -14,6 +14,9 @@ async function loadWords() {
   answers = a; valid = new Set(v);
 }
 
+/** Las listas de palabras (para el Wordle versus: las palabras de cada ronda salen de la misma lista). */
+export async function wordLists() { await loadWords(); return { answers, valid }; }
+
 /** Número de días desde 1970 (igual en todas las plataformas). */
 export const today = () => { const d = new Date(); return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000); };
 /** 7919 es primo y no divide el tamaño de la lista, así que recorre todas sin repetir hasta que se acaban. */
