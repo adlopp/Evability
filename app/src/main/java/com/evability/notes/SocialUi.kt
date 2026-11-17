@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PersonRemove
@@ -575,21 +576,63 @@ private fun FriendsPanel() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(Modifier.widthIn(max = PanelWidth).fillMaxWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 6.dp)) {
         // Mi perfil
-        Row(
-            Modifier.fillMaxWidth().background(Surface1, RoundedCornerShape(20.dp)).border(1.dp, Outline, RoundedCornerShape(20.dp)).padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        var myName by remember { mutableStateOf(me.username) }
+        var renaming by remember { mutableStateOf(false) }
+        var newName by remember { mutableStateOf("") }
+        var renameBusy by remember { mutableStateOf(false) }
+        if (renaming) {
+            AlertDialog(
+                onDismissRequest = { if (!renameBusy) renaming = false },
+                title = { Text("Cambiar mi nombre") },
+                text = {
+                    OutlinedTextField(
+                        newName, { newName = it.take(16) }, singleLine = true, label = { Text("Nombre de usuario") },
+                        supportingText = { Text("3 a 16 letras, números o _") },
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = !renameBusy && newName.isNotBlank(),
+                        onClick = {
+                            scope.launch {
+                                renameBusy = true
+                                try {
+                                    myName = Social.changeUsername(newName)
+                                    renaming = false
+                                    toast("Nombre cambiado")
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    toast(e.message ?: "No se pudo cambiar el nombre")
+                                }
+                                renameBusy = false
+                            }
+                        },
+                    ) { Text("Guardar", fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = { TextButton(enabled = !renameBusy, onClick = { renaming = false }) { Text("Cancelar") } },
+            )
+        }
+        Column(Modifier.fillMaxWidth().background(Surface1, RoundedCornerShape(20.dp)).border(1.dp, Outline, RoundedCornerShape(20.dp)).padding(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Avatar(
-                me.username, myPhoto, 60,
+                myName, myPhoto, 60,
                 onTap = { pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 onHold = { held -> zoomed = if (held) ZoomTarget(me.username, myPhoto, me.uid) else null },
             )
             Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(me.username, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
-                Text("Toca la foto para cambiarla · mantenla pulsada para verla grande", fontSize = 12.sp, color = OnSurfaceDim)
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text(myName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                IconButton(onClick = { newName = myName; renaming = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Edit, "Cambiar mi nombre", tint = OnSurfaceDim, modifier = Modifier.size(18.dp))
+                }
             }
             TextButton(onClick = { Social.signOut(); ShareJob.cancel(ctx); FriendsWatch.stop(ctx) }) { Text("Salir") }
+        }
+        Text(
+            "Toca la foto para cambiarla o mantén pulsado para verla", fontSize = 12.sp, color = OnSurfaceDim, maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp),
+        )
         }
 
         Spacer(Modifier.height(10.dp))

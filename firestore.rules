@@ -227,8 +227,8 @@ service cloud.firestore {
         && groupInvitesOk(request.resource.data.invited)
         && request.resource.data.at == request.time;
       allow update: if signedIn() && (
-        // quien lo creó cambia el nombre, la descripción o la foto
-        (request.auth.uid == resource.data.owner
+        // cualquier miembro cambia el nombre, la descripción o la foto
+        (request.auth.uid in resource.data.members
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'desc', 'photo'])
           && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 40
           && request.resource.data.desc is string && request.resource.data.desc.size() <= 200
@@ -238,6 +238,14 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invited'])
           && request.resource.data.invited.hasAll(resource.data.invited)
           && groupInvitesOk(request.resource.data.invited)
+          && request.resource.data.invited.size() + resource.data.members.size() <= 10)
+        // cualquier miembro invita a un amigo suyo (de uno en uno: el nuevo es el último de la lista y no puede ser ya miembro)
+        || (request.auth.uid in resource.data.members
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invited'])
+          && request.resource.data.invited.size() == resource.data.invited.size() + 1
+          && request.resource.data.invited.hasAll(resource.data.invited)
+          && areFriends(request.auth.uid, request.resource.data.invited[request.resource.data.invited.size() - 1])
+          && !(request.resource.data.invited[request.resource.data.invited.size() - 1] in resource.data.members)
           && request.resource.data.invited.size() + resource.data.members.size() <= 10)
         // un invitado acepta: pasa de invitados a miembros
         || (request.auth.uid in resource.data.invited && !(request.auth.uid in resource.data.members)
@@ -342,10 +350,10 @@ service cloud.firestore {
       }
     }
 
-    // foto del grupo en alta resolución (se descarga al ampliarla; la miniatura de las listas va en groups/{id}); solo la sube quien lo creó
+    // foto del grupo en alta resolución (se descarga al ampliarla; la miniatura de las listas va en groups/{id}); la sube cualquier miembro
     match /groupPhotos/{gid} {
       allow read: if signedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members;
-      allow create, update: if signedIn() && get(/databases/$(database)/documents/groups/$(gid)).data.owner == request.auth.uid
+      allow create, update: if signedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members
         && request.resource.data.keys().hasOnly(['data'])
         && request.resource.data.data is string
         && request.resource.data.data.size() < 150000;

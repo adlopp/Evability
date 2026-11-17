@@ -1,7 +1,7 @@
 // Service worker: guarda la app en el dispositivo para que funcione sin conexión.
 // Estrategia: se responde enseguida con lo guardado y, si hay conexión, se actualiza en segundo plano (la versión nueva se ve al abrir otra vez).
 
-const CACHE = 'evability-web-54';
+const CACHE = 'evability-web-55';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/main.js', 'js/theme.js', 'js/ui.js', 'js/db.js', 'js/store.js', 'js/pdfdoc.js', 'js/templates.js', 'js/ann.js', 'js/editor.js',
@@ -11,7 +11,13 @@ const CORE = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
+  // `cache: 'reload'`: se baja siempre de la red, nunca de la copia que el navegador guarda unos minutos (GitHub Pages la deja 10 min).
+  // Sin esto, al publicar versiones seguidas la copia de la app podía quedar con archivos de versiones distintas y no abrir.
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(CORE.map(async (f) => {
+    const res = await fetch(new Request(f, { cache: 'reload' }));
+    if (!res.ok) throw new Error('No se pudo bajar ' + f);
+    await c.put(f, res);
+  }))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -32,7 +38,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const hit = await cache.match(req, { ignoreSearch: true });
-    const network = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => null);
+    const network = fetch(req, { cache: 'no-cache' }).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => null); // no-cache: comprueba con el servidor, no usa la copia del navegador
     if (hit) { e.waitUntil(network); return hit; }
     const res = await network;
     if (res) return res;

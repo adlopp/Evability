@@ -368,7 +368,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
     if (showInfo && sg != null) GroupInfoDialog(sg, onChanged = { shownGroup = it }, onGone = { showInfo = false; onClose() }, onDismiss = { showInfo = false })
 
     Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding().navigationBarsPadding().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().background(Surface1).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver", tint = OnSurface) }
             if (sg != null) {
                 // la cabecera de un grupo (foto, nombre y miembros) abre su información
@@ -389,6 +389,8 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                 Text(friend.username, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
             }
         }
+        // barra que separa la cabecera (foto y nombre) del chat
+        Box(Modifier.fillMaxWidth().height(2.dp).background(androidx.compose.ui.graphics.lerp(Outline, Accent, 0.38f)))
 
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             if (loadedOnce && messages.isEmpty()) {

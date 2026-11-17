@@ -354,7 +354,8 @@ fun GroupInfoDialog(group: Social.Group, onChanged: (Social.Group) -> Unit, onGo
                     Text("Invitaciones pendientes", fontWeight = FontWeight.SemiBold, color = OnSurface, modifier = Modifier.padding(top = 8.dp))
                     g.invited.forEach { PersonLine(it, true) }
                 }
-                if (isOwner) {
+                run {
+                    // cualquier miembro puede editar el grupo e invitar
                     Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(onClick = { editing = true }, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.Edit, null, Modifier.size(18.dp)); Text(" Editar")

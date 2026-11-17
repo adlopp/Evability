@@ -931,8 +931,33 @@ object Social {
         commit(arrayOps("groups/$id", listOf(Triple("members", "removeAllFromArray", listOf(uid)))))
     }
 
+    // se invita de uno en uno: así lo comprueban las reglas (cada persona invita a amigos suyos)
     suspend fun inviteToGroup(id: String, uids: List<String>) = withContext(Dispatchers.IO) {
-        commit(arrayOps("groups/$id", listOf(Triple("invited", "appendMissingElements", uids))))
+        for (u in uids) commit(arrayOps("groups/$id", listOf(Triple("invited", "appendMissingElements", listOf(u)))))
+    }
+
+    /** Cambia tu nombre de usuario: reserva el nuevo, actualiza tu perfil y libera el antiguo. Devuelve el nombre nuevo. */
+    suspend fun changeUsername(raw: String): String = withContext(Dispatchers.IO) {
+        val s = live()
+        val name = cleanName(raw)
+        val old = s.username
+        if (name.length < 3 || name.length > 16) throw SocialError("El nombre de usuario debe tener entre 3 y 16 letras, números o _")
+        if (name == old) return@withContext name
+        try {
+            commit(write("usernames/$name", JSONObject().put("uid", str(s.uid)), mustNotExist = true))
+        } catch (e: SocialError) {
+            if (e.message == "Ya existe") throw SocialError("Ese nombre de usuario ya está cogido") else throw e
+        }
+        try {
+            val photo = getAll("users", listOf(s.uid))[s.uid]?.text("photo").orEmpty()
+            commit(write("users/${s.uid}", JSONObject().put("username", str(name)).put("photo", str(photo))))
+        } catch (e: Exception) {
+            runCatching { commit(delete("usernames/$name")) }
+            throw e
+        }
+        save(Session(s.uid, name, s.idToken, s.refreshToken, s.expiresAt))
+        if (old.isNotEmpty()) runCatching { commit(delete("usernames/$old")) }
+        name
     }
 
     suspend fun deleteGroup(id: String) = withContext(Dispatchers.IO) { commit(delete("groups/$id")) }

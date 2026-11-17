@@ -804,3 +804,13 @@ textarea.field { resize: vertical; }
 .chat-empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 40px 24px; color: var(--on-dim); } .chat-empty .ce-emoji { font-size: 56px; line-height: 1; margin-bottom: 6px; } .chat-empty b { color: var(--on, inherit); font-size: 17px; }
 .chat-input { padding-top: 10px; } .chat-input .field { background: var(--surface1); border-color: transparent; padding: 11px 18px; }
 .chat-input .field:focus { border-color: var(--accent); }
+
+/* ───────── 1.13.6: separador del chat, tarjeta de perfil en una línea y logo con el color de fondo ───────── */
+.pomo.chat .pomo-top { background: var(--surface1); border-bottom: 2px solid color-mix(in srgb, var(--accent) 38%, var(--outline)); padding-bottom: 8px; box-shadow: 0 6px 14px -10px rgba(0,0,0,.6); position: relative; z-index: 1; }
+.me-card { flex-direction: column; align-items: stretch; gap: 8px; }
+.me-top { display: flex; align-items: center; gap: 14px; }
+.me-name { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 20px; } .me-name .strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-name .icon-btn { width: 34px; height: 34px; flex: none; color: var(--on-dim); }
+.me-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.logo { background: var(--surface2); }
+.logo img { object-fit: contain; padding: 4px; box-sizing: border-box; }

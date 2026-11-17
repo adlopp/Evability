@@ -1,7 +1,7 @@
 // Parte social: perfil, amigos, presencia (punto verde) y «toques» (corazones). Misma lógica que la app de Android:
 // habla con Firebase por su API REST (sin SDK). Las claves no son secretas; la seguridad la ponen las reglas de `firestore.rules`.
 
-import { h, icon, toast, confirmDialog, modal, uid, poller } from './ui.js';
+import { h, icon, toast, confirmDialog, modal, uid, poller, promptDialog } from './ui.js';
 import { studying, studyLog, setStudyRemote } from './pomodoro.js';
 import { openWordle } from './wordle.js';
 import { openChess } from './chess.js';
@@ -144,6 +144,22 @@ export async function resetPassword(rawEmail) {
 
 export function signOut() { saveSession(null); lastShownPoke = -1; unread.clear(); friendUidsCache = []; pending = 0; setStudyRemote({}); studyPushed.clear(); }
 
+/** Cambia tu nombre de usuario: reserva el nuevo, actualiza tu perfil y libera el antiguo. */
+export async function changeUsername(raw) {
+  const s = await live(), name = cleanName(raw), old = s.username;
+  if (name.length < 3 || name.length > 16) throw new Error('El nombre de usuario debe tener entre 3 y 16 letras, números o _');
+  if (name === old) return name;
+  try { await commit(write(`usernames/${name}`, { uid: str(s.uid) }, { mustNotExist: true })); }
+  catch (e) { throw e.message === 'Ya existe' ? new Error('Ese nombre de usuario ya está cogido') : e; }
+  try {
+    const photo = text((await getAll('users', [s.uid]))[s.uid], 'photo');
+    await commit(write(`users/${s.uid}`, { username: str(name), photo: str(photo) }));
+  } catch (e) { try { await commit(del(`usernames/${name}`)); } catch { /* ya no importa */ } throw e; }
+  saveSession({ ...session, username: name });
+  if (old) { try { await commit(del(`usernames/${old}`)); } catch { /* se queda reservado */ } }
+  return name;
+}
+
 export async function myProfile() { const s = await live(); return profile(s.uid, (await getAll('users', [s.uid]))[s.uid]); }
 /** Guarda la miniatura (la de las listas) y, aparte, la foto en alta resolución para cuando se amplía. */
 export async function setPhoto(thumb, full) {
@@ -245,7 +261,8 @@ export async function acceptGroup(id) { const me = (await live()).uid; await com
 export async function declineGroup(id) { const me = (await live()).uid; await commit(arrayOps(`groups/${id}`, [['invited', 'removeAllFromArray', [me]]])); }
 export async function leaveGroup(id) { const me = (await live()).uid; await commit(arrayOps(`groups/${id}`, [['members', 'removeAllFromArray', [me]]])); }
 export async function kickFromGroup(id, uidToRemove) { await commit(arrayOps(`groups/${id}`, [['members', 'removeAllFromArray', [uidToRemove]]])); }
-export async function inviteToGroup(id, uids) { await commit(arrayOps(`groups/${id}`, [['invited', 'appendMissingElements', uids]])); }
+// se invita de uno en uno: así lo comprueban las reglas (cada persona invita a amigos suyos)
+export async function inviteToGroup(id, uids) { for (const u of uids) await commit(arrayOps(`groups/${id}`, [['invited', 'appendMissingElements', [u]]])); }
 export async function deleteGroup(id) { await commit(del(`groups/${id}`)); }
 export async function editGroup(id, { name, desc, photo, full }) {
   const n = name.trim().slice(0, 40);
@@ -626,7 +643,7 @@ function openCreateGroup(friends, onCreated) {
   return m;
 }
 
-/** Información del grupo: miembros y, según seas quien lo creó o no, editar, invitar, echar, eliminar o salir. */
+/** Información del grupo: cualquier miembro puede editarlo e invitar; quien lo creó además echa a gente y lo elimina, y los demás pueden salir. */
 function openGroupInfo(group0, { onChanged, onGone } = {}) {
   const me = session.uid;
   let g = group0, profs = new Map(), m;
@@ -682,19 +699,19 @@ function openGroupInfo(group0, { onChanged, onGone } = {}) {
       h('div', { class: 'group-head' }, avatar(g.name, g.photo, 84, null, 'g:' + g.id), h('h2', {}, g.name), g.desc ? h('p', { class: 'dim' }, g.desc) : h('p', { class: 'dim small' }, 'Sin descripción')),
       h('h3', {}, `Miembros (${g.members.length}/${MAX_GROUP})`), ...g.members.map((u) => personRow(u, false)),
       ...(g.invited.length ? [h('h3', {}, 'Invitaciones pendientes'), ...g.invited.map((u) => personRow(u, true))] : []),
+      h('div', { class: 'stack' },
+        h('div', { class: 'row gap' },
+          h('button', { class: 'btn outline', onclick: editDialog }, icon('pen', 18), ' Editar'),
+          h('button', { class: 'btn outline', disabled: g.members.length + g.invited.length >= MAX_GROUP, onclick: inviteDialog }, icon('userPlus', 18), ' Invitar')),
       isOwner()
-        ? h('div', { class: 'stack' },
-          h('div', { class: 'row gap' },
-            h('button', { class: 'btn outline', onclick: editDialog }, icon('pen', 18), ' Editar'),
-            h('button', { class: 'btn outline', disabled: g.members.length + g.invited.length >= MAX_GROUP, onclick: inviteDialog }, icon('userPlus', 18), ' Invitar')),
-          h('button', { class: 'text-btn danger', onclick: async () => {
+        ? h('button', { class: 'text-btn danger', onclick: async () => {
             if (!(await confirmDialog('Eliminar grupo', 'Se eliminará para todos y se perderán sus mensajes.', 'Eliminar'))) return;
             try { await deleteGroup(g.id); m.close(); onGone?.(); } catch (e) { toast(e.message || 'No se pudo eliminar'); }
-          } }, 'Eliminar grupo'))
+          } }, 'Eliminar grupo')
         : h('button', { class: 'text-btn danger', onclick: async () => {
           if (!(await confirmDialog('Salir del grupo', 'Dejarás de ver sus mensajes.', 'Salir'))) return;
           try { await leaveGroup(g.id); m.close(); onGone?.(); } catch (e) { toast(e.message || 'No se pudo salir'); }
-        } }, 'Salir del grupo'));
+        } }, 'Salir del grupo')));
   }
   m = modal({ title: 'Grupo', content: body, wide: true, actions: [{ label: 'Cerrar', primary: true }] });
   body.replaceChildren(h('p', { class: 'dim' }, 'Cargando…'));
@@ -1347,6 +1364,12 @@ export function openSocial(onClose) {
   function showPanel() {
     body.classList.remove('narrow');
     const me = session;
+    const nameEl = h('span', { class: 'strong' }, me.username);
+    const renameMe = async () => {
+      const v = await promptDialog({ title: 'Cambiar mi nombre', label: 'Nombre de usuario (3 a 16 letras, números o _)', initial: session.username, confirm: 'Guardar' });
+      if (v == null || !v.trim()) return;
+      try { nameEl.textContent = await changeUsername(v); toast('Nombre cambiado'); } catch (e) { toast(e.message || 'No se pudo cambiar el nombre'); }
+    };
     const myAvatar = h('button', { class: 'plain', 'aria-label': 'Cambiar foto' });
     const paintMe = () => myAvatar.replaceChildren(avatar(me.username, myPhoto, 60, null, me.uid));
     paintMe();
@@ -1413,8 +1436,11 @@ export function openSocial(onClose) {
     async function refresh() { try { ov = await overview(); } catch (e) { if (!ov) fail(e); } paintLists(); paintResults(); }
 
     body.replaceChildren(
-      h('div', { class: 'me-card' }, myAvatar, h('div', { class: 'grow' }, h('div', { class: 'strong', style: { fontSize: '20px' } }, me.username), h('div', { class: 'dim small' }, 'Toca la foto para cambiarla · mantenla pulsada para verla grande')),
-        h('button', { class: 'text-btn', onclick: () => { stopHost(); signOut(); showLogin(); } }, 'Salir'), picker),
+      h('div', { class: 'me-card' },
+        h('div', { class: 'me-top' }, myAvatar,
+          h('div', { class: 'grow me-name' }, nameEl, h('button', { class: 'icon-btn', 'aria-label': 'Cambiar mi nombre', title: 'Cambiar mi nombre', onclick: renameMe }, icon('pen', 18))),
+          h('button', { class: 'text-btn', onclick: () => { stopHost(); signOut(); showLogin(); } }, 'Salir')),
+        h('div', { class: 'dim small me-hint' }, 'Toca la foto para cambiarla o mantén pulsado para verla'), picker),
       search_, resultsEl, incomingEl, groupInvitesEl, friendsEl, groupsEl);
     myProfile().then((p) => { myPhoto = p.photo; paintMe(); }).catch(() => {});
     paintLists(); refresh();

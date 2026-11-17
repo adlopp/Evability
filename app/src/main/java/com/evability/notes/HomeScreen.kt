@@ -279,7 +279,8 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                TopRow(version, onAnalyze = { showAnalyze = true }, onSocial = { showSocial = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
+                // el logo solo suena si la pantalla de inicio es la de arriba (no con Amigos, el Ternurín o el Pollo encima)
+                TopRow(version, logoSound = !(showSocial || showPomodoro || showSimple), onAnalyze = { showAnalyze = true }, onSocial = { showSocial = true }, onTrash = { showTrash = true }, onSettings = { showSettings = true })
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -685,7 +686,7 @@ private fun FolderOrderDialog(
 // ───────────────────────────── Cabecera ─────────────────────────────
 
 @Composable
-private fun TopRow(version: String, onAnalyze: () -> Unit, onSocial: () -> Unit, onTrash: () -> Unit, onSettings: () -> Unit) {
+private fun TopRow(version: String, logoSound: Boolean, onAnalyze: () -> Unit, onSocial: () -> Unit, onTrash: () -> Unit, onSettings: () -> Unit) {
     val context = LocalContext.current
     val player = remember { MediaPlayer.create(context, R.raw.easter_egg) }
     DisposableEffect(Unit) { onDispose { player?.release() } }
@@ -706,14 +707,15 @@ private fun TopRow(version: String, onAnalyze: () -> Unit, onSocial: () -> Unit,
             // Cuadrado con las esquinas redondeadas, como el icono de la app: así no se corta la cabeza del Ternurín.
             Modifier.size(58.dp).scale(scale).clip(RoundedCornerShape(15.dp))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                    if (!logoSound) return@clickable
                     bounce = true
                     if (!Prefs.logoMuted) player?.let { it.seekTo(0); it.start() }
                 }
-                .background(Color(0xFF1B1D24), RoundedCornerShape(15.dp))
+                .background(Surface2, RoundedCornerShape(15.dp)) // el fondo del logo sigue el color de fondo de la app
                 .border(1.dp, Outline, RoundedCornerShape(15.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Image(painterResource(R.drawable.ic_fg), contentDescription = "Evability", modifier = Modifier.fillMaxSize().scale(1.3f))
+            Image(painterResource(R.drawable.logo), contentDescription = "Evability", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(5.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
