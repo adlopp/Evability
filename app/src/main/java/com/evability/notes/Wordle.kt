@@ -307,9 +307,9 @@ fun WordleScreen(friend: Social.Profile?, onClose: () -> Unit) {
 }
 
 @Composable
-internal fun androidx.compose.foundation.layout.RowScope.KeyCap(label: String, weight: Float, bg: Color, fg: Color?, onClick: () -> Unit) {
+internal fun androidx.compose.foundation.layout.RowScope.KeyCap(label: String, weight: Float, bg: Color, fg: Color?, keyHeight: androidx.compose.ui.unit.Dp = 52.dp, onClick: () -> Unit) {
     Box(
-        Modifier.weight(weight).height(52.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable(onClick = onClick),
+        Modifier.weight(weight).height(keyHeight).clip(RoundedCornerShape(8.dp)).background(bg).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (label == "⌫") Icon(Icons.AutoMirrored.Filled.Backspace, "Borrar", tint = fg ?: OnSurface)

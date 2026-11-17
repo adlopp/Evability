@@ -522,7 +522,7 @@ const polyApi = (id) => ({
 
 const wroomOf = (d, id) => (d ? {
   id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), group: text(d, 'group'),
-  rounds: Number(d.fields?.rounds?.integerValue || 3), timer: d.fields?.timer?.booleanValue === true, seed: Number(d.fields?.seed?.integerValue || 0),
+  rounds: Number(d.fields?.rounds?.integerValue || 3), timer: d.fields?.timer?.booleanValue === true, secs: Number(d.fields?.secs?.integerValue || 60), seed: Number(d.fields?.seed?.integerValue || 0),
   g: Object.fromEntries(Object.entries(d.fields?.g?.mapValue?.fields || {}).map(([u, v]) => {
     const f = v.mapValue?.fields || {};
     return [u, { w: f.w?.stringValue || '', rs: f.rs?.stringValue || '', st: Number(f.st?.integerValue || 0) }];
@@ -534,7 +534,7 @@ const getWRoom = async (id) => wroomOf((await getAll('wrooms', [id]).catch(() =>
 async function createWRoom(friendUid) {
   const me = (await live()).uid, base = await chatBase(friendUid), id = uid(), grp = isGroup(friendUid) ? friendUid.slice(2) : null;
   await commit(
-    write(`wrooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), rounds: intV(3), timer: boolV(false), seed: intV(0), g: { mapValue: { fields: {} } } }, { serverTime: 'at' }),
+    write(`wrooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), rounds: intV(3), timer: boolV(false), secs: intV(60), seed: intV(0), g: { mapValue: { fields: {} } } }, { serverTime: 'at' }),
     write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('wvs'), game: str(id) }, { serverTime: 'at' }),
     metaWrite(base, me));
   return id;
@@ -554,7 +554,7 @@ const wvsApi = (id) => ({
   },
   join: async (room) => { await commit(writeMask(`wrooms/${room.id}`, { players: strs([...room.players, (await live()).uid]) }, ['players'])); },
   leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`wrooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
-  setCfg: async (room, c) => { await commit(writeMask(`wrooms/${room.id}`, { rounds: intV(c.rounds), timer: boolV(c.timer) }, ['rounds', 'timer'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`wrooms/${room.id}`, { rounds: intV(c.rounds), timer: boolV(c.timer), secs: intV(c.secs || 60) }, ['rounds', 'timer', 'secs'])); },
   start: async (room, seed) => { await commit(writeMask(`wrooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
   /** Guarda el avance propio ({ w, rs, st }); `over` marca la sala como terminada. */
   progress: async (room, e, over) => {
@@ -995,7 +995,7 @@ function openChat(friend) {
     const paint = (r) => {
       if (!r) { status.textContent = ''; return; }
       const inRoom = r.players.includes(session?.uid);
-      status.textContent = (r.status === 'lobby' ? `Sala · ${r.players.length}/4` : r.status === 'playing' ? 'En juego' : 'Terminada') + ` · ${r.rounds} ronda${r.rounds === 1 ? '' : 's'}${r.timer ? ' · 1 min' : ''}`;
+      status.textContent = (r.status === 'lobby' ? `Sala · ${r.players.length}/4` : r.status === 'playing' ? 'En juego' : 'Terminada') + ` · ${r.rounds} ronda${r.rounds === 1 ? '' : 's'}${r.timer ? ' · ' + (r.secs < 60 ? r.secs + ' s' : r.secs % 60 === 0 ? r.secs / 60 + ' min' : Math.floor(r.secs / 60) + ':' + String(r.secs % 60).padStart(2, '0')) : ''}`;
       btn.textContent = r.status === 'lobby' && !inRoom ? (r.players.length >= 4 ? 'Completa' : 'Unirse') : 'Abrir';
       btn.disabled = !inRoom && (r.status !== 'lobby' || r.players.length >= 4);
     };

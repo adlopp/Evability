@@ -444,7 +444,7 @@ service cloud.firestore {
     }
 
     // salas del Wordle versus (2 a 4 jugadores): wrooms/{id}. `players` = quienes juegan (el primero es quien la crea), `rounds` = rondas
-    // (1 a 5), `timer` = 1 minuto por palabra, `seed` = de ahí salen las palabras de cada ronda (las mismas para todos) y `g` = el avance
+    // (1 a 5), `timer` = tiempo limitado por palabra, `secs` = segundos por palabra (60 si falta), `seed` = de ahí salen las palabras de cada ronda (las mismas para todos) y `g` = el avance
     // de cada jugador { uid: { w: palabras de cada ronda, rs: puntos de las rondas terminadas, st: cuándo empezó la ronda } }; cada uno
     // escribe solo el suyo. Si la sala se crea desde un grupo lleva `group` y cualquier miembro puede entrar hasta que se llene.
     match /wrooms/{id} {
@@ -455,7 +455,7 @@ service cloud.firestore {
         && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players
           || ('group' in resource.data && inGroup(resource.data.group)));
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'rounds', 'timer', 'seed', 'g', 'at'])
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'rounds', 'timer', 'secs', 'seed', 'g', 'at'])
         && request.resource.data.host == request.auth.uid
         && request.resource.data.players == [request.auth.uid]
         && (('group' in request.resource.data)
@@ -464,14 +464,16 @@ service cloud.firestore {
         && request.resource.data.status == 'lobby'
         && request.resource.data.rounds is int && request.resource.data.rounds >= 1 && request.resource.data.rounds <= 5
         && request.resource.data.timer is bool
+        && (!('secs' in request.resource.data) || (request.resource.data.secs is int && request.resource.data.secs >= 15 && request.resource.data.secs <= 600))
         && request.resource.data.g.size() == 0
         && request.resource.data.at == request.time;
       allow update: if signedIn() && (
         // el anfitrión cambia las opciones o invita a más amigos (solo en la sala de espera)
         (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rounds', 'timer', 'invited'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rounds', 'timer', 'secs', 'invited'])
           && request.resource.data.rounds is int && request.resource.data.rounds >= 1 && request.resource.data.rounds <= 5
           && request.resource.data.timer is bool
+          && (!('secs' in request.resource.data) || (request.resource.data.secs is int && request.resource.data.secs >= 15 && request.resource.data.secs <= 600))
           && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
         // alguien entra
         || (resource.data.status == 'lobby'

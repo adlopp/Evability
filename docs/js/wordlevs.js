@@ -7,7 +7,10 @@ import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggl
 import { evaluate, wordLists } from './wordle.js';
 
 export const COLORS = ['#E53935', '#1E88E5', '#43A047', '#FB8C00'];
-const ROWS = 6, SECS = 60;
+const ROWS = 6;
+/** Tiempos que puede elegir el anfitrión (segundos por palabra). */
+export const TIMES = [30, 45, 60, 90, 120, 180, 300];
+const timeLabel = (s) => (s < 60 ? `${s} s` : s % 60 === 0 ? `${s / 60} min` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
 const KEYS = ['QWERTYUIOP', 'ASDFGHJKLÑ', 'ZXCVBNM'];
 
 /** Palabra de la ronda `r` (la misma en todos los dispositivos). */
@@ -72,7 +75,7 @@ export function openWordleVs({ roomId, api, onClose }) {
   }
 
   // ───── sala de espera ─────
-  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.rounds, room.timer, room.status]);
+  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.rounds, room.timer, room.secs, room.status]);
   function renderLobby() {
     lobbySig = lobbyKey();
     const isHost = room.host === me, inRoom = room.players.includes(me);
@@ -84,13 +87,13 @@ export function openWordleVs({ roomId, api, onClose }) {
       return h('div', { class: 'pseat empty', style: `--c:${COLORS[i]}` }, inv ? [avatarEl(inv, 34), h('b', {}, nameOf(inv)), h('small', {}, '…')] : h('b', {}, '—'));
     }));
     const setCfg = async (patch) => {
-      const next = { rounds: room.rounds, timer: room.timer, ...patch };
+      const next = { rounds: room.rounds, timer: room.timer, secs: room.secs, ...patch };
       try { await api.setCfg(room, next); Object.assign(room, next); renderLobby(); } catch (e) { toast(e.message); }
     };
     const chips = h('div', { class: 'vs-rounds', role: 'group', 'aria-label': 'Número de rondas' }, [1, 2, 3, 4, 5].map((n) => h('button', {
       class: 'vs-chip' + (room.rounds === n ? ' sel' : ''), disabled: !isHost, 'aria-pressed': room.rounds === n, onclick: () => { if (n !== room.rounds) setCfg({ rounds: n }); } }, String(n))));
-    const toggle = h('label', { class: 'ptoggle' }, h('span', {}, 'Temporizador · 1 minuto por palabra'),
-      h('input', { type: 'checkbox', checked: room.timer, disabled: !isHost, onchange: (e) => { const v = e.target.checked; api.setCfg(room, { rounds: room.rounds, timer: v }).then(() => { room.timer = v; lobbySig = lobbyKey(); }).catch((err) => { e.target.checked = !v; toast(err.message); }); } }), h('i', {}));
+    const toggle = h('label', { class: 'ptoggle' }, h('span', {}, 'Temporizador por palabra'),
+      h('input', { type: 'checkbox', checked: room.timer, disabled: !isHost, onchange: (e) => { const v = e.target.checked; setCfg({ timer: v }); } }), h('i', {}));
 
     const buttons = [];
     if (canJoin) buttons.push(h('button', { class: 'btn big', onclick: async () => { try { await api.join(room); await poll(); } catch (e) { toast(e.message); } } }, 'Unirse'));
@@ -103,6 +106,8 @@ export function openWordleVs({ roomId, api, onClose }) {
     fill(body, h('div', { class: 'poly-lobby vs-lobby' }, seats,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Rondas'), h('b', {}, String(room.rounds))), chips, toggle,
+        room.timer ? h('div', { class: 'vs-times', role: 'group', 'aria-label': 'Tiempo por palabra' }, TIMES.map((s) => h('button', {
+          class: 'vs-chip' + (room.secs === s ? ' sel' : ''), disabled: !isHost, 'aria-pressed': room.secs === s, onclick: () => { if (s !== room.secs) setCfg({ secs: s }); } }, timeLabel(s)))) : null,
         h('p', { class: 'dim small vs-rules' }, 'Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 2 a 4 personas.')),
       h('div', { class: 'pbtns' }, buttons)));
   }
@@ -173,7 +178,7 @@ export function openWordleVs({ roomId, api, onClose }) {
   let timerEl = null;
   const tickT = setInterval(() => {
     if (!room || !mine || room.status === 'lobby' || mine.st <= 0 || myK() >= room.rounds || !room.timer) return;
-    const left = SECS - Math.floor((Date.now() - mine.st) / 1000);
+    const left = (room.secs || 60) - Math.floor((Date.now() - mine.st) / 1000);
     if (timerEl) { timerEl.textContent = clock(Math.max(0, left)); timerEl.classList.toggle('low', left <= 10); }
     if (left <= 0) finishRound(true);
   }, 250);
@@ -196,15 +201,15 @@ export function openWordleVs({ roomId, api, onClose }) {
     const seat = room.players.indexOf(u), e = u === me ? mine : parseEntry(room.g[u]), k = e.rs.length;
     const showR = Math.min(k, myK(), room.rounds - 1), words = e.segs[showR] || [];
     let status;
-    if (u === me) status = myK() >= room.rounds ? 'Has terminado' : mine.st > 0 ? `Ronda ${myK() + 1} · intento ${Math.min(ROWS, (mine.segs[myK()] || []).length + 1)}/${ROWS}` : 'Entre rondas';
+    if (u === me) status = myK() >= room.rounds ? 'Terminaste' : mine.st > 0 ? `Intento ${Math.min(ROWS, (mine.segs[myK()] || []).length + 1)}/${ROWS}` : 'Entre rondas';
     else if (k >= room.rounds) status = 'Ha terminado';
-    else if (k > myK()) status = '⏳ Te está esperando';
-    else if (k < myK()) status = `Aún juega la ronda ${k + 1}`;
+    else if (k > myK()) status = `⏳ Te espera · ${words.length} int.`;
+    else if (k < myK()) status = `Aún en la ronda ${k + 1}`;
     else if (e.st > 0 || words.length) status = `Intento ${Math.min(ROWS, words.length + (e.st > 0 ? 1 : 0))}/${ROWS}`;
-    else status = 'Aún no ha empezado la ronda';
-    if (u !== me && k > showR && words.length) status += ` · ${words.length} intento${words.length === 1 ? '' : 's'}`;
+    else status = 'Sin empezar';
     return h('div', { class: 'vs-card' + (u === me ? ' me' : '') + (k > myK() && u !== me ? ' waiting' : ''), style: `--c:${COLORS[seat] || COLORS[0]}` },
-      h('div', { class: 'vs-card-top' }, avatarEl(u, 28), h('b', {}, nameOf(u)), h('span', { class: 'vs-pts' }, total(e) + ' pts')),
+      h('div', { class: 'vs-card-top' }, avatarEl(u, 22), h('b', {}, nameOf(u))),
+      h('span', { class: 'vs-pts' }, total(e) + ' pts'),
       u === me ? null : miniGrid(words, answerOf(showR)),
       h('small', { class: 'vs-status' }, status));
   }
@@ -238,16 +243,15 @@ export function openWordleVs({ roomId, api, onClose }) {
     } else if (phase === 'over' && !allDone()) {
       action.append(h('button', { class: 'btn big', disabled: true }, `Esperando a ${behind(room.rounds).map(nameOf).join(', ')}…`));
     }
-    timerEl = room.timer && phase === 'play' ? h('span', { class: 'vs-timer' }, clock(Math.max(0, SECS - Math.floor((Date.now() - mine.st) / 1000)))) : null;
-    const head = h('div', { class: 'vs-head' }, h('b', {}, over ? 'Partida terminada' : `Ronda ${k + 1} de ${room.rounds}`), timerEl, h('span', { class: 'vs-pts' }, total(mine) + ' pts'));
-    const side = h('div', { class: 'vs-side' }, room.players.map(playerCard));
-
+    timerEl = room.timer && phase === 'play' ? h('span', { class: 'vs-timer' }, clock(Math.max(0, (room.secs || 60) - Math.floor((Date.now() - mine.st) / 1000)))) : null;
+    const head = h('div', { class: 'vs-head' }, h('b', {}, over ? 'Partida terminada' : `Ronda ${k + 1}/${room.rounds}`), timerEl, h('span', { class: 'vs-pts' }, total(mine) + ' pts'));
     const finishedAll = over && allDone();
+    // como el Wordle normal: el tablero en el centro y el teclado debajo; los jugadores, en una columna a la derecha
+    const side = h('div', { class: 'vs-side' }, room.players.map(playerCard),
+      room.players.length > 1 && !over ? h('button', { class: 'text-btn vs-leave', onclick: forfeit }, 'Abandonar') : null);
     const main = h('div', { class: 'vs-main' }, head, board,
-      h('div', { class: 'wmsg' + (msgGood ? ' good' : '') }, msg || (phase === 'between' && k === 0 ? 'Todos jugáis las mismas palabras' : '')),
-      action, finishedAll ? null : kb,
-      room.players.length > 1 && !over ? h('button', { class: 'text-btn vs-leave', onclick: forfeit }, 'Abandonar partida') : null);
-    fill(body, h('div', { class: 'vs-game' }, h('div', { class: 'vs-col' }, main, finishedAll ? resultsPanel() : null), side));
+      h('div', { class: 'wmsg' + (msgGood ? ' good' : '') }, msg || (phase === 'between' && k === 0 ? 'Todos jugáis las mismas palabras' : '')), action);
+    fill(body, h('div', { class: 'vs-game' + (finishedAll ? ' done' : '') }, main, side, h('div', { class: 'vs-kb' }, finishedAll ? resultsPanel() : kb)));
   }
 
   function resultsPanel() {

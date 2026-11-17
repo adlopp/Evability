@@ -877,3 +877,31 @@ textarea.field { resize: vertical; }
 .fl-leave { opacity: .7; } .block { display: block; }
 .fl-seats { grid-template-columns: 1fr 1fr; }
 @media (min-width: 900px) { .fl-boards { flex-direction: row; align-items: flex-start; justify-content: center; gap: 28px; } .fl-board { --bs: 430px; } .fl-board.small { --bs: 300px; } }
+
+/* Wordle versus: como el Wordle normal (tablero en el centro, teclado abajo y sin scroll) con los jugadores en una columna a la derecha */
+.pomo.wordle.vs .vs-body { display: flex; flex-direction: column; padding-bottom: 0; }
+.pomo.wordle.vs .vs-game { flex: 1 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 106px; grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "main side" "kb kb"; gap: 4px 8px; width: 100%; max-width: none; margin: 0; padding: 2px 8px calc(var(--safe-bottom, 0px) + 6px); }
+.pomo.wordle.vs .vs-main { grid-area: main; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 6px; min-width: 0; width: auto; }
+.pomo.wordle.vs .vs-head { width: min(330px, 100%); }
+.pomo.wordle.vs .vs-main .wboard { width: min(100%, 330px, calc((100dvh - 372px) * 5 / 6)); }
+.pomo.wordle.vs .vs-main .wmsg { min-height: 20px; font-size: 14px; }
+.pomo.wordle.vs .vs-action { width: min(330px, 100%); } .pomo.wordle.vs .vs-action .btn { padding: 10px 12px; font-size: 14px; }
+.pomo.wordle.vs .vs-side { grid-area: side; order: 0; display: flex; flex-direction: column; gap: 6px; overflow-x: hidden; overflow-y: auto; min-height: 0; width: auto; padding: 0; }
+.pomo.wordle.vs .vs-kb { grid-area: kb; display: flex; flex-direction: column; align-items: center; }
+.pomo.wordle.vs .vs-kb .wkeys { width: min(520px, 100%); margin-top: 0; gap: 6px; } .pomo.wordle.vs .wkey { height: 44px; }
+.pomo.wordle.vs .vs-card { flex: none; min-width: 0; padding: 6px 7px; gap: 3px; border-radius: 14px; }
+.pomo.wordle.vs .vs-card-top { gap: 5px; } .pomo.wordle.vs .vs-card-top b { font-size: 12px; }
+.pomo.wordle.vs .vs-card .vs-pts { font-size: 12px; } .pomo.wordle.vs .vs-status { font-size: 10.5px; line-height: 1.2; }
+.pomo.wordle.vs .vs-mini i { width: 10px; height: 10px; border-radius: 2px; }
+.pomo.wordle.vs .vs-leave { padding: 2px; font-size: 11px; align-self: center; }
+.pomo.wordle.vs .vs-game.done .vs-results { margin: 6px auto 0; }
+@media (min-width: 820px) {
+  .pomo.wordle.vs .vs-game { grid-template-columns: minmax(0, 1fr) minmax(0, 380px) 250px minmax(0, 1fr); grid-template-areas: ". main side ." ". kb side ."; gap: 6px 24px; }
+  .pomo.wordle.vs .vs-main .wboard { width: min(100%, 360px, calc((100dvh - 340px) * 5 / 6)); }
+  .pomo.wordle.vs .vs-side { align-self: start; } .pomo.wordle.vs .vs-card { padding: 9px 10px; } .pomo.wordle.vs .vs-card-top b { font-size: 14px; } .pomo.wordle.vs .vs-status { font-size: 12px; } .pomo.wordle.vs .vs-mini i { width: 12px; height: 12px; }
+}
+.pomo.wordle.vs .vs-card { width: 100%; box-sizing: border-box; overflow: hidden; }
+.pomo.wordle.vs .vs-card-top b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pomo.wordle.vs .vs-head b { font-size: 15px; white-space: nowrap; } .pomo.wordle.vs .vs-timer { font-size: 17px; padding: 2px 10px; }
+.pomo.wordle.vs .vs-status { word-break: break-word; }
+.vs-times { display: flex; flex-wrap: wrap; gap: 6px; } .vs-times .vs-chip { flex: 1 0 22%; height: 38px; font-size: 14px; }

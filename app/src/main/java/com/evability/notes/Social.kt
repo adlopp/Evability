@@ -858,7 +858,7 @@ object Social {
 
     class WRoom(
         val id: String, val host: String, val invited: List<String>, val players: List<String>, val status: String, val group: String,
-        val rounds: Int, val timer: Boolean, val seed: Int, val g: Map<String, WEntry>,
+        val rounds: Int, val timer: Boolean, val seed: Int, val g: Map<String, WEntry>, val secs: Int = 60,
     )
 
     private fun wroomOf(d: JSONObject?, id: String): WRoom? = d?.let {
@@ -873,7 +873,7 @@ object Social {
         }
         WRoom(
             id, it.text("host"), it.list("invited"), it.list("players"), it.text("status"), it.text("group"),
-            it.int("rounds").takeIf { n -> n in 1..5 } ?: 3, it.bool("timer"), it.int("seed"), g,
+            it.int("rounds").takeIf { n -> n in 1..5 } ?: 3, it.bool("timer"), it.int("seed"), g, it.int("secs").takeIf { n -> n in 15..600 } ?: 60,
         )
     }
 
@@ -889,7 +889,7 @@ object Social {
             write(
                 "wrooms/$id",
                 JSONObject().also { if (grp != null) it.put("group", str(grp)) }.put("host", str(me)).put("invited", strs(if (grp != null) emptyList() else listOf(friendUid)))
-                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("rounds", int(3)).put("timer", bool(false)).put("seed", int(0))
+                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("rounds", int(3)).put("timer", bool(false)).put("secs", int(60)).put("seed", int(0))
                     .put("g", JSONObject().put("mapValue", JSONObject().put("fields", JSONObject()))),
                 serverTime = "at",
             ),
@@ -919,8 +919,8 @@ object Social {
         commit(writeMask("wrooms/${room.id}", JSONObject().put("players", strs(room.players.filter { it != me })), listOf("players")))
     }
 
-    suspend fun wCfg(room: WRoom, rounds: Int, timer: Boolean) = withContext(Dispatchers.IO) {
-        commit(writeMask("wrooms/${room.id}", JSONObject().put("rounds", int(rounds.toLong())).put("timer", bool(timer)), listOf("rounds", "timer")))
+    suspend fun wCfg(room: WRoom, rounds: Int, timer: Boolean, secs: Int) = withContext(Dispatchers.IO) {
+        commit(writeMask("wrooms/${room.id}", JSONObject().put("rounds", int(rounds.toLong())).put("timer", bool(timer)).put("secs", int(secs.toLong())), listOf("rounds", "timer", "secs")))
     }
 
     suspend fun wStart(room: WRoom, seed: Int) = withContext(Dispatchers.IO) {
