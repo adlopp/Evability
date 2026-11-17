@@ -293,7 +293,27 @@ const chatBase = async (key) => (isGroup(key) ? `groups/${key.slice(2)}` : `chat
 /** Clave con la que se recuerda hasta dónde has leído. */
 const chatKey = (key) => (isGroup(key) ? key : pairId(session.uid, key));
 /** Anota quién escribió el último mensaje y cuándo (en el documento del chat o en el del grupo). */
-const metaWrite = (base, me) => (base.startsWith('groups/') ? writeMask(base, { lastFrom: str(me) }, ['lastFrom'], 'lastAt') : write(base, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+// (en el chat entre amigos solo se escribe `lastFrom` y `lastAt`, sin tocar `reads`; si el documento no existe todavía se crea)
+const metaWrite = (base, me) => (base.startsWith('groups/') ? writeMask(base, { lastFrom: str(me) }, ['lastFrom'], 'lastAt')
+  : { update: { name: `${DB}/${base}`, fields: { lastFrom: str(me) } }, updateMask: { fieldPaths: ['lastFrom'] }, updateTransforms: [{ fieldPath: 'lastAt', setToServerValue: 'REQUEST_TIME' }] });
+
+// ───── «visto»: un check gris = enviado, dos grises = entregado, dos azules = leído ─────
+/** Confirmación de lectura activada (Ajustes). Si se desactiva, ni se manda ni se ve el visto de los demás. */
+const receiptsOn = () => localStorage.getItem('ev.receipts') !== '0';
+/** Marca que has leído el chat con un amigo hasta ahora. */
+export async function sendReadReceipt(friendUid) {
+  if (isGroup(friendUid) || !receiptsOn()) return;
+  const me = (await live()).uid, base = await chatBase(friendUid);
+  await commit({ update: { name: `${DB}/${base}`, fields: {} }, updateMask: { fieldPaths: [] }, currentDocument: { exists: true },
+    updateTransforms: [{ fieldPath: `reads.\`${me}\``, setToServerValue: 'REQUEST_TIME' }] });
+}
+/** Hasta cuándo ha leído tu amigo el chat (`read`) y la última vez que estuvo conectado (`seen`, para el «entregado»). */
+async function chatReceipts(friendUid) {
+  const me = (await live()).uid, pair = pairId(me, friendUid);
+  const [c, p] = await Promise.all([getAll('chats', [pair]), getAll('presence', [friendUid]).catch(() => ({}))]);
+  const t = c[pair]?.fields?.reads?.mapValue?.fields?.[friendUid]?.timestampValue;
+  return { read: t ? Date.parse(t) : 0, seen: time(p[friendUid], 'lastSeen') };
+}
 
 const msgOf = (d, me) => ({ id: idOf(d.name), from: text(d, 'from'), mine: text(d, 'from') === me, text: text(d, 'text'), at: time(d, 'at'), kind: text(d, 'kind'), dur: Number(d.fields?.dur?.integerValue || 0), mime: text(d, 'mime'), game: text(d, 'game'), mins: Number(d.fields?.mins?.integerValue || 0), rq: text(d, 'rq'), rf: text(d, 'rf'), del: d.fields?.del?.booleanValue === true });
 
@@ -485,7 +505,7 @@ const polyApi = (id) => ({
     await commit(
       writeMask(`rooms/${room.id}`, { invited: strs([...room.invited, friendUid]) }, ['invited']),
       write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(''), kind: str('poly'), game: str(room.id) }, { serverTime: 'at' }),
-      write(`chats/${pair}`, { lastFrom: str(me) }, { serverTime: 'lastAt' }));
+      metaWrite(`chats/${pair}`, me));
   },
   join: async (room, tok) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs([...room.players, me]), tok: { mapValue: { fields: { [me]: intV(tok) } } } }, ['players', `tok.\`${me}\``])); },
   leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`rooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
@@ -728,7 +748,7 @@ function openChat(friend) {
   const profsReady = group ? knowProfs(group.members) : Promise.resolve();
   const who = (u) => (u === session?.uid ? 'Tú' : group ? (profs.get(u)?.username || 'Alguien') : friend.username);
   const listEl = h('div', { class: 'chat-list' });
-  const input = h('input', { class: 'field', placeholder: 'Escribe un mensaje…', maxlength: 5000, autocomplete: 'off' });
+  const input = h('input', { class: 'field', placeholder: 'Mensaje', maxlength: 5000, autocomplete: 'off' });
   const clipBtn = h('button', { class: 'icon-btn', 'aria-label': 'Minijuegos', onclick: () => openGames(
     () => root.append(openWordle({ friendUid: friend.uid, post: (t) => sendMessage(friend.uid, t), onClose: () => tick() })),
     async () => {
@@ -780,24 +800,8 @@ function openChat(friend) {
   const rows = []; // filas en orden: { mine, av, el }
   const myself = myProfile().catch(() => ({ photo: '' }));
   const fmt = (t) => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-  // «Hoy», «Ayer» o la fecha, entre los mensajes de días distintos
-  const dayOf = (t) => { const d = new Date(t); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
-  const dayLabel = (t) => {
-    const d = new Date(t), now = new Date(), start = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-    const diff = Math.round((start(now) - start(d)) / 86400000);
-    if (diff === 0) return 'Hoy';
-    if (diff === 1) return 'Ayer';
-    const s = d.toLocaleDateString('es-ES', d.getFullYear() === now.getFullYear() ? { weekday: 'long', day: 'numeric', month: 'long' } : { day: 'numeric', month: 'long', year: 'numeric' });
-    return s.charAt(0).toUpperCase() + s.slice(1);
-  };
-  const sepEl = (t) => h('div', { class: 'day-sep' }, h('span', {}, dayLabel(t)));
-  const emptyEl = h('div', { class: 'chat-empty' }, h('div', { class: 'ce-emoji' }, '👋'),
-    h('b', {}, group ? 'Este grupo acaba de empezar' : `Empieza la conversación con ${friend.username}`), h('small', {}, '¡Escribe el primer mensaje!'));
   // La foto sale junto al último mensaje de cada racha de la misma persona; en los demás queda el hueco.
-  const refreshAvatars = () => rows.forEach((r, i) => {
-    r.av.classList.toggle('hide', rows[i + 1]?.by === r.by);
-    r.el.classList.toggle('cont', i > 0 && rows[i - 1].by === r.by && rows[i - 1].day === r.day); // mensajes seguidos de la misma persona: más juntos
-  });
+  const refreshAvatars = () => rows.forEach((r, i) => r.av.classList.toggle('hide', rows[i + 1]?.by === r.by));
 
   function audioBubble(m) {
     const btn = h('button', { class: 'icon-btn', 'aria-label': 'Reproducir', style: { color: 'inherit' } }, icon('play', 20));
@@ -901,7 +905,8 @@ function openChat(friend) {
       if (!(await confirmDialog('Borrar mensaje', '', 'Borrar'))) return;
       try { await deleteMessage(friend.uid, m.id, m.kind); markGone(m.id); } catch (e) { toast(e.message || 'No se pudo borrar'); }
     } }, icon('trash', 16));
-    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, group && !m.mine ? h('b', { class: 'sender' }, who(m.from)) : null, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at)));
+    const tick = m.mine && !group ? h('span', { class: 'tick' }) : null; // checks de «visto» (solo en los chats entre amigos)
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, group && !m.mine ? h('b', { class: 'sender' }, who(m.from)) : null, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at), tick));
     const swipeIco = h('span', { class: 'swipe-ico' }, icon('reply', 20));
     const el = h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, swipeIco, ...(m.mine ? [delBtn, replyBtn, bubble, av] : [av, bubble, replyBtn]));
     // deslizar el mensaje hacia la derecha para responderle, como en WhatsApp
@@ -924,31 +929,40 @@ function openChat(friend) {
     ['pointerup', 'pointercancel'].forEach((ev) => el.addEventListener(ev, endSwipe));
     rowsById.set(m.id, { bubble, el, m, gone: false });
     if (m.del) { rowsById.get(m.id).gone = true; goneContent(bubble, m); delBtn.remove(); replyBtn.remove(); }
-    return { mine: m.mine, by: m.from, day: dayOf(m.at), av, el };
+    return { mine: m.mine, by: m.from, at: m.at, tick, av, el };
   };
+  // checks de «visto»: gris (enviado), dos grises (entregado: tu amigo se ha conectado después) y dos azules (leído)
+  let receipts = { read: 0, seen: 0 };
+  const ONE = '<svg viewBox="0 0 18 11"><path d="M1 6l3.5 3.5L13 1.5"/></svg>', TWO = '<svg viewBox="0 0 18 11"><path d="M1 6l3.5 3.5L11 2"/><path d="M6 9.5L16.5 1.5"/></svg>';
+  function paintTicks() {
+    for (const r of rows) {
+      if (!r.tick || !r.tick.isConnected) continue;
+      const st = receiptsOn() && receipts.read >= r.at ? 'read' : receipts.seen >= r.at ? 'seen' : 'sent';
+      if (r.tick.dataset.st === st) continue;
+      r.tick.dataset.st = st; r.tick.innerHTML = st === 'sent' ? ONE : TWO;
+      r.tick.setAttribute('aria-label', st === 'read' ? 'Leído' : st === 'seen' ? 'Entregado' : 'Enviado');
+    }
+  }
+  async function refreshReceipts() { if (group) return; try { receipts = await chatReceipts(friend.uid); paintTicks(); } catch { /* sin red */ } }
   let loads = 0;
   async function load() {
     let changed = false;
     if (loads++ % 3 === 0) await applyDeletions().catch(() => {});
+    if (!group && loads % 3 === 1) refreshReceipts();
     const raw = await chatMessages(friend.uid, lastAt);
     if (lastAt === 0 && raw.length < 50) hasMore = false;
-    if (lastAt === 0 && !raw.length && !rows.length && !emptyEl.isConnected) listEl.append(emptyEl);
     const fresh = raw.filter((m) => !seen.has(m.id));
     if (!fresh.length) return false;
-    emptyEl.remove();
     changed = true;
     const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80 || !seen.size;
     await profsReady; await knowProfs(fresh.flatMap((m) => [m.from, m.rf]));
     const me = await myself;
-    for (const m of fresh) {
-      const r = makeRow(m, me);
-      if (!rows.length || rows[rows.length - 1].day !== r.day) { r.sep = sepEl(m.at); listEl.append(r.sep); }
-      rows.push(r); listEl.append(r.el);
-    }
+    for (const m of fresh) { const r = makeRow(m, me); rows.push(r); listEl.append(r.el); }
     if (!firstAt) firstAt = Math.min(...fresh.map((m) => m.at));
     lastAt = Math.max(lastAt, ...fresh.map((m) => m.at));
-    refreshAvatars();
+    refreshAvatars(); paintTicks();
     markRead(friend.uid, lastAt);
+    if (!group && document.visibilityState === 'visible' && fresh.some((m) => !m.mine)) sendReadReceipt(friend.uid).catch(() => {}); // has leído lo que te han escrito
     if (atBottom) listEl.scrollTop = listEl.scrollHeight;
     return changed;
   }
@@ -963,11 +977,7 @@ function openChat(friend) {
       if (!older.length) return;
       await profsReady; await knowProfs(older.flatMap((m) => [m.from, m.rf]));
       const me = await myself, before = listEl.scrollHeight, made = older.map((m) => makeRow(m, me));
-      const nodes = [];
-      made.forEach((r, i) => { if (i === 0 || made[i - 1].day !== r.day) { r.sep = sepEl(older[i].at); nodes.push(r.sep); } nodes.push(r.el); });
-      const oldFirst = rows[0];
-      if (oldFirst?.sep && made[made.length - 1].day === oldFirst.day) { oldFirst.sep.remove(); oldFirst.sep = null; } // el mismo día: no se repite el separador
-      listEl.prepend(...nodes); rows.unshift(...made);
+      listEl.prepend(...made.map((r) => r.el)); rows.unshift(...made);
       firstAt = Math.min(...older.map((m) => m.at));
       refreshAvatars();
       listEl.scrollTop += listEl.scrollHeight - before; // se queda donde estabas leyendo

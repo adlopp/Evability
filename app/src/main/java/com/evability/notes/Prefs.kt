@@ -64,6 +64,11 @@ object Prefs {
         get() = sp.getInt("pomo_rest", 5)
         set(v) = sp.edit().putInt("pomo_rest", v).apply()
 
+    /** Confirmación de lectura («visto»): si está desactivada, ni se manda ni se ve la de los demás. */
+    var receipts: Boolean
+        get() = sp.getBoolean("receipts", true)
+        set(v) = sp.edit().putBoolean("receipts", v).apply()
+
     /** Los corazones que te mandan salen y vibran, pero sin la canción. */
     var heartMuted: Boolean
         get() = sp.getBoolean("heart_muted", false)

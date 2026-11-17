@@ -6,7 +6,7 @@ import * as store from './store.js';
 import { getKey, setKey, KEY_URL } from './gemini.js';
 import { shareOrDownload } from './editor.js';
 
-export const VERSION = '1.13.6 web';
+export const VERSION = '1.13.7 web';
 
 const standalone = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
@@ -77,6 +77,9 @@ export function openSettings(onChanged) {
   const heartMute = h('input', { type: 'checkbox', checked: localStorage.getItem('ev.heartMuted') === '1' });
   heartMute.addEventListener('change', () => localStorage.setItem('ev.heartMuted', heartMute.checked ? '1' : '0'));
 
+  const receiptsBox = h('input', { type: 'checkbox', checked: localStorage.getItem('ev.receipts') !== '0' });
+  receiptsBox.addEventListener('change', () => localStorage.setItem('ev.receipts', receiptsBox.checked ? '1' : '0'));
+
   const storageInfo = h('p', { class: 'dim small' }, 'Calculando…');
   (async () => {
     try {
@@ -127,6 +130,9 @@ export function openSettings(onChanged) {
     section('Sonido',
       h('label', { class: 'row gap', style: { alignItems: 'center' } }, logoMute, h('span', {}, 'Silenciar icono del Ternurín')),
       h('label', { class: 'row gap', style: { alignItems: 'center' } }, heartMute, h('span', {}, 'Silenciar el sonido de los corazones'))),
+    section('Chats',
+      h('label', { class: 'row gap', style: { alignItems: 'center' } }, receiptsBox, h('span', {}, 'Confirmación de lectura (visto)')),
+      h('p', { class: 'dim small' }, 'Si la desactivas, tus amigos no ven cuándo lees sus mensajes y tú tampoco ves cuándo leen los tuyos.')),
     section('Actualizaciones',
       h('button', { class: 'text-btn link', onclick: checkUpdate }, 'Comprobar actualizaciones')),
     h('p', { class: 'dim small' }, `Evability ${VERSION}`));

@@ -505,7 +505,37 @@ object Social {
     /** Anota quién escribió el último mensaje y cuándo (en el documento del chat o en el del grupo). */
     private fun metaWrite(base: String, me: String): JSONObject =
         if (base.startsWith("groups/")) writeMask(base, JSONObject().put("lastFrom", str(me)), listOf("lastFrom"), "lastAt")
-        else write(base, JSONObject().put("lastFrom", str(me)), serverTime = "lastAt")
+        else // en el chat entre amigos solo se escribe lastFrom y lastAt, sin tocar `reads`; si el documento no existe todavía se crea
+            JSONObject().put("update", JSONObject().put("name", "$DB/$base").put("fields", JSONObject().put("lastFrom", str(me))))
+                .put("updateMask", JSONObject().put("fieldPaths", JSONArray().put("lastFrom")))
+                .put("updateTransforms", JSONArray().put(JSONObject().put("fieldPath", "lastAt").put("setToServerValue", "REQUEST_TIME")))
+
+    // ───── «visto»: un check gris = enviado, dos grises = entregado, dos azules = leído ─────
+
+    /** Marca que has leído el chat con un amigo hasta ahora. */
+    suspend fun sendReadReceipt(friendUid: String) = withContext(Dispatchers.IO) {
+        if (isGroup(friendUid) || !Prefs.receipts) return@withContext
+        val me = live().uid
+        val base = chatBase(friendUid)
+        commit(
+            JSONObject().put("update", JSONObject().put("name", "$DB/$base").put("fields", JSONObject()))
+                .put("updateMask", JSONObject().put("fieldPaths", JSONArray()))
+                .put("currentDocument", JSONObject().put("exists", true))
+                .put("updateTransforms", JSONArray().put(JSONObject().put("fieldPath", "reads.`$me`").put("setToServerValue", "REQUEST_TIME"))),
+        )
+    }
+
+    /** Hasta cuándo ha leído tu amigo el chat y la última vez que estuvo conectado (para el «entregado»). */
+    suspend fun chatReceipts(friendUid: String): Pair<Long, Long> = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        val chat = getAll("chats", listOf(pair))[pair]
+        val read = chat?.optJSONObject("fields")?.optJSONObject("reads")?.optJSONObject("mapValue")?.optJSONObject("fields")
+            ?.optJSONObject(friendUid)?.optString("timestampValue")?.takeIf { it.isNotEmpty() }
+            ?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
+        val seen = runCatching { getAll("presence", listOf(friendUid))[friendUid]?.time("lastSeen") }.getOrNull() ?: 0L
+        read to seen
+    }
 
     private fun queryUnder(parent: String, structured: JSONObject): List<JSONObject> {
         val arr = JSONArray(postText("$DOCS/$parent:runQuery", JSONObject().put("structuredQuery", structured).toString(), token = live().idToken))
@@ -769,7 +799,7 @@ object Social {
         commit(
             writeMask("rooms/${room.id}", JSONObject().put("invited", strs(room.invited + friendUid)), listOf("invited")),
             write("chats/$pair/messages/${UUID.randomUUID()}", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("poly")).put("game", str(room.id)), serverTime = "at"),
-            write("chats/$pair", JSONObject().put("lastFrom", str(me)), serverTime = "lastAt"),
+            metaWrite("chats/$pair", me),
         )
     }
 

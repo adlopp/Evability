@@ -1019,6 +1019,7 @@ private fun SettingsDialog(version: String, store: Store, onChanged: () -> Unit,
     val scope = rememberCoroutineScope()
     var logoMuted by remember { mutableStateOf(Prefs.logoMuted) }
     var heartMuted by remember { mutableStateOf(Prefs.heartMuted) }
+    var receipts by remember { mutableStateOf(Prefs.receipts) }
     var busy by remember { mutableStateOf(false) }
     val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri != null) scope.launch {
@@ -1089,6 +1090,13 @@ private fun SettingsDialog(version: String, store: Store, onChanged: () -> Unit,
                         Text("El corazón sale y vibra, pero sin la canción", fontSize = 12.sp, color = OnSurfaceDim)
                     }
                     Switch(checked = heartMuted, onCheckedChange = { heartMuted = it; Prefs.heartMuted = it })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Confirmación de lectura (visto)", color = OnSurface)
+                        Text("Si la desactivas, tus amigos no ven cuándo lees y tú tampoco ves cuándo leen los tuyos", fontSize = 12.sp, color = OnSurfaceDim)
+                    }
+                    Switch(checked = receipts, onCheckedChange = { receipts = it; Prefs.receipts = it })
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Actualizaciones", color = OnSurfaceDim)

@@ -127,13 +127,26 @@ service cloud.firestore {
     }
 
     // chat entre amigos: chats/{id de los dos uid ordenados}. El documento del chat guarda quién escribió el último y cuándo
-    // (para el punto de «mensajes sin leer») y los mensajes van en la subcolección messages.
+    // (para el punto de «mensajes sin leer»), `reads` = { uid: hora hasta la que ha leído } (el «visto» de los checks azules) y los
+    // mensajes van en la subcolección messages.
     match /chats/{pairId} {
       allow read, delete: if inChat(pairId);
-      allow create, update: if inChat(pairId)
+      allow create: if inChat(pairId)
         && request.resource.data.keys().hasOnly(['lastAt', 'lastFrom'])
         && request.resource.data.lastFrom == request.auth.uid
         && request.resource.data.lastAt == request.time;
+      allow update: if inChat(pairId) && (
+        // mensaje nuevo (el documento puede llevar ya `reads`)
+        (request.resource.data.keys().hasOnly(['lastAt', 'lastFrom', 'reads'])
+          && request.resource.data.lastFrom == request.auth.uid
+          && request.resource.data.lastAt == request.time)
+        // visto: cada persona solo escribe su propia hora de lectura
+        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reads'])
+          && request.resource.data.reads[request.auth.uid] == request.time
+          && ('reads' in resource.data
+              ? request.resource.data.reads.diff(resource.data.reads).affectedKeys().hasOnly([request.auth.uid])
+              : request.resource.data.reads.keys().hasOnly([request.auth.uid])))
+      );
 
       match /messages/{msgId} {
         allow read, delete: if inChat(pairId);
