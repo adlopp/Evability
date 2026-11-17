@@ -119,6 +119,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
     var chessId by remember { mutableStateOf<String?>(null) }
     var polyId by remember { mutableStateOf<String?>(null) }
     var wvsId by remember { mutableStateOf<String?>(null) }
+    var fleetId by remember { mutableStateOf<String?>(null) }
     var pickingTime by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var recMs by remember { mutableLongStateOf(0L) }
@@ -175,7 +176,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
     LaunchedEffect(Unit) {
         var idle = 0
         while (true) {
-            if (!AppVisibility.foreground || chessId != null || polyId != null || wvsId != null || playingWordle) { delay(3_000); continue } // sin mirar con la app en segundo plano ni con un juego abierto encima
+            if (!AppVisibility.foreground || chessId != null || polyId != null || wvsId != null || fleetId != null || playingWordle) { delay(3_000); continue } // sin mirar con la app en segundo plano ni con un juego abierto encima
             var changed = false
             try { changed = load() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
             idle = if (changed) 0 else idle + 1
@@ -342,6 +343,10 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
         WordleVsScreen(id) { wvsId = null; scope.launch { runCatching { load() } } }
         return
     }
+    fleetId?.let { id ->
+        FleetScreen(id) { fleetId = null; scope.launch { runCatching { load() } } }
+        return
+    }
     if (showGames) MiniGamesDialog(
         onWordle = { showGames = false; playingWordle = true },
         onChess = { showGames = false; pickingTime = true },
@@ -366,6 +371,20 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                     val id = Social.createWRoom(friend.uid)
                     load()
                     wvsId = id
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, e.message ?: "No se pudo crear la sala", Toast.LENGTH_SHORT).show()
+                }
+            }
+        },
+        onFleet = {
+            showGames = false
+            scope.launch {
+                try {
+                    val id = Social.createFRoom(friend.uid)
+                    load()
+                    fleetId = id
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -491,6 +510,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                             else if (m.kind == "audio") AudioRow(m, friend.uid, if (m.mine) OnAccent else OnSurface)
                             else if (m.kind == "poly") PolyCard(m, if (m.mine) OnAccent else OnSurface) { polyId = it }
                             else if (m.kind == "wvs") WvsCard(m, if (m.mine) OnAccent else OnSurface) { wvsId = it }
+                            else if (m.kind == "fleet") FleetCard(m, if (m.mine) OnAccent else OnSurface) { fleetId = it }
                             else if (m.kind == "chess") ChessCard(m, friend, if (m.mine) OnAccent else OnSurface, nameOf = { u -> if (group != null) profs[u]?.username ?: "…" else friend.username }) { chessId = m.id }
                             else Text(m.text, fontSize = 16.sp, color = if (m.mine) OnAccent else OnSurface)
                             Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
@@ -574,6 +594,7 @@ private fun previewOf(m: Social.ChatMessage): String = when (m.kind) {
     "audio" -> "Audio"
     "chess" -> "Evadrez"
     "wvs" -> "Wordle versus"
+    "fleet" -> "Hundir la flota"
     else -> m.text.take(100)
 }
 

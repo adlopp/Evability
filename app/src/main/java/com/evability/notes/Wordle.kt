@@ -147,7 +147,7 @@ internal fun statusColor(s: Int) = when (s) {
 
 /** Lista de minijuegos del clip del chat: Wordle y Evadrez (ajedrez) disponibles; los demás salen bloqueados. */
 @Composable
-fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Unit, onWvs: () -> Unit, onDismiss: () -> Unit) {
+fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Unit, onWvs: () -> Unit, onFleet: () -> Unit, onDismiss: () -> Unit) {
     @Composable
     fun GameRow(name: String, subtitle: String?, enabled: Boolean, icon: Int? = null, onClick: () -> Unit) {
         val shape = RoundedCornerShape(16.dp)
@@ -174,10 +174,10 @@ fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Uni
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 GameRow("Wordle", null, true, onClick = onWordle)
-                GameRow("Evadrez", null, true, onClick = onChess)
-                GameRow("Evapoly", null, true, onClick = onPoly)
-                GameRow("Wordle versus", "1 a 4 jugadores", true, R.drawable.ic_versus, onClick = onWvs)
-                GameRow("Hundir la flota", "Bloqueado · próximamente", false, R.drawable.ic_ship) {}
+                GameRow("Evadrez", null, true, R.drawable.ic_pawn, onClick = onChess)
+                GameRow("Evapoly", null, true, R.drawable.ic_mustache, onClick = onPoly)
+                GameRow("Wordle versus", "2 a 4 jugadores", true, R.drawable.ic_versus, onClick = onWvs)
+                GameRow("Hundir la flota", "2 jugadores", true, R.drawable.ic_ship, onClick = onFleet)
             }
         },
         confirmButton = {},

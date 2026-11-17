@@ -65,7 +65,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Wordle versus: de 1 a 4 jugadores resuelven las mismas palabras (de 1 a 5 rondas) y gana quien más puntos junta. Letra amarilla = 1 punto,
+ * Wordle versus: de 2 a 4 jugadores resuelven las mismas palabras (de 1 a 5 rondas) y gana quien más puntos junta. Letra amarilla = 1 punto,
  * verde = 2, acertar la palabra = 10 (2 × 5); en cada ronda cuenta el mejor intento. La sala vive en la nube (`wrooms/{id}`): cada jugador
  * escribe solo su avance y los demás lo ven en directo. Misma lógica que `wordlevs.js`.
  */
@@ -367,14 +367,14 @@ private fun VsLobby(
                     Switch(r.timer, { onCfg(r.rounds, it) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 Text(
-                    "Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 1 a 4 personas.",
+                    "Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 2 a 4 personas.",
                     color = OnSurfaceDim, fontSize = 13.sp,
                 )
             }
             if (canJoin) PolyButton("Unirse", true, true) { onJoin() }
             if (isHost) {
                 if (r.group.isEmpty()) PolyButton("Invitar", false, r.invited.size < 3) { onInvite() }
-                PolyButton("Empezar", true, r.players.isNotEmpty()) { onStart() }
+                PolyButton(if (r.players.size < 2) "Esperando jugadores…" else "Empezar", true, r.players.size >= 2) { onStart() }
                 TextButton(onClick = onRemove, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cerrar sala", color = Accent) }
             } else if (inRoom) {
                 TextButton(onClick = onLeave, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Salir", color = Accent) }

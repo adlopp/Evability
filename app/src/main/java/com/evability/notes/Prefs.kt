@@ -104,6 +104,10 @@ object Prefs {
         get() = sp.getBoolean("game_dark", false)
         set(v) = sp.edit().putBoolean("game_dark", v).apply()
 
+    /** Hundir la flota: la flota de este dispositivo en cada sala («flota|sal»). Solo vive aquí; en la nube va su hash. */
+    fun fleetOf(room: String): String = sp.getString("fleet_$room", "") ?: ""
+    fun setFleetOf(room: String, v: String) = sp.edit().putString("fleet_$room", v).apply()
+
     /** Si ya se avisó con una notificación de que hay mensajes sin leer en ese chat (solo se avisa del primero hasta que se lea). */
     fun chatNotified(pair: String): Boolean = sp.getBoolean("chat_notified_$pair", false)
     fun setChatNotified(pair: String, v: Boolean) = sp.edit().putBoolean("chat_notified_$pair", v).apply()

@@ -1,4 +1,4 @@
-// Wordle versus: de 1 a 4 jugadores resuelven las mismas palabras (de 1 a 5 rondas) y gana quien más puntos junta.
+// Wordle versus: de 2 a 4 jugadores resuelven las mismas palabras (de 1 a 5 rondas) y gana quien más puntos junta.
 // Cada letra amarilla vale 1 punto y cada verde 2; acertar la palabra son 10 (2 × 5). En cada ronda cuenta el mejor intento.
 // La sala vive en la nube (`wrooms/{id}`): cada jugador escribe solo su avance (`g[uid]`) y los demás lo ven en directo.
 // `api` lo pone social.js. Las palabras de cada ronda salen de la semilla de la sala, así que son las mismas para todos.
@@ -96,14 +96,14 @@ export function openWordleVs({ roomId, api, onClose }) {
     if (canJoin) buttons.push(h('button', { class: 'btn big', onclick: async () => { try { await api.join(room); await poll(); } catch (e) { toast(e.message); } } }, 'Unirse'));
     if (isHost) {
       if (!room.group) buttons.push(h('button', { class: 'btn outline', onclick: inviteMore }, 'Invitar'));
-      buttons.push(h('button', { class: 'btn big', onclick: async () => { try { await api.start(room, Math.floor(Math.random() * 2000000000)); await poll(); } catch (e) { toast(e.message); } } }, 'Empezar'));
+      buttons.push(h('button', { class: 'btn big', disabled: room.players.length < 2, onclick: async () => { try { await api.start(room, Math.floor(Math.random() * 2000000000)); await poll(); } catch (e) { toast(e.message); } } }, room.players.length < 2 ? 'Esperando jugadores…' : 'Empezar'));
       buttons.push(h('button', { class: 'text-btn', onclick: async () => { if (await confirmDialog('Cerrar sala', '', 'Cerrar')) { await api.remove(room).catch(() => {}); close(); } } }, 'Cerrar sala'));
     } else if (inRoom) buttons.push(h('button', { class: 'text-btn', onclick: async () => { try { await api.leave(room); close(); } catch (e) { toast(e.message); } } }, 'Salir'));
 
     fill(body, h('div', { class: 'poly-lobby vs-lobby' }, seats,
       h('div', { class: 'pcfg' },
         h('div', { class: 'prow' }, h('span', {}, 'Rondas'), h('b', {}, String(room.rounds))), chips, toggle,
-        h('p', { class: 'dim small vs-rules' }, 'Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 1 a 4 personas.')),
+        h('p', { class: 'dim small vs-rules' }, 'Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 2 a 4 personas.')),
       h('div', { class: 'pbtns' }, buttons)));
   }
 

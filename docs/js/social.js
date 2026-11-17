@@ -5,6 +5,7 @@ import { h, icon, toast, confirmDialog, modal, uid, poller, promptDialog } from 
 import { studying, studyLog, setStudyRemote } from './pomodoro.js';
 import { openWordle } from './wordle.js';
 import { openWordleVs } from './wordlevs.js';
+import { openFleet } from './fleet.js';
 import { openChess } from './chess.js';
 import { openEvapoly, polyIcon } from './evapoly.js';
 
@@ -563,6 +564,61 @@ const wvsApi = (id) => ({
   remove: async (room) => { await commit(del(`wrooms/${room.id}`)); },
 });
 
+// ───── Hundir la flota: salas en la nube ─────
+
+const strMap = (d, k) => Object.fromEntries(Object.entries(d.fields?.[k]?.mapValue?.fields || {}).map(([u, v]) => [u, v.stringValue || '']));
+const froomOf = (d, id) => (d ? {
+  id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), group: text(d, 'group'),
+  adj: d.fields?.adj?.booleanValue === true, again: d.fields?.again?.booleanValue !== false, seed: Number(d.fields?.seed?.integerValue || 0),
+  h: strMap(d, 'h'), s: strMap(d, 's'), a: strMap(d, 'a'), v: strMap(d, 'v'), ff: text(d, 'ff'),
+} : null);
+const getFRoom = async (id) => froomOf((await getAll('frooms', [id]).catch(() => ({})))[id], id);
+const emptyMap = () => ({ mapValue: { fields: {} } });
+const oneOf = (me, v) => ({ mapValue: { fields: { [me]: str(v) } } });
+
+/** Crea la sala de Hundir la flota (los barcos no se tocan, repite turno quien acierta) y manda la invitación al chat. */
+async function createFRoom(friendUid) {
+  const me = (await live()).uid, base = await chatBase(friendUid), id = uid(), grp = isGroup(friendUid) ? friendUid.slice(2) : null;
+  await commit(
+    write(`frooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), adj: boolV(false), again: boolV(true), seed: intV(0), h: emptyMap(), s: emptyMap(), a: emptyMap(), v: emptyMap() }, { serverTime: 'at' }),
+    write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('fleet'), game: str(id) }, { serverTime: 'at' }),
+    metaWrite(base, me));
+  return id;
+}
+
+const fleetApi = (id) => ({
+  me: () => session.uid,
+  get: () => getFRoom(id),
+  profiles: async (uids) => { const d = await getAll('users', uids); return Object.fromEntries(uids.map((u) => [u, profile(u, d[u])])); },
+  friends: async () => (await overview()).friends.map((f) => f.profile),
+  invite: async (room, friendUid) => {
+    const me = (await live()).uid, pair = pairId(me, friendUid);
+    await commit(
+      writeMask(`frooms/${room.id}`, { invited: strs([...room.invited, friendUid]) }, ['invited']),
+      write(`chats/${pair}/messages/${uid()}`, { from: str(me), text: str(''), kind: str('fleet'), game: str(room.id) }, { serverTime: 'at' }),
+      metaWrite(`chats/${pair}`, me));
+  },
+  join: async (room) => { await commit(writeMask(`frooms/${room.id}`, { players: strs([...room.players, (await live()).uid]) }, ['players'])); },
+  leave: async (room) => { await commit(writeMask(`frooms/${room.id}`, { players: strs([room.host]) }, ['players'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`frooms/${room.id}`, { adj: boolV(c.adj), again: boolV(c.again) }, ['adj', 'again'])); },
+  start: async (room, seed) => { await commit(writeMask(`frooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
+  /** Deja el hash de la flota (una sola vez). */
+  place: async (room, hash) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { h: oneOf(me, hash) }, ['h.`' + me + '`'])); },
+  /** Todos mis disparos hasta ahora («NN» por disparo). */
+  shoot: async (room, shots) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { s: oneOf(me, shots) }, ['s.`' + me + '`'])); },
+  /** Todas mis respuestas hasta ahora; si con esta pierdo la última flota, la partida termina y revelo la mía (`reveal`). */
+  answer: async (room, ans, reveal) => {
+    const me = (await live()).uid;
+    await commit(writeMask(`frooms/${room.id}`, { a: oneOf(me, ans), ...(reveal ? { v: oneOf(me, reveal), status: str('finished') } : {}) }, ['a.`' + me + '`', ...(reveal ? ['v.`' + me + '`', 'status'] : [])]));
+  },
+  reveal: async (room, reveal) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { v: oneOf(me, reveal) }, ['v.`' + me + '`'])); },
+  forfeit: async (room, reveal) => {
+    const me = (await live()).uid;
+    await commit(writeMask(`frooms/${room.id}`, { status: str('finished'), ff: str(me), ...(reveal ? { v: oneOf(me, reveal) } : {}) }, ['status', 'ff', ...(reveal ? ['v.`' + me + '`'] : [])]));
+  },
+  remove: async (room) => { await commit(del(`frooms/${room.id}`)); },
+});
+
 // ───── audios ─────
 
 const MAX_AUDIO_MS = 120000;
@@ -641,13 +697,13 @@ const stopRecording = (r) => new Promise((resolve) => {
 let playing = null; // { id, audio, stop() }: solo suena un audio a la vez
 function stopPlaying() { playing?.stop(); playing = null; }
 
-/** Lista de minijuegos del clip del chat: Wordle, Evadrez, Evapoly y Wordle versus; Hundir la flota sale bloqueado. */
-function openGames(onWordle, onChess, onPoly, onWvs) {
+/** Lista de minijuegos del clip del chat: Wordle, Evadrez, Evapoly, Wordle versus y Hundir la flota. */
+function openGames(onWordle, onChess, onPoly, onWvs, onFleet) {
   const row = (name, sub, fn, ico) => h('button', { class: 'game-row' + (fn ? '' : ' locked'), disabled: !fn, onclick: fn ? () => { m.close(); fn(); } : null },
     icon(ico || (fn ? 'grid' : 'lock'), 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
   const m = modal({
     title: 'Minijuegos',
-    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess), row('Evapoly', null, onPoly), row('Wordle versus', '1 a 4 jugadores', onWvs, 'versus'), row('Hundir la flota', 'Bloqueado · próximamente', null, 'ship')),
+    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess, 'pawn'), row('Evapoly', null, onPoly, 'mustache'), row('Wordle versus', '2 a 4 jugadores', onWvs, 'versus'), row('Hundir la flota', '2 jugadores', onFleet, 'ship')),
     actions: [{ label: 'Cerrar' }],
   });
 }
@@ -811,6 +867,10 @@ function openChat(friend) {
     async () => {
       try { const id = await createWRoom(friend.uid); await load(); root.append(openWordleVs({ roomId: id, api: wvsApi(id), onClose: () => tick() })); }
       catch (e) { toast(e.message || 'No se pudo crear la sala'); }
+    },
+    async () => {
+      try { const id = await createFRoom(friend.uid); await load(); root.append(openFleet({ roomId: id, api: fleetApi(id), onClose: () => tick() })); }
+      catch (e) { toast(e.message || 'No se pudo crear la sala'); }
     }) }, icon('gamepad'));
   const fileInput = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: async () => {
     const f = fileInput.files[0]; fileInput.value = '';
@@ -822,7 +882,7 @@ function openChat(friend) {
   const normalRow = h('div', { class: 'rec-row' }, clipBtn, photoBtn, fileInput, input, actionBtn);
   let replyTo = null;
   const replyBar = h('div', { class: 'reply-bar', style: { display: 'none' } });
-  const previewOf = (m) => m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? 'Audio' : m.kind === 'chess' ? 'Evadrez' : m.kind === 'wvs' ? 'Wordle versus' : m.text.slice(0, 100);
+  const previewOf = (m) => m.kind === 'image' ? 'Foto' : m.kind === 'audio' ? 'Audio' : m.kind === 'chess' ? 'Evadrez' : m.kind === 'wvs' ? 'Wordle versus' : m.kind === 'fleet' ? 'Hundir la flota' : m.text.slice(0, 100);
   function setReply(m) {
     replyTo = m;
     replyBar.replaceChildren(h('div', { class: 'grow' }, h('b', {}, m ? who(m.from) : ''), h('small', {}, m ? previewOf(m) : '')),
@@ -946,6 +1006,23 @@ function openChat(friend) {
     return h('div', { class: 'chess-card' }, h('span', { class: 'wvs-ico' }, icon('versus', 24)), h('div', { class: 'grow' }, h('b', {}, 'Wordle versus'), status), btn);
   }
 
+  /** Invitación a Hundir la flota: cómo va la sala y botón para unirse o abrirla. */
+  function fleetCard(m) {
+    const status = h('small', {}, ''), btn = h('button', { class: 'btn small-btn' }, 'Abrir');
+    const paint = (r) => {
+      if (!r) { status.textContent = ''; return; }
+      const inRoom = r.players.includes(session?.uid);
+      status.textContent = r.status === 'lobby' ? `Sala · ${r.players.length}/2` : r.status === 'playing' ? 'En juego' : 'Terminada';
+      btn.textContent = r.status === 'lobby' && !inRoom ? (r.players.length >= 2 ? 'Completa' : 'Unirse') : 'Abrir';
+      btn.disabled = !inRoom && (r.status !== 'lobby' || r.players.length >= 2);
+    };
+    const refresh = () => getFRoom(m.game).then(paint).catch(() => {});
+    btn.onclick = () => root.append(openFleet({ roomId: m.game, api: fleetApi(m.game), onClose: refresh }));
+    const pl = poller(async () => { const r = await getFRoom(m.game); paint(r); if (!r || r.status === 'finished') pl.stop(); return false; }, 20000, 60000);
+    cardTimers.push(() => pl.stop());
+    return h('div', { class: 'chess-card' }, h('span', { class: 'wvs-ico' }, icon('ship', 24)), h('div', { class: 'grow' }, h('b', {}, 'Hundir la flota'), status), btn);
+  }
+
   const rowsById = new Map();
   let delSince = serverNow();
   const goneContent = (bubble, m) => bubble.replaceChildren(h('span', { class: 'gone' }, 'Mensaje borrado'), h('small', {}, fmt(m.at)));
@@ -974,7 +1051,7 @@ function openChat(friend) {
       try { await deleteMessage(friend.uid, m.id, m.kind); markGone(m.id); } catch (e) { toast(e.message || 'No se pudo borrar'); }
     } }, icon('trash', 16));
     const tick = m.mine && !group ? h('span', { class: 'tick' }) : null; // checks de «visto» (solo en los chats entre amigos)
-    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, group && !m.mine ? h('b', { class: 'sender' }, who(m.from)) : null, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'wvs' ? wvsCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at), tick));
+    const bubble = h('div', { class: 'bubble' + (m.mine ? ' mine' : '') }, group && !m.mine ? h('b', { class: 'sender' }, who(m.from)) : null, quote, m.kind === 'audio' ? audioBubble(m) : m.kind === 'image' ? photoBubble(m) : m.kind === 'poly' ? polyCard(m) : m.kind === 'wvs' ? wvsCard(m) : m.kind === 'fleet' ? fleetCard(m) : m.kind === 'chess' ? chessCard(m) : m.text, h('small', {}, fmt(m.at), tick));
     const swipeIco = h('span', { class: 'swipe-ico' }, icon('reply', 20));
     const el = h('div', { class: 'msg-row' + (m.mine ? ' mine' : '') }, swipeIco, ...(m.mine ? [delBtn, replyBtn, bubble, av] : [av, bubble, replyBtn]));
     // deslizar el mensaje hacia la derecha para responderle, como en WhatsApp

@@ -939,6 +939,115 @@ object Social {
 
     suspend fun wRemove(id: String) = withContext(Dispatchers.IO) { commit(delete("wrooms/$id")) }
 
+    // ───────── Hundir la flota: salas en la nube ─────────
+
+    class FRoom(
+        val id: String, val host: String, val invited: List<String>, val players: List<String>, val status: String, val group: String,
+        val adj: Boolean, val again: Boolean, val seed: Int,
+        val h: Map<String, String>, val s: Map<String, String>, val a: Map<String, String>, val v: Map<String, String>, val ff: String,
+    )
+
+    private fun JSONObject.strMap(key: String): Map<String, String> {
+        val f = optJSONObject("fields")?.optJSONObject(key)?.optJSONObject("mapValue")?.optJSONObject("fields") ?: return emptyMap()
+        return f.keys().asSequence().associateWith { f.getJSONObject(it).optString("stringValue", "") }
+    }
+
+    private fun froomOf(d: JSONObject?, id: String): FRoom? = d?.let {
+        FRoom(
+            id, it.text("host"), it.list("invited"), it.list("players"), it.text("status"), it.text("group"),
+            it.bool("adj"), it.optJSONObject("fields")?.optJSONObject("again")?.optBoolean("booleanValue", true) ?: true, it.int("seed"),
+            it.strMap("h"), it.strMap("s"), it.strMap("a"), it.strMap("v"), it.text("ff"),
+        )
+    }
+
+    private fun emptyMapV() = JSONObject().put("mapValue", JSONObject().put("fields", JSONObject()))
+    private fun oneOf(me: String, v: String) = JSONObject().put("mapValue", JSONObject().put("fields", JSONObject().put(me, str(v))))
+
+    suspend fun fRoom(id: String): FRoom? = withContext(Dispatchers.IO) { froomOf(getAll("frooms", listOf(id))[id], id) }
+
+    /** Crea la sala (los barcos no se tocan, repite turno quien acierta) y manda la invitación al chat del amigo o del grupo. */
+    suspend fun createFRoom(friendUid: String): String = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val base = chatBase(friendUid)
+        val grp = if (isGroup(friendUid)) friendUid.drop(2) else null
+        val id = UUID.randomUUID().toString()
+        commit(
+            write(
+                "frooms/$id",
+                JSONObject().also { if (grp != null) it.put("group", str(grp)) }.put("host", str(me)).put("invited", strs(if (grp != null) emptyList() else listOf(friendUid)))
+                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("adj", bool(false)).put("again", bool(true)).put("seed", int(0))
+                    .put("h", emptyMapV()).put("s", emptyMapV()).put("a", emptyMapV()).put("v", emptyMapV()),
+                serverTime = "at",
+            ),
+            write("$base/messages/$id", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("fleet")).put("game", str(id)), serverTime = "at"),
+            metaWrite(base, me),
+        )
+        id
+    }
+
+    suspend fun fInvite(room: FRoom, friendUid: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val pair = pairId(me, friendUid)
+        commit(
+            writeMask("frooms/${room.id}", JSONObject().put("invited", strs(room.invited + friendUid)), listOf("invited")),
+            write("chats/$pair/messages/${UUID.randomUUID()}", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("fleet")).put("game", str(room.id)), serverTime = "at"),
+            metaWrite("chats/$pair", me),
+        )
+    }
+
+    suspend fun fJoin(room: FRoom) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("frooms/${room.id}", JSONObject().put("players", strs(room.players + me)), listOf("players")))
+    }
+
+    suspend fun fLeave(room: FRoom) = withContext(Dispatchers.IO) {
+        commit(writeMask("frooms/${room.id}", JSONObject().put("players", strs(listOf(room.host))), listOf("players")))
+    }
+
+    suspend fun fCfg(room: FRoom, adj: Boolean, again: Boolean) = withContext(Dispatchers.IO) {
+        commit(writeMask("frooms/${room.id}", JSONObject().put("adj", bool(adj)).put("again", bool(again)), listOf("adj", "again")))
+    }
+
+    suspend fun fStart(room: FRoom, seed: Int) = withContext(Dispatchers.IO) {
+        commit(writeMask("frooms/${room.id}", JSONObject().put("status", str("playing")).put("seed", int(seed.toLong())), listOf("status", "seed")))
+    }
+
+    /** Deja el hash de la flota (una sola vez). */
+    suspend fun fPlace(room: FRoom, hash: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("frooms/${room.id}", JSONObject().put("h", oneOf(me, hash)), listOf("h.`$me`")))
+    }
+
+    /** Todos mis disparos hasta ahora («NN» por disparo). */
+    suspend fun fShoot(room: FRoom, shots: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("frooms/${room.id}", JSONObject().put("s", oneOf(me, shots)), listOf("s.`$me`")))
+    }
+
+    /** Todas mis respuestas hasta ahora; si con esta pierdo la última flota, la partida termina y revelo la mía. */
+    suspend fun fAnswer(room: FRoom, ans: String, reveal: String?) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val f = JSONObject().put("a", oneOf(me, ans))
+        val mask = arrayListOf("a.`$me`")
+        if (reveal != null) { f.put("v", oneOf(me, reveal)).put("status", str("finished")); mask.add("v.`$me`"); mask.add("status") }
+        commit(writeMask("frooms/${room.id}", f, mask))
+    }
+
+    suspend fun fReveal(room: FRoom, reveal: String) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        commit(writeMask("frooms/${room.id}", JSONObject().put("v", oneOf(me, reveal)), listOf("v.`$me`")))
+    }
+
+    suspend fun fForfeit(room: FRoom, reveal: String?) = withContext(Dispatchers.IO) {
+        val me = live().uid
+        val f = JSONObject().put("status", str("finished")).put("ff", str(me))
+        val mask = arrayListOf("status", "ff")
+        if (reveal != null) { f.put("v", oneOf(me, reveal)); mask.add("v.`$me`") }
+        commit(writeMask("frooms/${room.id}", f, mask))
+    }
+
+    suspend fun fRemove(id: String) = withContext(Dispatchers.IO) { commit(delete("frooms/$id")) }
+
     // ───────── tiempos de estudio en la cuenta ─────────
     // Cada dispositivo guarda en la nube lo que ha estudiado él (study/{uid}.d[día][dispositivo]) y descarga lo de los demás, así el total
     // de cada día es la suma de todos los dispositivos de la cuenta y vincular dos veces no duplica nada.
