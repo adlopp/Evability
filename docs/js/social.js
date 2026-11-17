@@ -1178,12 +1178,16 @@ export function openSend(doc, source) {
 /** Revisa si alguien te ha mandado un ❤ desde la última vez. La primera vez solo toma nota de los antiguos. */
 async function checkPokes() {
   const me = (await live()).uid;
-  const times = (await query('pokes', filter('to', 'EQUAL', str(me)))).map((d) => time(d, 'at'));
+  const docs = await query('pokes', filter('to', 'EQUAL', str(me)));
+  const times = docs.map((d) => time(d, 'at'));
   const newest = Math.max(0, ...times);
   if (lastShownPoke < 0) { lastShownPoke = newest; return; }
-  const fresh = times.filter((t) => t > lastShownPoke).length;
+  const prev = lastShownPoke;
+  const fresh = docs.filter((d) => time(d, 'at') > prev).slice(0, 3);
   lastShownPoke = Math.max(lastShownPoke, newest);
-  for (let i = 0; i < Math.min(fresh, 3); i++) showHeart();
+  let names = new Map();
+  try { names = await profilesOf(fresh.map((d) => text(d, 'from'))); } catch { /* sin nombre */ }
+  for (const d of fresh) showHeart(names.get(text(d, 'from'))?.username);
 }
 
 /** Un corazón en un sitio cualquiera de la pantalla que desaparece a los 3 segundos. */
@@ -1196,13 +1200,19 @@ document.addEventListener('pointerdown', () => {
   heartSong.play().then(() => { heartSong.pause(); heartSong.currentTime = 0; heartSong.muted = false; }).catch(() => { heartSong.muted = false; });
 }, { once: true });
 
-export function showHeart() {
+export function showHeart(from) {
   // con «Silenciar el sonido de los corazones» (Ajustes) el corazón sale y vibra pero no suena
   if (localStorage.getItem('ev.heartMuted') !== '1') { heartSong.currentTime = 0; heartSong.play().catch(() => {}); }
   const el = h('div', { class: 'float-heart', style: { left: 12 + Math.random() * 76 + '%', top: 15 + Math.random() * 60 + '%' } }, '❤');
   document.body.append(el);
   navigator.vibrate?.(60);
   setTimeout(() => el.remove(), 3000);
+  if (from) {
+    // aviso breve con quién te lo ha mandado, el mismo tiempo que dura el corazón
+    const pop = h('div', { class: 'heart-pop' }, '❤ ' + from + ' te ha mandado un corazón');
+    document.body.append(pop);
+    setTimeout(() => pop.remove(), 3000);
+  }
 }
 
 // ───────── segundo plano de la app: latido y avisos ─────────

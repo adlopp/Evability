@@ -793,7 +793,6 @@ textarea.field { resize: vertical; }
 .fastscroll.drag .fs-label { opacity: 1; }
 
 /* ───────── 1.13.6: separador del chat, tarjeta de perfil en una línea y logo con el color de fondo ───────── */
-.pomo.chat .pomo-top { background: var(--surface1); border-bottom: 2px solid color-mix(in srgb, var(--accent) 38%, var(--outline)); padding-bottom: 8px; box-shadow: 0 6px 14px -10px rgba(0,0,0,.6); position: relative; z-index: 1; }
 .me-card { flex-direction: column; align-items: stretch; gap: 8px; }
 .me-top { display: flex; align-items: center; gap: 14px; }
 .me-name { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 20px; } .me-name .strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -805,3 +804,6 @@ textarea.field { resize: vertical; }
 /* ───────── checks de «visto» ───────── */
 .tick { display: inline-block; margin-left: 4px; vertical-align: -1px; opacity: .6; } .tick svg { width: 16px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .tick[data-st="read"] { color: #1e88e5; opacity: 1; }
+
+.heart-pop { position: fixed; z-index: 201; top: calc(var(--safe-top) + 14px); left: 50%; transform: translateX(-50%); max-width: 90vw; padding: 10px 16px; border-radius: 22px; background: var(--surface2); color: var(--on-surface, inherit); border: 1px solid var(--outline); box-shadow: 0 6px 18px rgba(0,0,0,.35); font-size: 14px; font-weight: 600; pointer-events: none; animation: heart-pop 3s ease forwards; }
+@keyframes heart-pop { 0% { opacity: 0; transform: translate(-50%, -12px); } 8%, 80% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, 0); } }

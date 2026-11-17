@@ -170,6 +170,18 @@ fun SocialHost() {
                     t.animateTo(1f, tween(3000, easing = LinearEasing))
                     Social.hearts.remove(heart)
                 }
+                if (heart.from.isNotEmpty()) {
+                    androidx.compose.material3.Surface(
+                        shape = RoundedCornerShape(22.dp),
+                        color = Surface2,
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp).graphicsLayer {
+                            alpha = if (t.value < 0.08f) t.value / 0.08f else if (t.value < 0.8f) 1f else ((1f - t.value) / 0.2f).coerceIn(0f, 1f)
+                        },
+                    ) {
+                        Text("❤ ${heart.from} te ha mandado un corazón", Modifier.padding(horizontal = 16.dp, vertical = 10.dp), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
+                }
                 val pulse = 0.7f + 0.5f * kotlin.math.sin(t.value * 9f).let { 0.5f + it * 0.5f }
                 Text(
                     "❤",

@@ -44,7 +44,7 @@ object Social {
     class Group(val id: String, val name: String, val desc: String, val photo: String, val owner: String, val members: List<String>, val invited: List<String>, val lastFrom: String, val lastAt: Long)
     class GroupInvite(val group: Group, val ownerName: String)
     class Overview(val friends: List<FriendRow>, val incoming: List<Profile>, val outgoing: Set<String>, val groups: List<Group> = emptyList(), val groupInvites: List<GroupInvite> = emptyList())
-    class Heart(val id: Long, val x: Float, val y: Float)
+    class Heart(val id: Long, val x: Float, val y: Float, val from: String = "")
     class ChatMessage(val id: String, val mine: Boolean, val text: String, val at: Long, val kind: String = "", val dur: Long = 0L, val mins: Int = 0, val replyText: String = "", val replyFrom: String = "", val game: String = "", val deleted: Boolean = false, val from: String = "") {
         /** El mismo mensaje ya borrado: sin contenido, solo queda el aviso. */
         fun gone() = ChatMessage(id, mine, "", at, kind, 0L, 0, "", "", game, true, from)
@@ -390,15 +390,18 @@ object Social {
     /** Revisa si alguien te ha mandado un ❤ desde la última vez. La primera vez solo toma nota de los antiguos. */
     suspend fun checkPokes() = withContext(Dispatchers.IO) {
         val me = live().uid
-        val times = query("pokes", filter("to", "EQUAL", str(me))).map { it.time("at") }
+        val docs = query("pokes", filter("to", "EQUAL", str(me)))
+        val times = docs.map { it.time("at") }
         val newest = times.maxOrNull() ?: 0L
         if (lastShownPoke < 0) {
             lastShownPoke = newest
             return@withContext
         }
-        val fresh = times.count { it > lastShownPoke }
+        val prev = lastShownPoke
+        val fresh = docs.filter { it.time("at") > prev }.take(3)
         lastShownPoke = maxOf(lastShownPoke, newest)
-        repeat(fresh.coerceAtMost(3)) { showHeart() }
+        val names = try { profilesOf(fresh.map { it.text("from") }) } catch (e: Exception) { emptyMap() }
+        fresh.forEach { showHeart(names[it.text("from")]?.username.orEmpty()) }
     }
 
     // ───────── documentos entre amigos ─────────
@@ -1106,7 +1109,7 @@ object Social {
         unread[friendUid] = false
     }
 
-    private fun showHeart() {
-        hearts.add(Heart(nextHeart++, 0.12f + 0.76f * Math.random().toFloat(), 0.15f + 0.6f * Math.random().toFloat()))
+    private fun showHeart(from: String = "") {
+        hearts.add(Heart(nextHeart++, 0.12f + 0.76f * Math.random().toFloat(), 0.15f + 0.6f * Math.random().toFloat(), from))
     }
 }

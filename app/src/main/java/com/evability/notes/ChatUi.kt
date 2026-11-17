@@ -401,9 +401,6 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                 Text(friend.username, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = OnSurface)
             }
         }
-        // barra que separa la cabecera (foto y nombre) del chat
-        Box(Modifier.fillMaxWidth().height(2.dp).background(androidx.compose.ui.graphics.lerp(Outline, Accent, 0.38f)))
-
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
                 Modifier.widthIn(max = 720.dp).fillMaxSize().padding(horizontal = 14.dp),
