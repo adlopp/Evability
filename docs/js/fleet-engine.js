@@ -100,13 +100,14 @@ export const shotCells = (s) => (s || '').match(/\d\d/g)?.map(Number) || [];
 
 /**
  * Reproduce la partida con lo que hay en la nube: de quién es el turno, qué disparo espera respuesta y el registro de lo ocurrido.
- * `room` = { players: [anfitrión, rival], seed, again, s: { uid: disparos }, a: { uid: respuestas } }. Empieza players[seed % 2].
+ * `room` = { players: [anfitrión, rival], seed, again, shots, s: { uid: disparos }, a: { uid: respuestas } }. Empieza players[seed % 2]; cada turno
+ * son `shots` disparos (de 1 a 5) y, si `again`, un acierto no gasta disparo.
  * Un disparo cuenta cuando su autor tenía el turno y el rival ya lo ha respondido; los hechos fuera de turno no cuentan.
  */
 export function replay(room) {
-  const [p0, p1] = room.players;
+  const [p0, p1] = room.players, N = Math.min(5, Math.max(1, room.shots || 1));
   const idx = { [p0]: 0, [p1]: 0 }, sunk = { [p0]: 0, [p1]: 0 }, log = [];
-  let cur = room.players[room.seed % 2], winner = '';
+  let cur = room.players[room.seed % 2], winner = '', left = N;
   for (let guard = 0; guard < 400; guard++) {
     const opp = cur === p0 ? p1 : p0, sc = shotCells(room.s[cur]), ans = room.a[opp] || '';
     if (idx[cur] < sc.length && idx[cur] < ans.length) {
@@ -115,10 +116,40 @@ export function replay(room) {
       idx[cur]++;
       if (res >= '2') sunk[cur]++;
       if (sunk[cur] >= LENS.length) { winner = cur; break; }
-      if (!(res !== '0' && room.again)) cur = opp;
+      if (!(res !== '0' && room.again)) left--; // con «repetir al acertar», un acierto no gasta disparo
+      if (left <= 0) { cur = opp; left = N; }
     } else break;
   }
-  return { cur, opp: cur === p0 ? p1 : p0, pending: !winner && idx[cur] < shotCells(room.s[cur]).length, log, winner };
+  return { cur, opp: cur === p0 ? p1 : p0, pending: !winner && idx[cur] < shotCells(room.s[cur]).length, log, winner, left };
+}
+
+/**
+ * Dónde estaban los barcos que `by` ha hundido: cada respuesta «hundido» dice el tamaño del barco y la casilla del último disparo, y con
+ * lo ya acertado se deduce la línea (sin barcos tocándose es única; si se tocan puede haber más de una y se elige la primera). Devuelve
+ * [{ idx, ship }] con `idx` = qué barco de la flota era (por tamaño) y `ship` = su colocación; al terminar se ve la flota verdadera.
+ */
+export function sunkShips(log, by) {
+  const hits = new Set(), used = new Set(), taken = new Set(), out = [];
+  for (const e of log) {
+    if (e.by !== by || e.res === '0') continue;
+    hits.add(e.cell);
+    if (e.res < '2') continue;
+    const L = Number(e.res);
+    let found = null;
+    for (const dir of ['h', 'v']) {
+      for (let k = 0; k < L && !found; k++) {
+        const head = e.cell - k * (dir === 'h' ? 1 : SIZE);
+        if (head < 0 || (dir === 'h' ? (head % SIZE) + L > SIZE : Math.floor(head / SIZE) + L > SIZE)) continue;
+        const cells = Array.from({ length: L }, (_, j) => head + j * (dir === 'h' ? 1 : SIZE));
+        if (cells.every((c) => hits.has(c) && !used.has(c))) { found = { cell: head, dir }; cells.forEach((c) => used.add(c)); }
+      }
+      if (found) break;
+    }
+    const idx = LENS.findIndex((l, i) => l === L && !taken.has(i));
+    if (idx >= 0) taken.add(idx);
+    if (found) out.push({ idx, ship: found });
+  }
+  return out;
 }
 
 /**

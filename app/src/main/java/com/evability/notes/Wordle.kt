@@ -82,7 +82,7 @@ object WordleGame {
     fun isValid(word: String) = word in valid
 
     /** Palabra de la ronda `r` del Wordle versus: sale de la semilla de la sala, así que es la misma en todos los dispositivos. */
-    fun versusWord(seed: Int, r: Int): String = answers[(((seed.toLong() + r * 104729L) % answers.size).toInt())]
+    fun versusWord(seed: Int, r: Int, player: Int = 0): String = answers[(((seed.toLong() + r * 104729L + player * 1299709L) % answers.size).toInt())]
 
     /** 2 = en su sitio, 1 = está en otro sitio, 0 = no está. */
     fun evaluate(guess: String, answer: String): IntArray {

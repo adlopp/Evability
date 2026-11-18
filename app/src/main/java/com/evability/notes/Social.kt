@@ -858,7 +858,7 @@ object Social {
 
     class WRoom(
         val id: String, val host: String, val invited: List<String>, val players: List<String>, val status: String, val group: String,
-        val rounds: Int, val timer: Boolean, val seed: Int, val g: Map<String, WEntry>, val secs: Int = 60,
+        val rounds: Int, val timer: Boolean, val seed: Int, val g: Map<String, WEntry>, val secs: Int = 60, val same: Boolean = true,
     )
 
     private fun wroomOf(d: JSONObject?, id: String): WRoom? = d?.let {
@@ -874,6 +874,7 @@ object Social {
         WRoom(
             id, it.text("host"), it.list("invited"), it.list("players"), it.text("status"), it.text("group"),
             it.int("rounds").takeIf { n -> n in 1..5 } ?: 3, it.bool("timer"), it.int("seed"), g, it.int("secs").takeIf { n -> n in 15..600 } ?: 60,
+            it.optJSONObject("fields")?.optJSONObject("same")?.optBoolean("booleanValue", true) ?: true,
         )
     }
 
@@ -889,7 +890,7 @@ object Social {
             write(
                 "wrooms/$id",
                 JSONObject().also { if (grp != null) it.put("group", str(grp)) }.put("host", str(me)).put("invited", strs(if (grp != null) emptyList() else listOf(friendUid)))
-                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("rounds", int(3)).put("timer", bool(false)).put("secs", int(60)).put("seed", int(0))
+                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("rounds", int(3)).put("timer", bool(false)).put("secs", int(60)).put("same", bool(true)).put("seed", int(0))
                     .put("g", JSONObject().put("mapValue", JSONObject().put("fields", JSONObject()))),
                 serverTime = "at",
             ),
@@ -919,8 +920,8 @@ object Social {
         commit(writeMask("wrooms/${room.id}", JSONObject().put("players", strs(room.players.filter { it != me })), listOf("players")))
     }
 
-    suspend fun wCfg(room: WRoom, rounds: Int, timer: Boolean, secs: Int) = withContext(Dispatchers.IO) {
-        commit(writeMask("wrooms/${room.id}", JSONObject().put("rounds", int(rounds.toLong())).put("timer", bool(timer)).put("secs", int(secs.toLong())), listOf("rounds", "timer", "secs")))
+    suspend fun wCfg(room: WRoom, rounds: Int, timer: Boolean, secs: Int, same: Boolean) = withContext(Dispatchers.IO) {
+        commit(writeMask("wrooms/${room.id}", JSONObject().put("rounds", int(rounds.toLong())).put("timer", bool(timer)).put("secs", int(secs.toLong())).put("same", bool(same)), listOf("rounds", "timer", "secs", "same")))
     }
 
     suspend fun wStart(room: WRoom, seed: Int) = withContext(Dispatchers.IO) {
@@ -945,6 +946,7 @@ object Social {
         val id: String, val host: String, val invited: List<String>, val players: List<String>, val status: String, val group: String,
         val adj: Boolean, val again: Boolean, val seed: Int,
         val h: Map<String, String>, val s: Map<String, String>, val a: Map<String, String>, val v: Map<String, String>, val ff: String,
+        val shots: Int = 1,
     )
 
     private fun JSONObject.strMap(key: String): Map<String, String> {
@@ -957,6 +959,7 @@ object Social {
             id, it.text("host"), it.list("invited"), it.list("players"), it.text("status"), it.text("group"),
             it.bool("adj"), it.optJSONObject("fields")?.optJSONObject("again")?.optBoolean("booleanValue", true) ?: true, it.int("seed"),
             it.strMap("h"), it.strMap("s"), it.strMap("a"), it.strMap("v"), it.text("ff"),
+            it.int("shots").takeIf { n -> n in 1..5 } ?: 1,
         )
     }
 
@@ -975,7 +978,7 @@ object Social {
             write(
                 "frooms/$id",
                 JSONObject().also { if (grp != null) it.put("group", str(grp)) }.put("host", str(me)).put("invited", strs(if (grp != null) emptyList() else listOf(friendUid)))
-                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("adj", bool(false)).put("again", bool(true)).put("seed", int(0))
+                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("adj", bool(false)).put("again", bool(true)).put("shots", int(1)).put("seed", int(0))
                     .put("h", emptyMapV()).put("s", emptyMapV()).put("a", emptyMapV()).put("v", emptyMapV()),
                 serverTime = "at",
             ),
@@ -1004,8 +1007,8 @@ object Social {
         commit(writeMask("frooms/${room.id}", JSONObject().put("players", strs(listOf(room.host))), listOf("players")))
     }
 
-    suspend fun fCfg(room: FRoom, adj: Boolean, again: Boolean) = withContext(Dispatchers.IO) {
-        commit(writeMask("frooms/${room.id}", JSONObject().put("adj", bool(adj)).put("again", bool(again)), listOf("adj", "again")))
+    suspend fun fCfg(room: FRoom, adj: Boolean, again: Boolean, shots: Int) = withContext(Dispatchers.IO) {
+        commit(writeMask("frooms/${room.id}", JSONObject().put("adj", bool(adj)).put("again", bool(again)).put("shots", int(shots.toLong())), listOf("adj", "again", "shots")))
     }
 
     suspend fun fStart(room: FRoom, seed: Int) = withContext(Dispatchers.IO) {
@@ -1036,6 +1039,11 @@ object Social {
     suspend fun fReveal(room: FRoom, reveal: String) = withContext(Dispatchers.IO) {
         val me = live().uid
         commit(writeMask("frooms/${room.id}", JSONObject().put("v", oneOf(me, reveal)), listOf("v.`$me`")))
+    }
+
+    /** El ganador cierra la partida cuando ya ha hundido los 5 barcos del rival. */
+    suspend fun fFinish(room: FRoom) = withContext(Dispatchers.IO) {
+        commit(writeMask("frooms/${room.id}", JSONObject().put("status", str("finished")), listOf("status")))
     }
 
     suspend fun fForfeit(room: FRoom, reveal: String?) = withContext(Dispatchers.IO) {

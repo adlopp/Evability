@@ -522,7 +522,7 @@ const polyApi = (id) => ({
 
 const wroomOf = (d, id) => (d ? {
   id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), group: text(d, 'group'),
-  rounds: Number(d.fields?.rounds?.integerValue || 3), timer: d.fields?.timer?.booleanValue === true, secs: Number(d.fields?.secs?.integerValue || 60), seed: Number(d.fields?.seed?.integerValue || 0),
+  rounds: Number(d.fields?.rounds?.integerValue || 3), timer: d.fields?.timer?.booleanValue === true, secs: Number(d.fields?.secs?.integerValue || 60), same: d.fields?.same?.booleanValue !== false, seed: Number(d.fields?.seed?.integerValue || 0),
   g: Object.fromEntries(Object.entries(d.fields?.g?.mapValue?.fields || {}).map(([u, v]) => {
     const f = v.mapValue?.fields || {};
     return [u, { w: f.w?.stringValue || '', rs: f.rs?.stringValue || '', st: Number(f.st?.integerValue || 0) }];
@@ -534,7 +534,7 @@ const getWRoom = async (id) => wroomOf((await getAll('wrooms', [id]).catch(() =>
 async function createWRoom(friendUid) {
   const me = (await live()).uid, base = await chatBase(friendUid), id = uid(), grp = isGroup(friendUid) ? friendUid.slice(2) : null;
   await commit(
-    write(`wrooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), rounds: intV(3), timer: boolV(false), secs: intV(60), seed: intV(0), g: { mapValue: { fields: {} } } }, { serverTime: 'at' }),
+    write(`wrooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), rounds: intV(3), timer: boolV(false), secs: intV(60), same: boolV(true), seed: intV(0), g: { mapValue: { fields: {} } } }, { serverTime: 'at' }),
     write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('wvs'), game: str(id) }, { serverTime: 'at' }),
     metaWrite(base, me));
   return id;
@@ -554,7 +554,7 @@ const wvsApi = (id) => ({
   },
   join: async (room) => { await commit(writeMask(`wrooms/${room.id}`, { players: strs([...room.players, (await live()).uid]) }, ['players'])); },
   leave: async (room) => { const me = (await live()).uid; await commit(writeMask(`wrooms/${room.id}`, { players: strs(room.players.filter((u) => u !== me)) }, ['players'])); },
-  setCfg: async (room, c) => { await commit(writeMask(`wrooms/${room.id}`, { rounds: intV(c.rounds), timer: boolV(c.timer), secs: intV(c.secs || 60) }, ['rounds', 'timer', 'secs'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`wrooms/${room.id}`, { rounds: intV(c.rounds), timer: boolV(c.timer), secs: intV(c.secs || 60), same: boolV(c.same !== false) }, ['rounds', 'timer', 'secs', 'same'])); },
   start: async (room, seed) => { await commit(writeMask(`wrooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
   /** Guarda el avance propio ({ w, rs, st }); `over` marca la sala como terminada. */
   progress: async (room, e, over) => {
@@ -569,7 +569,7 @@ const wvsApi = (id) => ({
 const strMap = (d, k) => Object.fromEntries(Object.entries(d.fields?.[k]?.mapValue?.fields || {}).map(([u, v]) => [u, v.stringValue || '']));
 const froomOf = (d, id) => (d ? {
   id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), group: text(d, 'group'),
-  adj: d.fields?.adj?.booleanValue === true, again: d.fields?.again?.booleanValue !== false, seed: Number(d.fields?.seed?.integerValue || 0),
+  adj: d.fields?.adj?.booleanValue === true, again: d.fields?.again?.booleanValue !== false, shots: Math.min(5, Math.max(1, Number(d.fields?.shots?.integerValue || 1))), seed: Number(d.fields?.seed?.integerValue || 0),
   h: strMap(d, 'h'), s: strMap(d, 's'), a: strMap(d, 'a'), v: strMap(d, 'v'), ff: text(d, 'ff'),
 } : null);
 const getFRoom = async (id) => froomOf((await getAll('frooms', [id]).catch(() => ({})))[id], id);
@@ -580,7 +580,7 @@ const oneOf = (me, v) => ({ mapValue: { fields: { [me]: str(v) } } });
 async function createFRoom(friendUid) {
   const me = (await live()).uid, base = await chatBase(friendUid), id = uid(), grp = isGroup(friendUid) ? friendUid.slice(2) : null;
   await commit(
-    write(`frooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), adj: boolV(false), again: boolV(true), seed: intV(0), h: emptyMap(), s: emptyMap(), a: emptyMap(), v: emptyMap() }, { serverTime: 'at' }),
+    write(`frooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), adj: boolV(false), again: boolV(true), shots: intV(1), seed: intV(0), h: emptyMap(), s: emptyMap(), a: emptyMap(), v: emptyMap() }, { serverTime: 'at' }),
     write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('fleet'), game: str(id) }, { serverTime: 'at' }),
     metaWrite(base, me));
   return id;
@@ -600,7 +600,7 @@ const fleetApi = (id) => ({
   },
   join: async (room) => { await commit(writeMask(`frooms/${room.id}`, { players: strs([...room.players, (await live()).uid]) }, ['players'])); },
   leave: async (room) => { await commit(writeMask(`frooms/${room.id}`, { players: strs([room.host]) }, ['players'])); },
-  setCfg: async (room, c) => { await commit(writeMask(`frooms/${room.id}`, { adj: boolV(c.adj), again: boolV(c.again) }, ['adj', 'again'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`frooms/${room.id}`, { adj: boolV(c.adj), again: boolV(c.again), shots: intV(c.shots || 1) }, ['adj', 'again', 'shots'])); },
   start: async (room, seed) => { await commit(writeMask(`frooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
   /** Deja el hash de la flota (una sola vez). */
   place: async (room, hash) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { h: oneOf(me, hash) }, ['h.`' + me + '`'])); },
@@ -612,6 +612,8 @@ const fleetApi = (id) => ({
     await commit(writeMask(`frooms/${room.id}`, { a: oneOf(me, ans), ...(reveal ? { v: oneOf(me, reveal), status: str('finished') } : {}) }, ['a.`' + me + '`', ...(reveal ? ['v.`' + me + '`', 'status'] : [])]));
   },
   reveal: async (room, reveal) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { v: oneOf(me, reveal) }, ['v.`' + me + '`'])); },
+  /** El ganador cierra la partida cuando ya ha hundido los 5 barcos del rival. */
+  finish: async (room) => { await commit(writeMask(`frooms/${room.id}`, { status: str('finished') }, ['status'])); },
   forfeit: async (room, reveal) => {
     const me = (await live()).uid;
     await commit(writeMask(`frooms/${room.id}`, { status: str('finished'), ff: str(me), ...(reveal ? { v: oneOf(me, reveal) } : {}) }, ['status', 'ff', ...(reveal ? ['v.`' + me + '`'] : [])]));
@@ -995,7 +997,7 @@ function openChat(friend) {
     const paint = (r) => {
       if (!r) { status.textContent = ''; return; }
       const inRoom = r.players.includes(session?.uid);
-      status.textContent = (r.status === 'lobby' ? `Sala · ${r.players.length}/4` : r.status === 'playing' ? 'En juego' : 'Terminada') + ` · ${r.rounds} ronda${r.rounds === 1 ? '' : 's'}${r.timer ? ' · ' + (r.secs < 60 ? r.secs + ' s' : r.secs % 60 === 0 ? r.secs / 60 + ' min' : Math.floor(r.secs / 60) + ':' + String(r.secs % 60).padStart(2, '0')) : ''}`;
+      status.textContent = (r.status === 'lobby' ? `Sala · ${r.players.length}/4` : r.status === 'playing' ? 'En juego' : 'Terminada') + ` · ${r.rounds} ronda${r.rounds === 1 ? '' : 's'}${r.same ? '' : ' · palabras distintas'}${r.timer ? ' · ' + (r.secs < 60 ? r.secs + ' s' : r.secs % 60 === 0 ? r.secs / 60 + ' min' : Math.floor(r.secs / 60) + ':' + String(r.secs % 60).padStart(2, '0')) : ''}`;
       btn.textContent = r.status === 'lobby' && !inRoom ? (r.players.length >= 4 ? 'Completa' : 'Unirse') : 'Abrir';
       btn.disabled = !inRoom && (r.status !== 'lobby' || r.players.length >= 4);
     };
@@ -1012,7 +1014,7 @@ function openChat(friend) {
     const paint = (r) => {
       if (!r) { status.textContent = ''; return; }
       const inRoom = r.players.includes(session?.uid);
-      status.textContent = r.status === 'lobby' ? `Sala · ${r.players.length}/2` : r.status === 'playing' ? 'En juego' : 'Terminada';
+      status.textContent = (r.status === 'lobby' ? `Sala · ${r.players.length}/2` : r.status === 'playing' ? 'En juego' : 'Terminada') + (r.shots > 1 ? ` · ${r.shots} disparos por turno` : '');
       btn.textContent = r.status === 'lobby' && !inRoom ? (r.players.length >= 2 ? 'Completa' : 'Unirse') : 'Abrir';
       btn.disabled = !inRoom && (r.status !== 'lobby' || r.players.length >= 2);
     };

@@ -95,16 +95,18 @@ object Fleet {
     fun shotCells(s: String?): List<Int> = (s ?: "").chunked(2).filter { it.length == 2 }.mapNotNull { it.toIntOrNull() }
 
     class Ev(val by: String, val cell: Int, val res: Char)
-    class Replay(val cur: String, val opp: String, val pending: Boolean, val log: List<Ev>, val winner: String)
+    class Replay(val cur: String, val opp: String, val pending: Boolean, val log: List<Ev>, val winner: String, val left: Int = 1)
 
-    /** Reproduce la partida con lo de la nube: turno, disparo pendiente de respuesta y registro. Empieza players[seed % 2]. */
-    fun replay(players: List<String>, seed: Int, again: Boolean, s: Map<String, String>, a: Map<String, String>): Replay {
+    /** Reproduce la partida con lo de la nube: turno, disparo pendiente de respuesta y registro. Empieza players[seed % 2]; cada turno son `shots` disparos. */
+    fun replay(players: List<String>, seed: Int, again: Boolean, s: Map<String, String>, a: Map<String, String>, shots: Int = 1): Replay {
         val p0 = players[0]; val p1 = players[1]
+        val n = shots.coerceIn(1, 5)
         val idx = hashMapOf(p0 to 0, p1 to 0)
         val sunk = hashMapOf(p0 to 0, p1 to 0)
         val log = ArrayList<Ev>()
         var cur = players[seed % 2]
         var winner = ""
+        var left = n
         var guard = 0
         while (guard++ < 400) {
             val opp = if (cur == p0) p1 else p0
@@ -117,11 +119,42 @@ object Fleet {
                 idx[cur] = k + 1
                 if (res >= '2') sunk[cur] = sunk.getValue(cur) + 1
                 if (sunk.getValue(cur) >= LENS.size) { winner = cur; break }
-                if (!(res != '0' && again)) cur = opp
+                if (!(res != '0' && again)) left--
+                if (left <= 0) { cur = opp; left = n }
             } else break
         }
         val opp = if (cur == p0) p1 else p0
-        return Replay(cur, opp, winner.isEmpty() && idx.getValue(cur) < shotCells(s[cur]).size, log, winner)
+        return Replay(cur, opp, winner.isEmpty() && idx.getValue(cur) < shotCells(s[cur]).size, log, winner, left)
+    }
+
+    class SunkShip(val idx: Int, val ship: Ship)
+
+    /** Dónde estaban los barcos que `by` ha hundido (misma deducción que `sunkShips` de la web): `idx` = qué barco de la flota era, por tamaño. */
+    fun sunkShips(log: List<Ev>, by: String): List<SunkShip> {
+        val hits = HashSet<Int>(); val used = HashSet<Int>(); val taken = HashSet<Int>(); val out = ArrayList<SunkShip>()
+        for (e in log) {
+            if (e.by != by || e.res == '0') continue
+            hits.add(e.cell)
+            if (e.res < '2') continue
+            val len = e.res - '0'
+            var found: Ship? = null
+            for (dir in charArrayOf('h', 'v')) {
+                var k = 0
+                while (k < len && found == null) {
+                    val step = if (dir == 'h') 1 else SIZE
+                    val head = e.cell - k * step
+                    k++
+                    if (head < 0 || (if (dir == 'h') head % SIZE + len > SIZE else head / SIZE + len > SIZE)) continue
+                    val cells = (0 until len).map { head + it * step }
+                    if (cells.all { it in hits && it !in used }) { found = Ship(head, dir); used.addAll(cells) }
+                }
+                if (found != null) break
+            }
+            val idx = LENS.indices.firstOrNull { LENS[it] == len && it !in taken } ?: -1
+            if (idx >= 0) taken.add(idx)
+            found?.let { out.add(SunkShip(idx, it)) }
+        }
+        return out
     }
 
     /** Comprobación final: la flota revelada («flota:sal») ¿coincide con el compromiso, es válida y da las mismas respuestas? '' = todo bien. */

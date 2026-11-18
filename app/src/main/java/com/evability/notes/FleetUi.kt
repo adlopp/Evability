@@ -21,7 +21,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -82,6 +86,75 @@ private val SeaBottom = Color(0xFF083A63)
 private val BlueSeat = Color(0xFF1E88E5)
 private val RedSeat = Color(0xFFE53935)
 
+/** Sonidos de Hundir la flota, sintetizados (agua, impacto, hundido, disparo, colocar, tu turno, victoria y derrota). */
+object FleetSound {
+    private const val RATE = 22050
+
+    private fun tone(buf: FloatArray, start: Double, f1: Double, f2: Double, dur: Double, amp: Double, shape: Int = 0) {
+        val s0 = (start * RATE).toInt(); val n = (dur * RATE).toInt()
+        var phase = 0.0
+        for (i in 0 until n) {
+            val t = i.toDouble() / n
+            val f = f1 * Math.pow(f2 / f1, t)
+            phase += 2 * Math.PI * f / RATE
+            val env = (if (i < 0.004 * RATE) i / (0.004 * RATE) else 1.0) * Math.exp(-4.5 * t)
+            val w = when (shape) { 1 -> if (Math.sin(phase) >= 0) 0.5 else -0.5; 2 -> ((phase / (2 * Math.PI)) % 1.0) * 2 - 1; else -> Math.sin(phase) }
+            val idx = s0 + i
+            if (idx in buf.indices) buf[idx] += (w * amp * env).toFloat()
+        }
+    }
+
+    /** Ruido con filtro paso bajo sencillo (`lp` = cuánto suaviza, 0 a 1) y caída suave. */
+    private fun noise(buf: FloatArray, start: Double, dur: Double, amp: Double, lp: Double) {
+        val s0 = (start * RATE).toInt(); val n = (dur * RATE).toInt()
+        val rnd = java.util.Random(7)
+        var prev = 0.0
+        for (i in 0 until n) {
+            val t = i.toDouble() / n
+            prev += (rnd.nextDouble() * 2 - 1 - prev) * lp
+            val idx = s0 + i
+            if (idx in buf.indices) buf[idx] += (prev * amp * (1 - t) * (1 - t)).toFloat()
+        }
+    }
+
+    private fun synth(kind: String): FloatArray = when (kind) {
+        "0" -> FloatArray((0.5 * RATE).toInt()).also { noise(it, 0.0, 0.45, 0.7, 0.35); tone(it, 0.0, 240.0, 90.0, 0.3, 0.3) }
+        "1" -> FloatArray((0.55 * RATE).toInt()).also { tone(it, 0.0, 160.0, 40.0, 0.45, 0.85); noise(it, 0.0, 0.3, 0.7, 0.2) }
+        "shot" -> FloatArray((0.3 * RATE).toInt()).also { noise(it, 0.0, 0.25, 0.3, 0.8); tone(it, 0.0, 320.0, 1000.0, 0.22, 0.15, 2) }
+        "place" -> FloatArray((0.12 * RATE).toInt()).also { tone(it, 0.0, 440.0, 300.0, 0.08, 0.2, 1); noise(it, 0.0, 0.06, 0.3, 0.7) }
+        "turn" -> FloatArray((0.45 * RATE).toInt()).also { tone(it, 0.0, 660.0, 660.0, 0.14, 0.4); tone(it, 0.12, 880.0, 880.0, 0.28, 0.4) }
+        "win" -> FloatArray((1.1 * RATE).toInt()).also { b -> doubleArrayOf(523.0, 659.0, 784.0, 1047.0).forEachIndexed { i, f -> tone(b, i * 0.15, f, f, 0.45, 0.4) } }
+        "lose" -> FloatArray((1.3 * RATE).toInt()).also { b -> doubleArrayOf(392.0, 330.0, 262.0, 196.0).forEachIndexed { i, f -> tone(b, i * 0.24, f, f, 0.5, 0.4, 1) } }
+        else -> FloatArray((1.1 * RATE).toInt()).also { // hundido: explosión grande con un segundo estallido
+            tone(it, 0.0, 120.0, 28.0, 0.8, 0.9); noise(it, 0.0, 0.6, 0.8, 0.15)
+            tone(it, 0.25, 80.0, 25.0, 0.7, 0.7); noise(it, 0.25, 0.45, 0.5, 0.12)
+        }
+    }
+
+    /** `kind`: '0' agua, '1' tocado, '2'–'5' hundido, o "shot", "place", "turn", "win", "lose". */
+    fun play(kind: String) {
+        runCatching {
+            val data = synth(kind).map { (it.coerceIn(-1f, 1f) * 30000).toInt().toShort() }.toShortArray()
+            val track = android.media.AudioTrack.Builder()
+                .setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_GAME).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                .setAudioFormat(android.media.AudioFormat.Builder().setSampleRate(RATE).setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
+                .setBufferSizeInBytes(data.size * 2)
+                .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                .build()
+            track.write(data, 0, data.size)
+            track.setNotificationMarkerPosition(data.size - 1)
+            track.setPlaybackPositionUpdateListener(
+                object : android.media.AudioTrack.OnPlaybackPositionUpdateListener {
+                    override fun onMarkerReached(t: android.media.AudioTrack) { runCatching { t.release() } }
+                    override fun onPeriodicNotification(t: android.media.AudioTrack) {}
+                },
+                android.os.Handler(android.os.Looper.getMainLooper()),
+            )
+            track.play()
+        }
+    }
+}
+
 private class MineFleet(val ships: List<Fleet.Ship>, val f: String, val salt: String) { fun reveal() = "$f:$salt" }
 
 private fun loadMine(roomId: String): MineFleet? {
@@ -95,10 +168,11 @@ private fun loadMine(roomId: String): MineFleet? {
 
 // ───── dibujo ─────
 
-private fun DrawScope.drawShip(i: Int, s: Fleet.Ship, cs: Float, gray: Boolean, originX: Float = (s.cell % 10) * cs, originY: Float = (s.cell / 10) * cs) {
+/** `tint`: 0 normal, 1 gris (barco ya hundido en la lista), 2 rojo (hundido en el tablero). */
+private fun DrawScope.drawShip(i: Int, s: Fleet.Ship, cs: Float, tint: Int, originX: Float = (s.cell % 10) * cs, originY: Float = (s.cell / 10) * cs, alpha: Float = 1f) {
     val vertical = s.dir == 'v'
     fun p(x: Float, y: Float) = if (vertical) Offset(originX + (1f - y) * cs, originY + x * cs) else Offset(originX + x * cs, originY + y * cs)
-    fun col(c: Long): Color = Color(c).let { if (gray) lerp(it, Color(0xFF2A2A2A), 0.7f) else it }
+    fun col(c: Long): Color = Color(c).let { when (tint) { 1 -> lerp(it, Color(0xFF2A2A2A), 0.7f); 2 -> lerp(it, Color(0xFFE53935), 0.7f); else -> it } }.copy(alpha = alpha)
     fun poly(pts: List<Offset>, c: Color) = drawPath(Path().apply { moveTo(pts[0].x, pts[0].y); for (k in 1 until pts.size) lineTo(pts[k].x, pts[k].y); close() }, c)
     for (part in Fleet.shipParts(i)) when (part) {
         is Fleet.Poly -> poly(part.pts.map { p(it.first, it.second) }, col(part.color))
@@ -111,22 +185,52 @@ private fun DrawScope.drawShip(i: Int, s: Fleet.Ship, cs: Float, gray: Boolean, 
 /** El barco `i` dibujado en horizontal, para las fichas de la bandeja y la lista de barcos que quedan. */
 @Composable
 private fun ShipIcon(i: Int, cell: Dp, gray: Boolean = false, modifier: Modifier = Modifier) {
-    Canvas(modifier.size(cell * Fleet.LENS[i], cell)) { drawShip(i, Fleet.Ship(0, 'h'), size.height, gray, 0f, 0f) }
+    Canvas(modifier.size(cell * Fleet.LENS[i], cell)) { drawShip(i, Fleet.Ship(0, 'h'), size.height, if (gray) 1 else 0, 0f, 0f) }
 }
 
-/** Tablero de 10 × 10 con letras y números. `marks`: 'w' agua, 'h' tocado, 's' hundido, 'p' disparo sin responder. */
+/** Arrastre sobre el tablero (al colocar la flota): `onDown` dice si empieza un gesto en esa casilla; `onMove` y `onUp` llevan la posición en píxeles del tablero. */
+private class BoardDrag(
+    val onDown: (cell: Int, pos: Offset, cs: Float) -> Boolean,
+    val onMove: (pos: Offset, cs: Float) -> Unit,
+    val onUp: (moved: Boolean, pos: Offset, cs: Float) -> Unit,
+)
+
+/** Tablero de 10 × 10. `marks`: 'w' agua, 'h' tocado, 's' hundido, 'p' disparo sin responder. `sunk` = barcos que salen en rojo. */
 @Composable
 private fun FleetBoard(
-    ships: List<Fleet.Ship?>, sunk: Set<Int>, marks: Map<Int, Char>, bs: Dp, glow: Boolean = false, onCell: ((Int) -> Unit)? = null,
+    ships: List<Fleet.Ship?>, sunk: Set<Int>, marks: Map<Int, Char>, bs: Dp, glow: Boolean = false, labels: Boolean = true,
+    ghost: Pair<Int, Fleet.Ship>? = null, ghostOk: Boolean = true, faded: Int? = null, drag: BoardDrag? = null,
+    onRootPos: ((Offset) -> Unit)? = null, onCell: ((Int) -> Unit)? = null,
 ) {
     val cell = bs / 10
+    val dragState by androidx.compose.runtime.rememberUpdatedState(drag)
     Column {
-        Row(Modifier.padding(start = 18.dp)) { for (c in 0 until 10) Text(('A' + c).toString(), Modifier.width(cell), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnSurfaceDim, textAlign = TextAlign.Center) }
+        if (labels) Row(Modifier.padding(start = 18.dp)) { for (c in 0 until 10) Text(('A' + c).toString(), Modifier.width(cell), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnSurfaceDim, textAlign = TextAlign.Center) }
         Row {
-            Column(Modifier.width(18.dp)) { for (r in 1..10) Box(Modifier.height(cell).width(18.dp), contentAlignment = Alignment.Center) { Text("$r", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnSurfaceDim) } }
+            if (labels) Column(Modifier.width(18.dp)) { for (r in 1..10) Box(Modifier.height(cell).width(18.dp), contentAlignment = Alignment.Center) { Text("$r", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnSurfaceDim) } }
             val shape = RoundedCornerShape(12.dp)
             Canvas(
                 Modifier.size(bs).clip(shape).then(if (glow) Modifier.border(3.dp, Accent, shape) else Modifier.border(1.dp, Color.White.copy(alpha = 0.12f), shape))
+                    .onGloballyPositioned { onRootPos?.invoke(it.positionInRoot()) }
+                    .pointerInput(drag != null) {
+                        if (drag == null) return@pointerInput
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val cs = size.width / 10f
+                            val c0 = (down.position.y / cs).toInt().coerceIn(0, 9) * 10 + (down.position.x / cs).toInt().coerceIn(0, 9)
+                            val d = dragState ?: return@awaitEachGesture
+                            if (!d.onDown(c0, down.position, cs)) return@awaitEachGesture
+                            down.consume()
+                            var moved = false
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!ch.pressed) { dragState?.onUp?.invoke(moved, ch.position, cs); ch.consume(); break }
+                                if (!moved && (ch.position - down.position).getDistance() > 8.dp.toPx()) moved = true
+                                if (moved) { dragState?.onMove?.invoke(ch.position, cs); ch.consume() }
+                            }
+                        }
+                    }
                     .pointerInput(onCell) {
                         detectTapGestures { off ->
                             if (onCell != null) {
@@ -142,7 +246,13 @@ private fun FleetBoard(
                     drawLine(Color.White.copy(alpha = 0.13f), Offset(k * cs, 0f), Offset(k * cs, size.height), 1.dp.toPx())
                     drawLine(Color.White.copy(alpha = 0.13f), Offset(0f, k * cs), Offset(size.width, k * cs), 1.dp.toPx())
                 }
-                ships.forEachIndexed { i, s -> if (s != null) drawShip(i, s, cs, i in sunk) }
+                ships.forEachIndexed { i, s -> if (s != null) drawShip(i, s, cs, if (i in sunk) 2 else 0, alpha = if (i == faded) 0.25f else 1f) }
+                if (ghost != null) {
+                    val (gi, gs) = ghost
+                    drawShip(gi, gs, cs, if (ghostOk) 0 else 2, alpha = if (ghostOk) 0.95f else 0.7f)
+                    val w = (if (gs.dir == 'h') Fleet.LENS[gi] else 1) * cs; val hh = (if (gs.dir == 'v') Fleet.LENS[gi] else 1) * cs
+                    drawRect(if (ghostOk) Color(0xFF43A047) else Color(0xFFE53935), Offset((gs.cell % 10) * cs, (gs.cell / 10) * cs), androidx.compose.ui.geometry.Size(w, hh), style = Stroke(2.dp.toPx()))
+                }
                 for ((c, m) in marks) {
                     val center = Offset((c % 10 + 0.5f) * cs, (c / 10 + 0.5f) * cs)
                     when (m) {
@@ -179,9 +289,7 @@ fun FleetCard(m: Social.ChatMessage, fg: Color, onOpen: (String) -> Unit) {
     val inRoom = r?.players?.contains(Social.session?.uid) == true
     val status = when {
         r == null -> ""
-        r.status == "lobby" -> "Sala · ${r.players.size}/2"
-        r.status == "playing" -> "En juego"
-        else -> "Terminada"
+        else -> (if (r.status == "lobby") "Sala · ${r.players.size}/2" else if (r.status == "playing") "En juego" else "Terminada") + (if (r.shots > 1) " · ${r.shots} disparos por turno" else "")
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(44.dp).background(fg.copy(alpha = 0.15f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
@@ -242,7 +350,7 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
             if (m != null && me in r.players && opp != null) {
                 var wrote = false
                 if (r.status == "playing" && r.h.containsKey(me) && r.h.containsKey(opp)) {
-                    val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a)
+                    val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots)
                     if (rp.pending && rp.cur != me) {
                         val mineAns = r.a[me] ?: ""
                         val n = rp.log.count { it.by == rp.cur }
@@ -252,6 +360,8 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
                             Social.fAnswer(r, next, if (lost) m.reveal() else null)
                             wrote = true
                         }
+                    } else if (rp.winner == me) { // he hundido los 5 barcos: la partida termina ya, aunque el rival no tenga la pantalla abierta
+                        Social.fFinish(r); wrote = true
                     }
                 }
                 if (r.status == "finished" && !r.v.containsKey(me)) { Social.fReveal(r, m.reveal()); wrote = true }
@@ -291,7 +401,7 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
                 onJoin = { scope.launch { try { Social.fJoin(r); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onLeave = { scope.launch { try { Social.fLeave(r); onClose() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onRemove = { scope.launch { runCatching { Social.fRemove(roomId) }; onClose() } },
-                onCfg = { adj, again -> scope.launch { try { Social.fCfg(r, adj, again); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
+                onCfg = { adj, again, shots -> scope.launch { try { Social.fCfg(r, adj, again, shots); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onStart = { scope.launch { try { Social.fStart(r, (Math.random() * 2_000_000_000).toInt()); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onInvite = { scope.launch { try { inviteList = Social.overview().friends.map { it.profile } } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
             )
@@ -370,7 +480,7 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
 @Composable
 private fun FleetLobby(
     r: Social.FRoom, me: String, names: Map<String, String>, photos: Map<String, String>,
-    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onCfg: (Boolean, Boolean) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
+    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onCfg: (Boolean, Boolean, Int) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
 ) {
     val isHost = r.host == me
     val inRoom = me in r.players
@@ -408,14 +518,30 @@ private fun FleetLobby(
                         Text("Los barcos pueden tocarse", color = OnSurface)
                         Text("Si no, entre barcos queda siempre una casilla de agua.", color = OnSurfaceDim, fontSize = 12.sp)
                     }
-                    Switch(r.adj, { onCfg(it, r.again) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.adj, { onCfg(it, r.again, r.shots) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Repetir turno al acertar", color = OnSurface)
-                        Text("Quien acierta (tocado o hundido) vuelve a disparar.", color = OnSurfaceDim, fontSize = 12.sp)
+                        Text("Quien acierta (tocado o hundido) vuelve a disparar sin gastar disparo.", color = OnSurfaceDim, fontSize = 12.sp)
                     }
-                    Switch(r.again, { onCfg(r.adj, it) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.again, { onCfg(r.adj, it, r.shots) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Disparos por turno", color = OnSurface, modifier = Modifier.weight(1f))
+                    Text("${r.shots}", color = OnSurface, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (n in 1..5) {
+                        val sel = r.shots == n
+                        val shape = RoundedCornerShape(14.dp)
+                        Box(
+                            Modifier.weight(1f).height(44.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
+                                .border(2.dp, if (sel) Accent else Outline, shape)
+                                .then(if (isHost) Modifier.clickable { if (!sel) onCfg(r.adj, r.again, n) } else Modifier),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("$n", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = if (sel) Accent else OnSurface.copy(alpha = if (isHost) 1f else 0.6f)) }
+                    }
                 }
                 Text(
                     "Cada uno coloca su flota en secreto: portaaviones (5), acorazado (4), crucero (3), submarino (3) y destructor (2). Gana quien hunde antes toda la flota del rival.",
@@ -434,8 +560,8 @@ private fun FleetLobby(
     }
 }
 
+/** Colocar la flota: se arrastran los barcos con el dedo (de la bandeja al mar, o de un sitio a otro); un toque sobre un barco puesto lo gira. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-/** Colocar la flota: se elige un barco, se gira si hace falta y se toca el mar; tocar un barco colocado lo recoge. */
 @Composable
 private fun FleetPlace(adj: Boolean, busy: Boolean, onReady: (List<Fleet.Ship>) -> Unit) {
     val ctx = LocalContext.current
@@ -444,33 +570,94 @@ private fun FleetPlace(adj: Boolean, busy: Boolean, onReady: (List<Fleet.Ship>) 
     var dir by remember { mutableStateOf('h') }
     val placed = draft.all { it != null }
     val bs = 320.dp
+    var boardRoot by remember { mutableStateOf(Offset.Zero) }
+    var boardPx by remember { mutableStateOf(0f) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    // arrastre en curso: qué barco, por qué casilla del barco se agarra, orientación, de dónde viene (0 = barco puesto, 1 = bandeja, 2 = mar con un barco elegido) y dónde caería
+    class Drag(val i: Int, val k: Int, val dir: Char, val mode: Int, val target: Fleet.Ship?, val ok: Boolean)
+    var drag by remember { mutableStateOf<Drag?>(null) }
+    val noFit = if (adj) "Ahí no cabe" else "Ahí no cabe: entre barcos tiene que quedar una casilla de agua"
+
+    fun snap(d: Drag, pos: Offset, cs: Float): Drag {
+        val col = Math.floor((pos.x / cs).toDouble()).toInt(); val row = Math.floor((pos.y / cs).toDouble()).toInt()
+        if (col !in 0..9 || row !in 0..9) return Drag(d.i, d.k, d.dir, d.mode, null, false)
+        val len = Fleet.LENS[d.i]
+        val hc = (if (d.dir == 'h') col - d.k else col).coerceIn(0, if (d.dir == 'h') 10 - len else 9)
+        val hr = (if (d.dir == 'v') row - d.k else row).coerceIn(0, if (d.dir == 'v') 10 - len else 9)
+        val s = Fleet.Ship(hr * 10 + hc, d.dir)
+        return Drag(d.i, d.k, d.dir, d.mode, s, Fleet.canPlace(draft, d.i, s, adj))
+    }
+    fun nextFree() = draft.indices.firstOrNull { draft[it] == null }
+    fun finish(moved: Boolean, d: Drag) {
+        drag = null
+        if (moved || d.mode == 2) {
+            if (d.target != null && d.ok) { draft = draft.toMutableList().also { it[d.i] = d.target }; sel = nextFree(); FleetSound.play("place") }
+            else if (d.target != null) Toast.makeText(ctx, noFit, Toast.LENGTH_SHORT).show()
+        } else if (d.mode == 0) { // un toque en un barco puesto: lo gira
+            val s = draft[d.i] ?: return
+            val nd = if (s.dir == 'h') 'v' else 'h'
+            var row = s.cell / 10; var col = s.cell % 10
+            if (nd == 'h') col = minOf(col, 10 - Fleet.LENS[d.i]) else row = minOf(row, 10 - Fleet.LENS[d.i])
+            val ns = Fleet.Ship(row * 10 + col, nd)
+            if (Fleet.canPlace(draft, d.i, ns, adj)) draft = draft.toMutableList().also { it[d.i] = ns } else Toast.makeText(ctx, "No se puede girar ahí", Toast.LENGTH_SHORT).show()
+        } else { // un toque en la ficha: se elige ese barco (si estaba puesto, se recoge)
+            if (draft[d.i] != null) { dir = draft[d.i]!!.dir; draft = draft.toMutableList().also { it[d.i] = null } }
+            sel = d.i
+        }
+    }
+
+    val boardDrag = BoardDrag(
+        onDown = { cell, pos, cs ->
+            boardPx = cs * 10f
+            val at = draft.indices.firstOrNull { i -> draft[i]?.let { Fleet.cellsOf(it, i).contains(cell) } == true }
+            val s0 = sel
+            val start = if (at != null) Drag(at, Fleet.cellsOf(draft[at]!!, at).indexOf(cell), draft[at]!!.dir, 0, null, false)
+            else if (s0 != null) Drag(s0, Fleet.LENS[s0] / 2, dir, 2, null, false) else null
+            if (start == null) false else { drag = snap(start, pos, cs); true }
+        },
+        onMove = { pos, cs -> drag?.let { drag = snap(it, pos, cs) } },
+        onUp = { moved, pos, cs -> drag?.let { finish(moved, snap(it, pos, cs)) } },
+    )
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-            when { sel == null && placed -> "Flota lista. Toca un barco para moverlo o pulsa «Listo»."; sel == null -> "Elige un barco abajo."; else -> "Toca el mar para colocar el ${Fleet.NAMES[sel!!].lowercase()} (${Fleet.LENS[sel!!]})." },
+            when {
+                placed -> "Flota lista. Arrastra un barco para moverlo o tócalo para girarlo; pulsa «Listo» cuando quieras."
+                sel == null -> "Arrastra un barco de abajo al mar."
+                else -> "Arrastra el ${Fleet.NAMES[sel!!].lowercase()} (${Fleet.LENS[sel!!]}) al mar o toca donde quieras ponerlo."
+            },
             color = OnSurface, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
         )
-        FleetBoard(draft, emptySet(), emptyMap(), bs) { c ->
-            val at = draft.indices.firstOrNull { i -> draft[i]?.let { Fleet.cellsOf(it, i).contains(c) } == true }
-            val s0 = sel
-            if (s0 == null && at != null) {
-                dir = draft[at]!!.dir; sel = at; draft = draft.toMutableList().also { it[at] = null }
-            } else if (s0 != null) {
-                var row = c / 10; var col = c % 10
-                if (dir == 'h') col = minOf(col, 10 - Fleet.LENS[s0]) else row = minOf(row, 10 - Fleet.LENS[s0])
-                val s = Fleet.Ship(row * 10 + col, dir)
-                if (Fleet.canPlace(draft, s0, s, adj)) {
-                    draft = draft.toMutableList().also { it[s0] = s }
-                    sel = draft.indices.firstOrNull { draft[it] == null }
-                } else Toast.makeText(ctx, if (adj) "Ahí no cabe" else "Ahí no cabe: entre barcos tiene que quedar una casilla de agua", Toast.LENGTH_SHORT).show()
-            }
-        }
+        FleetBoard(
+            draft, emptySet(), emptyMap(), bs, drag = boardDrag, onRootPos = { boardRoot = it },
+            ghost = drag?.target?.let { drag!!.i to it }, ghostOk = drag?.ok ?: true, faded = drag?.takeIf { it.mode == 0 && it.target != null }?.i,
+        )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (i in Fleet.LENS.indices) {
                 val shape = RoundedCornerShape(14.dp)
                 val on = sel == i
+                var chipRoot by remember { mutableStateOf(Offset.Zero) }
                 Column(
                     Modifier.clip(shape).background(if (on) Accent.copy(alpha = 0.18f) else Surface1).border(2.dp, if (on) Accent else Outline, shape)
-                        .clickable { if (draft[i] != null) { dir = draft[i]!!.dir; draft = draft.toMutableList().also { it[i] = null } }; sel = i }
+                        .onGloballyPositioned { chipRoot = it.positionInRoot() }
+                        .pointerInput(i) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                down.consume()
+                                val cs = boardPx.takeIf { it > 0f }?.div(10f) ?: with(density) { bs.toPx() / 10f }
+                                val start = Drag(i, Fleet.LENS[i] / 2, draft[i]?.dir ?: dir, 1, null, false)
+                                var moved = false
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    val inBoard = chipRoot + ch.position - boardRoot
+                                    if (!ch.pressed) { finish(moved, snap(drag ?: start, inBoard, cs)); ch.consume(); break }
+                                    if (!moved && (ch.position - down.position).getDistance() > 8.dp.toPx()) moved = true
+                                    if (moved) { drag = snap(start, inBoard, cs); ch.consume() }
+                                }
+                            }
+                        }
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -491,15 +678,16 @@ private fun FleetPlace(adj: Boolean, busy: Boolean, onReady: (List<Fleet.Ship>) 
     }
 }
 
-/** La batalla y el resultado. */
+/** La batalla y el resultado: la flota rival en grande a la izquierda y la tuya a la derecha, para verlas a la vez sin hacer scroll. */
 @Composable
 private fun FleetBattle(
     r: Social.FRoom, me: String, names: Map<String, String>, photos: Map<String, String>, mine: MineFleet?, verifyMsg: String,
     onShoot: (Int) -> Unit, onForfeit: () -> Unit, onClose: () -> Unit,
 ) {
+    val ctx = LocalContext.current
     val opp = r.players.firstOrNull { it != me } ?: ""
-    val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a)
-    val finished = r.status == "finished"
+    val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots)
+    val finished = r.status == "finished" || rp.winner.isNotEmpty() // con los 5 barcos hundidos ya no se dispara más
     val winner = if (r.ff.isNotEmpty()) (if (r.ff == me) opp else me) else rp.winner
     val nameOpp = names[opp] ?: "?"
     val haptic = LocalHapticFeedback.current
@@ -507,25 +695,6 @@ private fun FleetBattle(
     var bannerHit by remember { mutableStateOf(false) }
     var lastLog by remember { mutableStateOf(-1) }
     var confirmForfeit by remember { mutableStateOf(false) }
-
-    // aviso de cada disparo nuevo (el primer vistazo solo toma nota de lo que ya había)
-    LaunchedEffect(rp.log.size) {
-        if (lastLog < 0) { lastLog = rp.log.size; return@LaunchedEffect }
-        if (rp.log.size > lastLog) {
-            lastLog = rp.log.size
-            val e = rp.log.last()
-            val who = if (e.by == me) "Tu disparo" else "Disparo de ${names[e.by] ?: "?"}"
-            banner = when {
-                e.res == '0' -> "$who: agua"
-                e.res == '1' -> "$who: ¡tocado!"
-                else -> "$who: ¡hundido! (${Fleet.NAMES[Fleet.LENS.indexOfFirst { it == e.res - '0' }.coerceAtLeast(0)]})"
-            }
-            bannerHit = e.res != '0'
-            if (e.res != '0') haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            delay(2400)
-            banner = ""
-        }
-    }
 
     val eMarks = HashMap<Int, Char>(); val oMarks = HashMap<Int, Char>(); val eSunk = ArrayList<Int>()
     for (e in rp.log) {
@@ -540,38 +709,77 @@ private fun FleetBattle(
     val oppShips = if (finished) r.v[opp]?.let { rv -> Fleet.parseFleet(rv.substringBeforeLast(':')) } else null
     val myTurn = !finished && rp.cur == me && !rp.pending
 
+    // los barcos que he hundido salen enteros y en rojo; sobre ellos no se puede volver a disparar
+    val eShips = MutableList<Fleet.Ship?>(Fleet.LENS.size) { null }
+    val eRed = HashSet<Int>(); val sunkCells = HashSet<Int>()
+    for (sk in Fleet.sunkShips(rp.log, me)) if (sk.idx >= 0) { eShips[sk.idx] = sk.ship; eRed.add(sk.idx); sunkCells.addAll(Fleet.cellsOf(sk.ship, sk.idx)) }
+
+    // aviso y sonido de cada disparo nuevo (el primer vistazo solo toma nota de lo que ya había)
+    LaunchedEffect(rp.log.size) {
+        if (lastLog < 0) { lastLog = rp.log.size; return@LaunchedEffect }
+        if (rp.log.size > lastLog) {
+            lastLog = rp.log.size
+            val e = rp.log.last()
+            val who = if (e.by == me) "Tu disparo" else "Disparo de ${names[e.by] ?: "?"}"
+            banner = when {
+                e.res == '0' -> "$who: agua"
+                e.res == '1' -> "$who: ¡tocado!"
+                else -> "$who: ¡hundido! (${Fleet.NAMES[Fleet.LENS.indexOfFirst { it == e.res - '0' }.coerceAtLeast(0)]})"
+            }
+            bannerHit = e.res != '0'
+            FleetSound.play(e.res.toString())
+            if (e.res != '0') haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            delay(2400)
+            banner = ""
+        }
+    }
+    var wasMine by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(myTurn) { val w = wasMine; wasMine = myTurn; if (w == false && myTurn) FleetSound.play("turn") }
+    var endSounded by remember { mutableStateOf(finished) } // si la partida ya estaba terminada al abrirla, no suena
+    LaunchedEffect(finished) { if (finished && !endSounded) { endSounded = true; FleetSound.play(if (winner == me) "win" else "lose") } }
+
     val turnText = if (finished) {
         (if (winner == me) "¡Has ganado! 🎉" else "Gana ${names[winner] ?: "?"}") + (if (r.ff.isNotEmpty()) (if (r.ff == me) " · te has rendido" else " · $nameOpp se ha rendido") else "")
-    } else if (rp.cur == me) (if (rp.pending) "Esperando la respuesta de $nameOpp…" else "¡Tu turno! Dispara al mar enemigo")
-    else (if (rp.pending) "$nameOpp ha disparado…" else "Turno de $nameOpp")
+    } else if (rp.cur == me) (if (rp.pending) "Esperando la respuesta de $nameOpp…" else if (r.shots > 1) "¡Tu turno! Dispara (te quedan ${rp.left})" else "¡Tu turno! Dispara al mar enemigo")
+    else (if (rp.pending) "$nameOpp ha disparado…" else "Turno de $nameOpp" + (if (r.shots > 1) " · ${rp.left} disparos" else ""))
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            turnText, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center,
+            turnText, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, fontSize = 15.sp,
             color = if (myTurn) OnAccent else if (finished) Color.White else OnSurface,
             modifier = Modifier.widthIn(max = 430.dp).fillMaxWidth()
                 .background(if (myTurn) Accent else if (finished) Color(0xFF2E7D6B) else Surface2, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 9.dp),
         )
-        Text("Flota de $nameOpp", fontWeight = FontWeight.Bold, color = OnSurface, fontSize = 15.sp)
-        Box(contentAlignment = Alignment.Center) {
-            FleetBoard(oppShips ?: emptyList(), emptySet(), eMarks, 310.dp, glow = myTurn, onCell = if (myTurn) { c -> if (!eMarks.containsKey(c)) onShoot(c) } else null)
-            if (banner.isNotEmpty()) {
-                Text(
-                    banner, color = Color.White, fontWeight = FontWeight.Black,
-                    modifier = Modifier.background(if (bannerHit) Color(0xFFE53935) else Color(0xFF2F6FA8), RoundedCornerShape(50)).padding(horizontal = 18.dp, vertical = 10.dp),
-                )
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val enemyBs = ((maxWidth - 6.dp) * 0.68f - 18.dp).coerceAtMost(430.dp)
+            val ownBs = ((maxWidth - 6.dp) * 0.32f).coerceAtMost(300.dp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Flota de $nameOpp", fontWeight = FontWeight.Bold, color = OnSurface, fontSize = 14.sp, maxLines = 1)
+                    Box(contentAlignment = Alignment.Center) {
+                        FleetBoard(
+                            oppShips ?: eShips, eRed, eMarks, enemyBs, glow = myTurn,
+                            onCell = if (myTurn) { c -> if (c in sunkCells) Toast.makeText(ctx, "Ahí ya has hundido un barco", Toast.LENGTH_SHORT).show() else if (!eMarks.containsKey(c)) onShoot(c) } else null,
+                        )
+                        if (banner.isNotEmpty()) {
+                            Text(
+                                banner, color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp, textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(start = 18.dp).background(if (bannerHit) Color(0xFFE53935) else Color(0xFF2F6FA8), RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
+                    // barcos enemigos que quedan, según lo que he hundido
+                    val left = Fleet.LENS.toMutableList().also { l -> eSunk.forEach { s -> l.remove(s) } }
+                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        for (i in Fleet.LENS.indices) { val alive = left.remove(Fleet.LENS[i]); ShipIcon(i, 10.dp, gray = !alive) }
+                    }
+                }
+                Column(Modifier.padding(top = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Tu flota", fontWeight = FontWeight.Bold, color = OnSurface, fontSize = 13.sp)
+                    FleetBoard(mine?.ships ?: emptyList(), mySunk, oMarks, ownBs, labels = false)
+                }
             }
         }
-        // barcos enemigos que quedan, según lo que he hundido
-        val left = Fleet.LENS.toMutableList().also { l -> eSunk.forEach { s -> l.remove(s) } }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            for (i in Fleet.LENS.indices) {
-                val alive = left.remove(Fleet.LENS[i])
-                ShipIcon(i, 14.dp, gray = !alive, modifier = Modifier.then(if (alive) Modifier else Modifier.background(Color.Transparent)))
-            }
-        }
-        Text("Tu flota", fontWeight = FontWeight.Bold, color = OnSurface, fontSize = 15.sp)
-        FleetBoard(mine?.ships ?: emptyList(), mySunk, oMarks, 230.dp)
         if (finished) {
             val shots = rp.log.count { it.by == me }; val hits = rp.log.count { it.by == me && it.res != '0' }
             Column(
@@ -584,7 +792,7 @@ private fun FleetBattle(
                 PolyButton("Cerrar", true, true) { onClose() }
             }
         } else TextButton(onClick = { confirmForfeit = true }) { Text("Rendirse", color = OnSurfaceDim) }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
     }
     if (confirmForfeit) {
         AlertDialog(

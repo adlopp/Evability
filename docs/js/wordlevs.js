@@ -14,7 +14,8 @@ const timeLabel = (s) => (s < 60 ? `${s} s` : s % 60 === 0 ? `${s / 60} min` : `
 const KEYS = ['QWERTYUIOP', 'ASDFGHJKLÑ', 'ZXCVBNM'];
 
 /** Palabra de la ronda `r` (la misma en todos los dispositivos). */
-export const wordFor = (answers, seed, r) => answers[(seed + r * 104729) % answers.length];
+/** Palabra de la ronda `r`; `p` = asiento del jugador (0 si todos juegan la misma). Si no es la misma, cada asiento se desplaza por un primo grande y no coinciden. */
+export const wordFor = (answers, seed, r, p = 0) => answers[(seed + r * 104729 + p * 1299709) % answers.length];
 /** Puntos de un intento: verde 2, amarilla 1, gris 0 (acertar = 10). */
 export const scoreOf = (guess, answer) => evaluate(guess, answer).reduce((s, v) => s + v, 0);
 
@@ -75,7 +76,7 @@ export function openWordleVs({ roomId, api, onClose }) {
   }
 
   // ───── sala de espera ─────
-  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.rounds, room.timer, room.secs, room.status]);
+  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.rounds, room.timer, room.secs, room.same, room.status]);
   function renderLobby() {
     lobbySig = lobbyKey();
     const isHost = room.host === me, inRoom = room.players.includes(me);
@@ -87,7 +88,7 @@ export function openWordleVs({ roomId, api, onClose }) {
       return h('div', { class: 'pseat empty', style: `--c:${COLORS[i]}` }, inv ? [avatarEl(inv, 34), h('b', {}, nameOf(inv)), h('small', {}, '…')] : h('b', {}, '—'));
     }));
     const setCfg = async (patch) => {
-      const next = { rounds: room.rounds, timer: room.timer, secs: room.secs, ...patch };
+      const next = { rounds: room.rounds, timer: room.timer, secs: room.secs, same: room.same, ...patch };
       try { await api.setCfg(room, next); Object.assign(room, next); renderLobby(); } catch (e) { toast(e.message); }
     };
     const chips = h('div', { class: 'vs-rounds', role: 'group', 'aria-label': 'Número de rondas' }, [1, 2, 3, 4, 5].map((n) => h('button', {
@@ -95,6 +96,8 @@ export function openWordleVs({ roomId, api, onClose }) {
     const toggle = h('label', { class: 'ptoggle' }, h('span', {}, 'Temporizador por palabra'),
       h('input', { type: 'checkbox', checked: room.timer, disabled: !isHost, onchange: (e) => { const v = e.target.checked; setCfg({ timer: v }); } }), h('i', {}));
 
+    const same = h('label', { class: 'ptoggle' }, h('span', {}, 'Misma palabra para todos', h('small', { class: 'dim block' }, room.same ? 'Todos adivináis la misma palabra en cada ronda.' : 'Cada uno tiene una palabra distinta en cada ronda.')),
+      h('input', { type: 'checkbox', checked: room.same, disabled: !isHost, onchange: (e) => { setCfg({ same: e.target.checked }); } }), h('i', {}));
     const buttons = [];
     if (canJoin) buttons.push(h('button', { class: 'btn big', onclick: async () => { try { await api.join(room); await poll(); } catch (e) { toast(e.message); } } }, 'Unirse'));
     if (isHost) {
@@ -105,7 +108,7 @@ export function openWordleVs({ roomId, api, onClose }) {
 
     fill(body, h('div', { class: 'poly-lobby vs-lobby' }, seats,
       h('div', { class: 'pcfg' },
-        h('div', { class: 'prow' }, h('span', {}, 'Rondas'), h('b', {}, String(room.rounds))), chips, toggle,
+        h('div', { class: 'prow' }, h('span', {}, 'Rondas'), h('b', {}, String(room.rounds))), chips, same, toggle,
         room.timer ? h('div', { class: 'vs-times', role: 'group', 'aria-label': 'Tiempo por palabra' }, TIMES.map((s) => h('button', {
           class: 'vs-chip' + (room.secs === s ? ' sel' : ''), disabled: !isHost, 'aria-pressed': room.secs === s, onclick: () => { if (s !== room.secs) setCfg({ secs: s }); } }, timeLabel(s)))) : null,
         h('p', { class: 'dim small vs-rules' }, 'Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 2 a 4 personas.')),
@@ -126,7 +129,7 @@ export function openWordleVs({ roomId, api, onClose }) {
   // ───── partida ─────
   const kOf = (e) => parseEntry(e).rs.length;
   const myK = () => mine.rs.length;
-  const answerOf = (r) => wordFor(lists.answers, room.seed, r);
+  const answerOf = (r, u = me) => wordFor(lists.answers, room.seed, r, room.same === false ? Math.max(0, room.players.indexOf(u)) : 0);
   const behind = (need) => room.players.filter((u) => u !== me && kOf(room.g[u]) < need);
   const allDone = () => room.players.every((u) => (u === me ? myK() : kOf(room.g[u])) >= room.rounds);
   const bestOf = (words, ans) => (words.length ? Math.max(...words.map((g) => scoreOf(g, ans))) : 0);
@@ -210,7 +213,7 @@ export function openWordleVs({ roomId, api, onClose }) {
     return h('div', { class: 'vs-card' + (u === me ? ' me' : '') + (k > myK() && u !== me ? ' waiting' : ''), style: `--c:${COLORS[seat] || COLORS[0]}` },
       h('div', { class: 'vs-card-top' }, avatarEl(u, 22), h('b', {}, nameOf(u))),
       h('span', { class: 'vs-pts' }, total(e) + ' pts'),
-      u === me ? null : miniGrid(words, answerOf(showR)),
+      u === me ? null : miniGrid(words, answerOf(showR, u)),
       h('small', { class: 'vs-status' }, status));
   }
 
@@ -260,12 +263,12 @@ export function openWordleVs({ roomId, api, onClose }) {
     const list = rows.map((r, i) => { if (r.t !== prev) { place = i + 1; prev = r.t; } return { ...r, place }; });
     const top = list.filter((r) => r.place === 1);
     const title = list.length === 1 ? `Has hecho ${list[0].t} puntos` : top.length > 1 ? 'Empate' : top[0].u === me ? '¡Has ganado!' : `Gana ${nameOf(top[0].u)}`;
-    const answers = Array.from({ length: room.rounds }, (_, r) => answerOf(r).toUpperCase());
+    const words = (u) => Array.from({ length: room.rounds }, (_, r) => answerOf(r, u).toUpperCase()).join(' · ');
     return h('div', { class: 'vs-results' }, h('h2', {}, (top.length === 1 && top[0].u === me && list.length > 1 ? '🏆 ' : '') + title),
       ...list.map((r) => h('div', { class: 'vs-res', style: `--c:${COLORS[room.players.indexOf(r.u)] || COLORS[0]}` },
         h('span', { class: 'vs-place' }, list.length > 1 ? String(r.place) : ''), avatarEl(r.u, 30), h('b', { class: 'grow' }, nameOf(r.u)),
         h('small', {}, r.e.rs.map((p, i) => `R${i + 1}: ${p}`).join(' · ')), h('span', { class: 'vs-pts big' }, r.t + ' pts'))),
-      h('p', { class: 'dim small' }, 'Palabras: ' + answers.join(' · ')),
+      room.same === false ? h('div', { class: 'dim small' }, ...list.map((r) => h('p', { style: { margin: '2px 0' } }, `${nameOf(r.u)}: ${words(r.u)}`))) : h('p', { class: 'dim small' }, 'Palabras: ' + words(me)),
       h('button', { class: 'btn big', onclick: () => close() }, 'Cerrar'));
   }
 

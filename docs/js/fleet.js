@@ -4,7 +4,7 @@
 // Las reglas del juego están en fleet-engine.js. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggle, darkBars } from './ui.js';
-import { SIZE, LENS, NAMES, cellsOf, canPlace, packFleet, parseFleet, randomFleet, newSalt, commitOf, answers, shotCells, replay, verify, shipParts, pad2 } from './fleet-engine.js';
+import { SIZE, LENS, NAMES, cellsOf, canPlace, packFleet, parseFleet, randomFleet, newSalt, commitOf, answers, shotCells, replay, sunkShips, verify, shipParts, pad2 } from './fleet-engine.js';
 
 // ───── dibujo de los barcos (SVG) ─────
 const partSvg = (p) => {
@@ -18,34 +18,45 @@ export function shipSvg(i, vertical = false) {
   const L = LENS[i], parts = shipParts(i).map(partSvg).join('');
   return `<svg viewBox="${vertical ? `0 0 1 ${L}` : `0 0 ${L} 1`}" preserveAspectRatio="none" aria-hidden="true">${vertical ? `<g transform="matrix(0 1 -1 0 1 0)">${parts}</g>` : parts}</svg>`;
 }
-const shipEl = (i, s, extra = '') => {
+const shipBox = (i, s) => {
   const v = s.dir === 'v', r = Math.floor(s.cell / SIZE), c = s.cell % SIZE, L = LENS[i];
-  return h('div', { class: 'fl-ship ' + extra, style: { left: c * 10 + '%', top: r * 10 + '%', width: (v ? 10 : L * 10) + '%', height: (v ? L * 10 : 10) + '%' }, html: shipSvg(i, v) });
+  return { left: c * 10 + '%', top: r * 10 + '%', width: (v ? 10 : L * 10) + '%', height: (v ? L * 10 : 10) + '%' };
 };
+const shipEl = (i, s, extra = '') => h('div', { class: 'fl-ship ' + extra, 'data-i': i, style: shipBox(i, s), html: shipSvg(i, s.dir === 'v') });
 
 // ───── sonidos sencillos (sintetizados) ─────
 let actx = null;
 const ac = () => { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; actx ||= new AC(); if (actx.state === 'suspended') actx.resume(); return actx; };
-function noise(dur, { vol = 0.2, hp = 800, lp = 6000 } = {}) {
+function noise(dur, { vol = 0.2, hp = 800, lp = 6000, at = 0 } = {}) {
   const c = ac(); if (!c) return;
   const n = Math.floor(c.sampleRate * dur), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
   const src = c.createBufferSource(), g = c.createGain(), f1 = c.createBiquadFilter(), f2 = c.createBiquadFilter();
   f1.type = 'highpass'; f1.frequency.value = hp; f2.type = 'lowpass'; f2.frequency.value = lp; g.gain.value = vol;
-  src.buffer = buf; src.connect(f1).connect(f2).connect(g).connect(c.destination); src.start();
+  src.buffer = buf; src.connect(f1).connect(f2).connect(g).connect(c.destination); src.start(c.currentTime + at);
 }
-function boom(f, dur, vol = 0.3) {
+function tone(f, at, dur, { type = 'sine', vol = 0.2, to = f } = {}) {
   const c = ac(); if (!c) return;
-  const o = c.createOscillator(), g = c.createGain(), t = c.currentTime;
-  o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(30, t + dur);
+  const o = c.createOscillator(), g = c.createGain(), t = c.currentTime + at;
+  o.type = type; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(Math.max(25, to), t + dur);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
 }
-const sound = (res) => {
+/** '0' agua, '1' tocado, '2'–'5' hundido; además 'shot' (disparo), 'place' (barco colocado), 'turn' (te toca), 'win' y 'lose'. */
+const sound = (kind) => {
   try {
-    if (res === '0') noise(0.35, { vol: 0.22, hp: 500, lp: 3500 });
-    else if (res === '1') { boom(150, 0.35); noise(0.2, { vol: 0.25, hp: 200, lp: 2500 }); }
-    else { boom(110, 0.7, 0.4); noise(0.5, { vol: 0.3, hp: 150, lp: 2000 }); setTimeout(() => boom(70, 0.6, 0.3), 220); }
+    switch (kind) {
+      case '0': noise(0.4, { vol: 0.26, hp: 500, lp: 3500 }); tone(240, 0, 0.3, { vol: 0.12, to: 90 }); break; // chapuzón
+      case '1': tone(160, 0, 0.4, { vol: 0.34, to: 40 }); noise(0.25, { vol: 0.3, hp: 200, lp: 2500 }); break; // impacto
+      case 'shot': noise(0.22, { vol: 0.12, hp: 1200, lp: 6500 }); tone(320, 0, 0.22, { type: 'sawtooth', vol: 0.05, to: 1000 }); break;
+      case 'place': tone(440, 0, 0.07, { type: 'square', vol: 0.05, to: 300 }); noise(0.05, { vol: 0.1, hp: 1500, lp: 4000 }); break;
+      case 'turn': tone(660, 0, 0.12, { vol: 0.16 }); tone(880, 0.12, 0.22, { vol: 0.16 }); break;
+      case 'win': [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.14, 0.4, { vol: 0.2 })); break;
+      case 'lose': [392, 330, 262, 196].forEach((f, i) => tone(f, i * 0.22, 0.45, { type: 'triangle', vol: 0.22 })); break;
+      default: // hundido: explosión grande, con un segundo estallido
+        tone(120, 0, 0.8, { vol: 0.45, to: 28 }); noise(0.6, { vol: 0.34, hp: 150, lp: 2200 });
+        tone(80, 0.25, 0.7, { vol: 0.32, to: 25 }); noise(0.4, { vol: 0.22, hp: 200, lp: 1800, at: 0.25 });
+    }
   } catch { /* sin audio */ }
 };
 
@@ -77,6 +88,8 @@ export function openFleet({ roomId, api, onClose }) {
       h('button', { class: 'icon-btn', 'aria-label': 'Fondo oscuro', title: 'Fondo oscuro', onclick: toggleDark }, icon('moon'))),
     body);
   if (darkPref()) { root.classList.add('dark-bg'); darkBars(true); }
+  root.addEventListener('pointerdown', () => { ac(); }); // el navegador solo deja sonar el audio tras un toque
+  let wasMine = false, endSounded = false;
 
   const nameOf = (u) => (u === me ? 'Tú' : names[u] || '?');
   const avatarEl = (u, size = 30) => h('span', { class: 'pav', style: { width: size + 'px', height: size + 'px', fontSize: size * 0.45 + 'px' } },
@@ -93,7 +106,7 @@ export function openFleet({ roomId, api, onClose }) {
   const loadMine = () => { try { const o = JSON.parse(localStorage.getItem(keyOf()) || 'null'); if (o?.f && o?.salt) { const ships = parseFleet(o.f); if (ships) return { ships, f: o.f, salt: o.salt }; } } catch { /* sin datos */ } return null; };
   const revealStr = () => mine.f + ':' + mine.salt;
   const oppOf = () => room.players.find((u) => u !== me) || '';
-  const roomState = () => ({ players: room.players, seed: room.seed, again: room.again, s: room.s, a: room.a });
+  const roomState = () => ({ players: room.players, seed: room.seed, again: room.again, shots: room.shots, s: room.s, a: room.a });
 
   // ───── consulta periódica ─────
   async function poll() {
@@ -131,6 +144,8 @@ export function openFleet({ roomId, api, onClose }) {
           await api.answer(room, next, lost ? revealStr() : null);
           room.a[me] = next; if (lost) { room.status = 'finished'; room.v[me] = revealStr(); }
         }
+      } else if (rp.winner === me) { // he hundido los 5 barcos: la partida termina ya, aunque el rival no tenga la pantalla abierta
+        await api.finish(room); room.status = 'finished';
       }
     }
     if (room.status === 'finished' && !room.v[me] && !revealing) {
@@ -147,7 +162,7 @@ export function openFleet({ roomId, api, onClose }) {
   }
 
   // ───── sala de espera ─────
-  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.adj, room.again, room.status]);
+  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.adj, room.again, room.shots, room.status]);
   function renderLobby() {
     lobbySig = lobbyKey();
     const isHost = room.host === me, inRoom = room.players.includes(me);
@@ -160,7 +175,7 @@ export function openFleet({ roomId, api, onClose }) {
     }));
     const toggle = (label, key, hint) => h('label', { class: 'ptoggle' }, h('span', {}, label, hint ? h('small', { class: 'dim block' }, hint) : null),
       h('input', { type: 'checkbox', checked: room[key], disabled: !isHost, onchange: (e) => {
-        const v = e.target.checked, next = { adj: room.adj, again: room.again, [key]: v };
+        const v = e.target.checked, next = { adj: room.adj, again: room.again, shots: room.shots, [key]: v };
         api.setCfg(room, next).then(() => { room[key] = v; lobbySig = lobbyKey(); }).catch((err) => { e.target.checked = !v; toast(err.message); });
       } }), h('i', {}));
     const buttons = [];
@@ -173,7 +188,11 @@ export function openFleet({ roomId, api, onClose }) {
     fill(body, h('div', { class: 'poly-lobby fl-lobby' }, seats,
       h('div', { class: 'pcfg' },
         toggle('Los barcos pueden tocarse', 'adj', 'Si no, entre barcos queda siempre una casilla de agua.'),
-        toggle('Repetir turno al acertar', 'again', 'Quien acierta (tocado o hundido) vuelve a disparar.'),
+        toggle('Repetir turno al acertar', 'again', 'Quien acierta (tocado o hundido) vuelve a disparar sin gastar disparo.'),
+        h('div', { class: 'prow' }, h('span', {}, 'Disparos por turno'), h('b', {}, String(room.shots))),
+        h('div', { class: 'vs-rounds', role: 'group', 'aria-label': 'Disparos por turno' }, [1, 2, 3, 4, 5].map((n) => h('button', {
+          class: 'vs-chip' + (room.shots === n ? ' sel' : ''), disabled: !isHost, 'aria-pressed': room.shots === n,
+          onclick: () => { if (n !== room.shots) api.setCfg(room, { adj: room.adj, again: room.again, shots: n }).then(() => { room.shots = n; renderLobby(); }).catch((err) => toast(err.message)); } }, String(n)))),
         h('p', { class: 'dim small vs-rules' }, 'Cada uno coloca su flota en secreto: portaaviones (5), acorazado (4), crucero (3), submarino (3) y destructor (2). Gana quien hunde antes toda la flota del rival.')),
       h('div', { class: 'pbtns' }, buttons)));
   }
@@ -187,29 +206,95 @@ export function openFleet({ roomId, api, onClose }) {
     const m = modal({ title: 'Invitar', content: list, actions: [{ label: 'Cerrar' }] });
   }
 
-  // ───── colocar la flota ─────
+  // ───── colocar la flota (se arrastra con el dedo; un toque en un barco puesto lo gira) ─────
+  let blockClick = 0; // justo después de un gesto con el dedo se ignora el «click» que lo sigue
   function renderPlace() {
     const placed = draft.every((s) => s);
+    const next = () => { const n = draft.findIndex((x) => !x); return n < 0 ? null : n; };
     const board = boardEl({ ships: draft, onCell: (c) => {
-      const at = draft.findIndex((s, i) => s && cellsOf(s, i).includes(c));
-      if (sel === null && at >= 0) { sel = at; dir = draft[at].dir; draft[at] = null; renderPlace(); return; }
+      if (Date.now() < blockClick) return;
+      if (draft.some((s, i) => s && cellsOf(s, i).includes(c))) return; // los barcos puestos se arrastran o se giran con un toque
       if (sel === null) return;
       let row = Math.floor(c / SIZE), col = c % SIZE;
       if (dir === 'h') col = Math.min(col, SIZE - LENS[sel]); else row = Math.min(row, SIZE - LENS[sel]);
       const s = { cell: row * SIZE + col, dir };
-      if (canPlace(draft, sel, s, room.adj)) { draft[sel] = s; sel = draft.findIndex((x) => !x); if (sel < 0) sel = null; renderPlace(); }
+      if (canPlace(draft, sel, s, room.adj)) { draft[sel] = s; sel = next(); renderPlace(); }
       else toast(room.adj ? 'Ahí no cabe' : 'Ahí no cabe: entre barcos tiene que quedar una casilla de agua');
     } });
-    const tray = h('div', { class: 'fl-tray' }, LENS.map((L, i) => h('button', {
-      class: 'fl-chip' + (sel === i ? ' sel' : '') + (draft[i] ? ' placed' : ''), 'aria-label': `${NAMES[i]} (${L})`,
-      onclick: () => { if (draft[i]) { dir = draft[i].dir; draft[i] = null; } sel = i; renderPlace(); },
-    }, h('span', { class: 'fl-chip-ship', style: { width: L * 26 + 'px' }, html: shipSvg(i, false) }), h('small', {}, `${NAMES[i]} · ${L}`))));
+    board.classList.add('placing');
+    const sea = board.querySelector('.fl-sea');
+    const cellAt = (x, y) => { const r = sea.getBoundingClientRect(), cs = r.width / SIZE, col = Math.floor((x - r.left) / cs), row = Math.floor((y - r.top) / cs); return { col, row, inside: col >= 0 && col < SIZE && row >= 0 && row < SIZE }; };
+
+    /** Arrastre de un barco `i` agarrado por su casilla `k` (0 = la proa) con orientación `d0`. `mode`: 'move' (barco puesto), 'tray' (ficha) o 'sea' (con un barco elegido). */
+    function startDrag(e, i, k, d0, mode) {
+      const L = LENS[i], x0 = e.clientX, y0 = e.clientY;
+      let moved = false, target = null, ghost = null;
+      const origEl = mode === 'move' ? sea.querySelector(`.fl-ship[data-i="${i}"]`) : null;
+      const snap = (x, y) => {
+        const { col, row } = cellAt(x, y);
+        const hc = Math.max(0, Math.min(d0 === 'h' ? col - k : col, d0 === 'h' ? SIZE - L : SIZE - 1));
+        const hr = Math.max(0, Math.min(d0 === 'v' ? row - k : row, d0 === 'v' ? SIZE - L : SIZE - 1));
+        return { cell: hr * SIZE + hc, dir: d0 };
+      };
+      const show = (x, y) => {
+        const { inside } = cellAt(x, y);
+        if (!inside) { target = null; ghost?.remove(); ghost = null; return; }
+        const s = snap(x, y), ok = canPlace(draft, i, s, room.adj);
+        target = { s, ok };
+        if (!ghost) { ghost = shipEl(i, s, 'ghost'); sea.append(ghost); if (origEl) origEl.style.opacity = '.25'; }
+        Object.assign(ghost.style, shipBox(i, s));
+        ghost.classList.toggle('bad', !ok);
+      };
+      const move = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+        moved = true; show(ev.clientX, ev.clientY);
+      };
+      const stop = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', end); document.removeEventListener('pointercancel', cancel); };
+      const cancel = (ev) => { if (ev.pointerId !== e.pointerId) return; stop(); renderPlace(); };
+      const end = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        stop(); blockClick = Date.now() + 400;
+        if (moved || mode === 'sea') {
+          if (!moved) show(ev.clientX, ev.clientY); // un toque con un barco elegido: se coloca ahí
+          if (target?.ok) { draft[i] = target.s; sel = next(); sound('place'); }
+          else if (target) toast(room.adj ? 'Ahí no cabe' : 'Ahí no cabe: entre barcos tiene que quedar una casilla de agua');
+        } else if (mode === 'move') { // toque en un barco puesto: lo gira
+          const s = draft[i], nd = s.dir === 'h' ? 'v' : 'h';
+          let row = Math.floor(s.cell / SIZE), col = s.cell % SIZE;
+          if (nd === 'h') col = Math.min(col, SIZE - L); else row = Math.min(row, SIZE - L);
+          const ns = { cell: row * SIZE + col, dir: nd };
+          if (canPlace(draft, i, ns, room.adj)) draft[i] = ns; else toast('No se puede girar ahí');
+        } else { // toque en la ficha: se elige ese barco (si estaba puesto, se recoge)
+          if (draft[i]) { dir = draft[i].dir; draft[i] = null; }
+          sel = i;
+        }
+        renderPlace();
+      };
+      document.addEventListener('pointermove', move); document.addEventListener('pointerup', end); document.addEventListener('pointercancel', cancel);
+      if (mode === 'sea') show(e.clientX, e.clientY);
+    }
+
+    sea.addEventListener('pointerdown', (e) => {
+      if (e.button > 0) return;
+      const { col, row, inside } = cellAt(e.clientX, e.clientY);
+      if (!inside) return;
+      const c = row * SIZE + col, i = draft.findIndex((s, j) => s && cellsOf(s, j).includes(c));
+      if (i >= 0) { e.preventDefault(); startDrag(e, i, cellsOf(draft[i], i).indexOf(c), draft[i].dir, 'move'); }
+      else if (sel !== null) { e.preventDefault(); startDrag(e, sel, Math.floor(LENS[sel] / 2), dir, 'sea'); }
+    });
+    const tray = h('div', { class: 'fl-tray' }, LENS.map((L, i) => {
+      const chip = h('button', { class: 'fl-chip' + (sel === i ? ' sel' : '') + (draft[i] ? ' placed' : ''), 'aria-label': `${NAMES[i]} (${L})` },
+        h('span', { class: 'fl-chip-ship', style: { width: L * 26 + 'px' }, html: shipSvg(i, false) }), h('small', {}, `${NAMES[i]} · ${L}`));
+      chip.addEventListener('pointerdown', (e) => { if (e.button > 0) return; e.preventDefault(); startDrag(e, i, Math.floor(L / 2), draft[i]?.dir || dir, 'tray'); });
+      return chip;
+    }));
     const ctrl = h('div', { class: 'pbtns fl-ctrl' },
       h('button', { class: 'btn outline', disabled: sel === null, onclick: () => { dir = dir === 'h' ? 'v' : 'h'; renderPlace(); } }, dir === 'h' ? 'Girar ↻ (horizontal)' : 'Girar ↻ (vertical)'),
       h('button', { class: 'btn outline', onclick: () => { draft = randomFleet(room.adj); sel = null; renderPlace(); } }, 'Aleatorio'),
       h('button', { class: 'text-btn', onclick: () => { draft = LENS.map(() => null); sel = 0; renderPlace(); } }, 'Limpiar'),
       h('button', { class: 'btn big', disabled: !placed || busy, onclick: ready }, 'Listo'));
-    fill(body, h('div', { class: 'fl-place' }, h('p', { class: 'fl-hint' }, sel === null ? (placed ? 'Flota lista. Toca un barco para moverlo o pulsa «Listo».' : 'Elige un barco abajo.') : `Toca el mar para colocar el ${NAMES[sel].toLowerCase()} (${LENS[sel]}).`), board, tray, ctrl));
+    fill(body, h('div', { class: 'fl-place' }, h('p', { class: 'fl-hint' }, placed ? 'Flota lista. Arrastra un barco para moverlo o tócalo para girarlo; pulsa «Listo» cuando quieras.' : sel === null ? 'Arrastra un barco de abajo al mar.' : `Arrastra el ${NAMES[sel].toLowerCase()} (${LENS[sel]}) al mar o toca donde quieras ponerlo.`), board, tray, ctrl));
   }
   async function ready() {
     busy = true; renderPlace();
@@ -246,7 +331,7 @@ export function openFleet({ roomId, api, onClose }) {
   }
 
   function renderBattle() {
-    const opp = oppOf(), rp = replay(roomState()), finished = room.status === 'finished';
+    const opp = oppOf(), rp = replay(roomState()), finished = room.status === 'finished' || !!rp.winner; // con los 5 barcos hundidos ya no se dispara más
     const winner = room.ff ? (room.ff === me ? opp : me) : rp.winner;
     // marcas: mis disparos en el mar enemigo y los del rival en el mío
     const eMarks = new Map(), oMarks = new Map(), eSunk = [];
@@ -266,24 +351,30 @@ export function openFleet({ roomId, api, onClose }) {
     const myTurn = !finished && rp.cur === me && !rp.pending;
     const turnText = finished
       ? (winner === me ? '¡Has ganado! 🎉' : `Gana ${nameOf(winner)}`) + (room.ff ? (room.ff === me ? ' · te has rendido' : ` · ${nameOf(room.ff)} se ha rendido`) : '')
-      : rp.cur === me ? (rp.pending ? `Esperando la respuesta de ${nameOf(opp)}…` : '¡Tu turno! Dispara al mar enemigo')
-        : (rp.pending ? `${nameOf(opp)} ha disparado…` : `Turno de ${nameOf(opp)}`);
+      : rp.cur === me ? (rp.pending ? `Esperando la respuesta de ${nameOf(opp)}…` : `¡Tu turno! Dispara${room.shots > 1 ? ` (te quedan ${rp.left})` : ' al mar enemigo'}`)
+        : (rp.pending ? `${nameOf(opp)} ha disparado…` : `Turno de ${nameOf(opp)}${room.shots > 1 ? ` · ${rp.left} disparos` : ''}`);
 
-    const enemy = boardEl({ ships: oppShips || [], marks: eMarks, cls: myTurn ? 'turn' : '', onCell: myTurn ? (c) => shoot(c, eMarks) : null });
+    const eShips = LENS.map(() => null), eRed = new Set(), sunkCells = new Set();
+    for (const { idx, ship } of sunkShips(rp.log, me)) if (idx >= 0) { eShips[idx] = ship; eRed.add(idx); cellsOf(ship, idx).forEach((c) => sunkCells.add(c)); }
+    const enemy = boardEl({ ships: oppShips || eShips, sunk: eRed, marks: eMarks, cls: myTurn ? 'turn' : '', onCell: myTurn ? (c) => { if (sunkCells.has(c)) toast('Ahí ya has hundido un barco'); else shoot(c, eMarks); } : null });
     const own = boardEl({ ships: mine?.ships || [], sunk: mySunk, marks: oMarks, cls: 'small' });
 
     // barcos enemigos que quedan (por tamaño, según lo que he hundido)
     const left = [...LENS]; for (const L of eSunk) { const k = left.indexOf(L); if (k >= 0) left.splice(k, 1); }
-    const chips = h('div', { class: 'fl-left' }, LENS.map((L, i) => { const alive = left.includes(L) && (left.splice(left.indexOf(L), 1), true); return h('span', { class: 'fl-mini' + (alive ? '' : ' dead'), title: NAMES[i], html: shipSvg(i, false), style: { width: L * 18 + 'px' } }); }));
+    const chips = h('div', { class: 'fl-left' }, LENS.map((L, i) => { const alive = left.includes(L) && (left.splice(left.indexOf(L), 1), true); return h('span', { class: 'fl-mini' + (alive ? '' : ' dead'), title: NAMES[i], html: shipSvg(i, false), style: { width: L * 11 + 'px' } }); }));
 
-    const lastEv = rp.log[rp.log.length - 1];
-    if (lastLog < 0) lastLog = rp.log.length;
+    const lastEv = rp.log[rp.log.length - 1], first = lastLog < 0;
+    if (first) lastLog = rp.log.length;
     else if (rp.log.length > lastLog) {
       lastLog = rp.log.length;
       const who = lastEv.by === me ? 'Tu disparo' : `Disparo de ${nameOf(lastEv.by)}`;
       banner = lastEv.res === '0' ? `${who}: agua` : lastEv.res === '1' ? `${who}: ¡tocado!` : `${who}: ¡hundido! (${NAMES[LENS.indexOf(Number(lastEv.res))] || 'barco'})`;
       bannerAt = Date.now(); sound(lastEv.res);
+    } else if (!first) {
+      if (myTurn && !wasMine) sound('turn');
+      if (finished && !endSounded) { endSounded = true; sound(winner === me ? 'win' : 'lose'); }
     }
+    wasMine = myTurn; if (finished) endSounded = true;
     const bannerEl = banner && Date.now() - bannerAt < 2600 ? h('div', { class: 'fl-banner ' + (lastEv?.res === '0' ? 'w' : 'h') }, banner) : null;
     if (bannerEl) { enemy.append(bannerEl); setTimeout(() => bannerEl.remove(), 2600 - (Date.now() - bannerAt)); }
 
@@ -306,7 +397,7 @@ export function openFleet({ roomId, api, onClose }) {
     busy = true;
     try {
       const next = (room.s[me] || '') + pad2(c);
-      await api.shoot(room, next); room.s[me] = next; sig = ''; render();
+      sound('shot'); await api.shoot(room, next); room.s[me] = next; sig = ''; render();
       timer.poke(900);
     } catch (e) { toast(e.message || 'No se pudo disparar'); }
     busy = false;

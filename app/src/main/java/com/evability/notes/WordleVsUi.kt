@@ -107,7 +107,7 @@ fun WvsCard(m: Social.ChatMessage, fg: Color, onOpen: (String) -> Unit) {
     val status = when {
         r == null -> ""
         else -> (if (r.status == "lobby") "Sala · ${r.players.size}/4" else if (r.status == "playing") "En juego" else "Terminada") +
-            " · ${r.rounds} ronda${if (r.rounds == 1) "" else "s"}" + (if (r.timer) " · " + timeLabel(r.secs) else "")
+            " · ${r.rounds} ronda${if (r.rounds == 1) "" else "s"}" + (if (r.same) "" else " · palabras distintas") + (if (r.timer) " · " + timeLabel(r.secs) else "")
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(44.dp).background(fg.copy(alpha = 0.15f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
@@ -157,6 +157,7 @@ fun WordleVsScreen(roomId: String, onClose: () -> Unit) {
     var inviteList by remember { mutableStateOf<List<Social.Profile>?>(null) }
 
     fun toast(t: String) = Toast.makeText(ctx, t, Toast.LENGTH_SHORT).show()
+    fun wordOf(r: Social.WRoom, round: Int, u: String = me) = WordleGame.versusWord(r.seed, round, if (r.same) 0 else r.players.indexOf(u).coerceAtLeast(0))
     fun behindOf(r: Social.WRoom, need: Int) = r.players.filter { it != me && parseVs(r.g[it]).rs.size < need }
 
     suspend fun push(r: Social.WRoom, over: Boolean) {
@@ -167,7 +168,7 @@ fun WordleVsScreen(roomId: String, onClose: () -> Unit) {
         val k = rs.size
         if (k >= r.rounds) return
         val words = segs.getOrNull(k).orEmpty()
-        val ans = WordleGame.versusWord(r.seed, k)
+        val ans = wordOf(r, k)
         val pts = words.maxOfOrNull { vsScore(it, ans) } ?: 0
         val solved = words.lastOrNull() == ans
         rs = rs + pts; st = 0L; current = ""
@@ -197,7 +198,7 @@ fun WordleVsScreen(roomId: String, onClose: () -> Unit) {
                     val words = segs.getOrNull(rr).orEmpty() + current
                     segs = segs.toMutableList().also { while (it.size <= rr) it.add(emptyList()); it[rr] = words }
                     current = ""
-                    if (words.last() == WordleGame.versusWord(r.seed, rr) || words.size >= VS_ROWS) finishRound(r, false)
+                    if (words.last() == wordOf(r, rr) || words.size >= VS_ROWS) finishRound(r, false)
                     else scope.launch { push(r, false) }
                 }
             }
@@ -263,7 +264,7 @@ fun WordleVsScreen(roomId: String, onClose: () -> Unit) {
                 onJoin = { scope.launch { try { Social.wJoin(r); room = Social.wRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onLeave = { scope.launch { try { Social.wLeave(r); onClose() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onRemove = { scope.launch { runCatching { Social.wRemove(roomId) }; onClose() } },
-                onCfg = { n, t, s -> scope.launch { try { Social.wCfg(r, n, t, s); room = Social.wRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
+                onCfg = { n, t, s, same -> scope.launch { try { Social.wCfg(r, n, t, s, same); room = Social.wRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onStart = { scope.launch { try { Social.wStart(r, (Math.random() * 2_000_000_000).toInt()); room = Social.wRoom(roomId) } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onInvite = { scope.launch { try { inviteList = Social.overview().friends.map { it.profile } } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
             )
@@ -314,7 +315,7 @@ fun WordleVsScreen(roomId: String, onClose: () -> Unit) {
 @Composable
 private fun VsLobby(
     r: Social.WRoom, me: String, names: Map<String, String>, photos: Map<String, String>,
-    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onCfg: (Int, Boolean, Int) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
+    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onCfg: (Int, Boolean, Int, Boolean) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
 ) {
     val isHost = r.host == me
     val inRoom = me in r.players
@@ -361,14 +362,21 @@ private fun VsLobby(
                         Box(
                             Modifier.weight(1f).height(46.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
                                 .border(2.dp, if (sel) Accent else Outline, shape)
-                                .then(if (isHost) Modifier.clickable { if (!sel) onCfg(n, r.timer, r.secs) } else Modifier),
+                                .then(if (isHost) Modifier.clickable { if (!sel) onCfg(n, r.timer, r.secs, r.same) } else Modifier),
                             contentAlignment = Alignment.Center,
                         ) { Text("$n", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = if (sel) Accent else OnSurface.copy(alpha = if (isHost) 1f else 0.6f)) }
                     }
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Misma palabra para todos", color = OnSurface)
+                        Text(if (r.same) "Todos adivináis la misma palabra en cada ronda." else "Cada uno tiene una palabra distinta en cada ronda.", color = OnSurfaceDim, fontSize = 12.sp)
+                    }
+                    Switch(r.same, { onCfg(r.rounds, r.timer, r.secs, it) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Temporizador por palabra", color = OnSurface, modifier = Modifier.weight(1f))
-                    Switch(r.timer, { onCfg(r.rounds, it, r.secs) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.timer, { onCfg(r.rounds, it, r.secs, r.same) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 if (r.timer) {
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -379,7 +387,7 @@ private fun VsLobby(
                             Box(
                                 Modifier.height(38.dp).widthIn(min = 64.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
                                     .border(2.dp, if (sel) Accent else Outline, shape)
-                                    .then(if (isHost) Modifier.clickable { if (!sel) onCfg(r.rounds, true, s) } else Modifier)
+                                    .then(if (isHost) Modifier.clickable { if (!sel) onCfg(r.rounds, true, s, r.same) } else Modifier)
                                     .padding(horizontal = 10.dp),
                                 contentAlignment = Alignment.Center,
                             ) { Text(timeLabel(s), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = if (sel) Accent else OnSurface.copy(alpha = if (isHost) 1f else 0.6f)) }
@@ -418,7 +426,7 @@ private fun VsGame(
     val phase = if (over) 2 else if (st > 0L) 0 else 1 // 0 jugando, 1 entre rondas, 2 terminado
     val boardRound = when (phase) { 0 -> k; 1 -> maxOf(0, k - 1); else -> r.rounds - 1 }
     val words = segs.getOrNull(boardRound).orEmpty()
-    val ans = WordleGame.versusWord(r.seed, boardRound)
+    val ans = WordleGame.versusWord(r.seed, boardRound, if (r.same) 0 else r.players.indexOf(me).coerceAtLeast(0))
     val best = HashMap<Char, Int>()
     for (g in words) WordleGame.evaluate(g, ans).forEachIndexed { i, s -> best[g[i]] = maxOf(best[g[i]] ?: -1, s) }
     fun kOf(u: String) = if (u == me) k else parseVs(r.g[u]).rs.size
@@ -549,7 +557,7 @@ private fun VsPlayerCard(r: Social.WRoom, me: String, u: String, names: Map<Stri
         }
         Text("${e.rs.sum()} pts", color = Accent, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
         if (u != me) {
-            val ansShown = WordleGame.versusWord(r.seed, showR)
+            val ansShown = WordleGame.versusWord(r.seed, showR, if (r.same) 0 else seat)
             Column(Modifier.align(Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 for (row in 0 until VS_ROWS) {
                     val ev = words.getOrNull(row)?.let { WordleGame.evaluate(it, ansShown) }
@@ -577,7 +585,7 @@ private fun VsResults(r: Social.WRoom, me: String, names: Map<String, String>, p
         top[0].u == me -> "🏆 ¡Has ganado!"
         else -> "Gana ${names[top[0].u] ?: "?"}"
     }
-    val answers = (0 until r.rounds).joinToString(" · ") { WordleGame.versusWord(r.seed, it).uppercase() }
+    fun wordsOf(seat: Int) = (0 until r.rounds).joinToString(" · ") { WordleGame.versusWord(r.seed, it, if (r.same) 0 else seat).uppercase() }
     Column(Modifier.widthIn(max = 420.dp).clip(RoundedCornerShape(22.dp)).background(Surface1).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = OnSurface, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         var place = 0
@@ -597,7 +605,8 @@ private fun VsResults(r: Social.WRoom, me: String, names: Map<String, String>, p
                 Text(row.rs.mapIndexed { i, p -> "R${i + 1}: $p" }.joinToString(" · "), fontSize = 12.sp, color = OnSurfaceDim)
             }
         }
-        Text("Palabras: $answers", fontSize = 12.sp, color = OnSurfaceDim)
+        if (r.same) Text("Palabras: ${wordsOf(0)}", fontSize = 12.sp, color = OnSurfaceDim)
+        else rows.forEach { row -> Text("${if (row.u == me) "Tú" else names[row.u] ?: "?"}: ${wordsOf(r.players.indexOf(row.u).coerceAtLeast(0))}", fontSize = 12.sp, color = OnSurfaceDim) }
         PolyButton("Cerrar", true, true) { onClose() }
     }
 }

@@ -444,7 +444,7 @@ service cloud.firestore {
     }
 
     // salas del Wordle versus (2 a 4 jugadores): wrooms/{id}. `players` = quienes juegan (el primero es quien la crea), `rounds` = rondas
-    // (1 a 5), `timer` = tiempo limitado por palabra, `secs` = segundos por palabra (60 si falta), `seed` = de ahí salen las palabras de cada ronda (las mismas para todos) y `g` = el avance
+    // (1 a 5), `timer` = tiempo limitado por palabra, `secs` = segundos por palabra (60 si falta), `same` = la misma palabra para todos en cada ronda (sí si falta), `seed` = de ahí salen las palabras de cada ronda (las mismas para todos) y `g` = el avance
     // de cada jugador { uid: { w: palabras de cada ronda, rs: puntos de las rondas terminadas, st: cuándo empezó la ronda } }; cada uno
     // escribe solo el suyo. Si la sala se crea desde un grupo lleva `group` y cualquier miembro puede entrar hasta que se llene.
     match /wrooms/{id} {
@@ -455,7 +455,7 @@ service cloud.firestore {
         && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players
           || ('group' in resource.data && inGroup(resource.data.group)));
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'rounds', 'timer', 'secs', 'seed', 'g', 'at'])
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'rounds', 'timer', 'secs', 'same', 'seed', 'g', 'at'])
         && request.resource.data.host == request.auth.uid
         && request.resource.data.players == [request.auth.uid]
         && (('group' in request.resource.data)
@@ -464,15 +464,17 @@ service cloud.firestore {
         && request.resource.data.status == 'lobby'
         && request.resource.data.rounds is int && request.resource.data.rounds >= 1 && request.resource.data.rounds <= 5
         && request.resource.data.timer is bool
+        && (!('same' in request.resource.data) || request.resource.data.same is bool)
         && (!('secs' in request.resource.data) || (request.resource.data.secs is int && request.resource.data.secs >= 15 && request.resource.data.secs <= 600))
         && request.resource.data.g.size() == 0
         && request.resource.data.at == request.time;
       allow update: if signedIn() && (
         // el anfitrión cambia las opciones o invita a más amigos (solo en la sala de espera)
         (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rounds', 'timer', 'secs', 'invited'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rounds', 'timer', 'secs', 'same', 'invited'])
           && request.resource.data.rounds is int && request.resource.data.rounds >= 1 && request.resource.data.rounds <= 5
           && request.resource.data.timer is bool
+          && (!('same' in request.resource.data) || request.resource.data.same is bool)
           && (!('secs' in request.resource.data) || (request.resource.data.secs is int && request.resource.data.secs >= 15 && request.resource.data.secs <= 600))
           && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
         // alguien entra
@@ -503,7 +505,7 @@ service cloud.firestore {
     }
 
     // salas de Hundir la flota (2 jugadores): frooms/{id}. `players` = [anfitrión, rival], `adj` = los barcos pueden tocarse, `again` = quien
-    // acierta repite turno, `seed` = de ahí sale quién empieza. Cada jugador guarda su flota en SU dispositivo y aquí solo deja `h` = el hash
+    // acierta repite turno, `shots` = disparos por turno (1 a 5; 1 si falta), `seed` = de ahí sale quién empieza. Cada jugador guarda su flota en SU dispositivo y aquí solo deja `h` = el hash
     // de su flota (compromiso, para no poder cambiarla); `s` = disparos de cada jugador («NN» por disparo), `a` = lo que responde el
     // defensor a cada disparo del rival (0 agua, 1 tocado, 2 a 5 hundido de ese tamaño) y `v` = la flota revelada al terminar, para que el
     // rival compruebe que no hubo trampa. Cada uno escribe solo lo suyo. Si se crea desde un grupo lleva `group`.
@@ -515,7 +517,7 @@ service cloud.firestore {
         && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players
           || ('group' in resource.data && inGroup(resource.data.group)));
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'adj', 'again', 'seed', 'h', 's', 'a', 'v', 'at'])
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'adj', 'again', 'shots', 'seed', 'h', 's', 'a', 'v', 'at'])
         && request.resource.data.host == request.auth.uid
         && request.resource.data.players == [request.auth.uid]
         && (('group' in request.resource.data)
@@ -523,13 +525,15 @@ service cloud.firestore {
           : (request.resource.data.invited.size() <= 1 && invitedOk(request.resource.data.invited)))
         && request.resource.data.status == 'lobby'
         && request.resource.data.adj is bool && request.resource.data.again is bool
+        && (!('shots' in request.resource.data) || (request.resource.data.shots is int && request.resource.data.shots >= 1 && request.resource.data.shots <= 5))
         && request.resource.data.h.size() == 0 && request.resource.data.s.size() == 0 && request.resource.data.a.size() == 0 && request.resource.data.v.size() == 0
         && request.resource.data.at == request.time;
       allow update: if signedIn() && (
         // el anfitrión cambia las reglas o invita (solo en la sala de espera)
         (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['adj', 'again', 'invited'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['adj', 'again', 'shots', 'invited'])
           && request.resource.data.adj is bool && request.resource.data.again is bool
+          && (!('shots' in request.resource.data) || (request.resource.data.shots is int && request.resource.data.shots >= 1 && request.resource.data.shots <= 5))
           && request.resource.data.invited.size() <= 1
           && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
         // el rival entra
@@ -575,6 +579,10 @@ service cloud.firestore {
           && request.resource.data.a[request.auth.uid].size() == resource.data.a.get(request.auth.uid, '').size() + 1
           && request.resource.data.a[request.auth.uid].size() * 2 <= resource.data.s.get(fOpp(resource), '').size()
           && request.resource.data.v[request.auth.uid] is string && request.resource.data.v[request.auth.uid].size() <= 120)
+        // el ganador cierra la partida cuando el rival ya ha respondido «hundido» a los 5 barcos (por si el rival no tiene la pantalla abierta)
+        || (resource.data.status == 'playing' && request.auth.uid in resource.data.players && resource.data.players.size() == 2
+          && fOnly('status') && request.resource.data.status == 'finished'
+          && resource.data.a.get(fOpp(resource), '').replace('[01]', '').size() >= 5)
         // rendirse: termina la partida y se revela la flota
         || (resource.data.status == 'playing' && request.auth.uid in resource.data.players
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'ff', 'v'])
