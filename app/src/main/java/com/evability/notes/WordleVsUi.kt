@@ -322,10 +322,10 @@ private fun VsLobby(
     val canJoin = !inRoom && (me in r.invited || r.group.isNotEmpty()) && r.players.size < 4 // en la sala de un grupo entra cualquier miembro hasta que se llene
     val pending = r.invited.filter { it !in r.players }
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column(Modifier.widthIn(max = 540.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.widthIn(max = 540.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (rowIdx in 0..1) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (k in 0..1) {
@@ -334,12 +334,12 @@ private fun VsLobby(
                         val shape = RoundedCornerShape(16.dp)
                         val col = PolyData.colors[i]
                         Row(
-                            Modifier.weight(1f).height(54.dp).clip(shape).background(Surface1).border(2.dp, col.copy(alpha = if (u != null) 1f else 0.4f), shape).padding(9.dp),
+                            Modifier.weight(1f).height(44.dp).clip(shape).background(Surface1).border(2.dp, col.copy(alpha = if (u != null) 1f else 0.4f), shape).padding(horizontal = 8.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             if (u != null) {
-                                Avatar(names[u] ?: "?", photos[u] ?: "", 34)
-                                Spacer(Modifier.width(8.dp))
+                                Avatar(names[u] ?: "?", photos[u] ?: "", 28)
+                                Spacer(Modifier.width(6.dp))
                                 Text(if (u == me) "Tú" else names[u] ?: "?", color = OnSurface, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                 if (u == r.host) { Spacer(Modifier.width(4.dp)); Text("♛", color = Color(0xFFE3A94A), fontSize = 18.sp) }
                             } else {
@@ -350,17 +350,14 @@ private fun VsLobby(
                     }
                 }
             }
-            Column(Modifier.clip(RoundedCornerShape(22.dp)).background(Surface1).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Rondas", color = OnSurface)
-                    Text("${r.rounds}", color = OnSurface, fontWeight = FontWeight.Black, fontSize = 20.sp)
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.clip(RoundedCornerShape(18.dp)).background(Surface1).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Rondas", color = OnSurface, fontWeight = FontWeight.SemiBold)
                     for (n in 1..5) {
                         val sel = r.rounds == n
                         val shape = RoundedCornerShape(14.dp)
                         Box(
-                            Modifier.weight(1f).height(46.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
+                            Modifier.weight(1f).height(36.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
                                 .border(2.dp, if (sel) Accent else Outline, shape)
                                 .then(if (isHost) Modifier.clickable { if (!sel) onCfg(n, r.timer, r.secs, r.same) } else Modifier),
                             contentAlignment = Alignment.Center,
@@ -385,7 +382,7 @@ private fun VsLobby(
                             val sel = r.secs == s
                             val shape = RoundedCornerShape(12.dp)
                             Box(
-                                Modifier.height(38.dp).widthIn(min = 64.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
+                                Modifier.height(34.dp).widthIn(min = 54.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
                                     .border(2.dp, if (sel) Accent else Outline, shape)
                                     .then(if (isHost) Modifier.clickable { if (!sel) onCfg(r.rounds, true, s, r.same) } else Modifier)
                                     .padding(horizontal = 10.dp),
@@ -396,7 +393,7 @@ private fun VsLobby(
                 }
                 Text(
                     "Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 2 a 4 personas.",
-                    color = OnSurfaceDim, fontSize = 13.sp,
+                    color = OnSurfaceDim, fontSize = 11.sp, lineHeight = 13.sp,
                 )
             }
             if (canJoin) PolyButton("Unirse", true, true) { onJoin() }
@@ -479,56 +476,58 @@ private fun VsGame(
     }
 
     @Composable
-    fun Side(modifier: Modifier) {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            for (u in r.players) VsPlayerCard(r, me, u, names, photos, segs, rs, st)
+    fun Side(modifier: Modifier, mini: androidx.compose.ui.unit.Dp) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            for (u in r.players) VsPlayerCard(r, me, u, names, photos, segs, rs, st, mini)
             if (r.players.size > 1 && !over) TextButton(onClick = onForfeit, contentPadding = androidx.compose.foundation.layout.PaddingValues(2.dp)) { Text("Abandonar", color = OnSurfaceDim, fontSize = 11.sp) }
         }
     }
 
     @Composable
-    fun Keyboard() {
-        Column(Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    fun Keyboard(keyH: androidx.compose.ui.unit.Dp) {
+        Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(bottom = 3.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             listOf("QWERTYUIOP", "ASDFGHJKLÑ", "ZXCVBNM").forEachIndexed { rowIndex, letters ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    if (rowIndex == 2) KeyCap("ENTER", 1.6f, Surface2, null, 44.dp) { onKey("ENTER") }
+                    if (rowIndex == 2) KeyCap("ENTER", 1.6f, Surface2, null, keyH) { onKey("ENTER") }
                     letters.forEach { ch ->
                         val s = best[ch.lowercaseChar()] ?: -1
-                        KeyCap(ch.toString(), 1f, if (s >= 0) statusColor(s) else Surface2, if (s >= 0) Color.White else null, 44.dp) { onKey(ch.toString()) }
+                        KeyCap(ch.toString(), 1f, if (s >= 0) statusColor(s) else Surface2, if (s >= 0) Color.White else null, keyH) { onKey(ch.toString()) }
                     }
-                    if (rowIndex == 2) KeyCap("⌫", 1.6f, Surface2, null, 44.dp) { onKey("⌫") }
+                    if (rowIndex == 2) KeyCap("⌫", 1.6f, Surface2, null, keyH) { onKey("⌫") }
                 }
             }
         }
     }
 
     if (finishedAll) {
-        // al terminar se puede desplazar: tablero, jugadores y resultados
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                BoxWithConstraints(Modifier.weight(1f)) { Main(minOf(maxWidth, 330.dp)) }
-                Side(Modifier.width(106.dp))
-            }
+        // al terminar solo se ven los resultados, a todo el ancho (con scroll solo si la pantalla fuese diminuta)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             VsResults(r, me, names, photos, rs, onClose)
-            Spacer(Modifier.height(16.dp))
         }
     } else {
-        Column(Modifier.fillMaxSize().padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // el tablero ocupa lo que cabe: ni más ancho que su columna ni tan alto que empuje el teclado
-                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
-                    Main(minOf(maxWidth, 330.dp, (maxHeight - 92.dp) * 5 / 6))
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val keyH = (maxHeight * 0.07f).coerceIn(40.dp, 62.dp)
+            val n = r.players.size
+            // cuadritos de los demás: se encogen según cuántos jugadores haya para que la columna quepa sin scroll
+            val sideH = maxHeight - keyH * 3 - 28.dp
+            val mini = (((sideH - 5.dp * (n - 1)) / n - 50.dp) / 6).coerceIn(4.dp, 10.dp)
+            Column(Modifier.fillMaxSize().padding(horizontal = 3.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    // el tablero ocupa lo que cabe: ni más ancho que su columna ni tan alto que empuje el teclado
+                    BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                        Main(minOf(maxWidth, 380.dp, (maxHeight - 84.dp) * 5 / 6))
+                    }
+                    Side(Modifier.width(90.dp).fillMaxHeight(), mini)
                 }
-                Side(Modifier.width(106.dp).fillMaxHeight().verticalScroll(rememberScrollState()))
+                Keyboard(keyH)
             }
-            Keyboard()
         }
     }
 }
 
 /** Tarjeta (compacta) de un jugador: puntos, intento que lleva (en cuadritos de colores, sin letras) y si te está esperando. */
 @Composable
-private fun VsPlayerCard(r: Social.WRoom, me: String, u: String, names: Map<String, String>, photos: Map<String, String>, mySegs: List<List<String>>, myRs: List<Int>, mySt: Long) {
+private fun VsPlayerCard(r: Social.WRoom, me: String, u: String, names: Map<String, String>, photos: Map<String, String>, mySegs: List<List<String>>, myRs: List<Int>, mySt: Long, mini: androidx.compose.ui.unit.Dp = 9.dp) {
     val seat = r.players.indexOf(u).coerceAtLeast(0)
     val e = if (u == me) VsMine(mySegs, myRs, mySt) else parseVs(r.g[u])
     val myK = myRs.size
@@ -537,9 +536,9 @@ private fun VsPlayerCard(r: Social.WRoom, me: String, u: String, names: Map<Stri
     val words = e.segs.getOrNull(showR).orEmpty()
     val status = when {
         u == me -> if (myK >= r.rounds) "Terminaste" else if (mySt > 0L) "Intento ${minOf(VS_ROWS, mySegs.getOrNull(myK).orEmpty().size + 1)}/$VS_ROWS" else "Entre rondas"
-        k >= r.rounds -> "Ha terminado"
-        k > myK -> "⏳ Te espera · ${words.size} int."
-        k < myK -> "Aún en la ronda ${k + 1}"
+        k >= r.rounds -> "Terminó"
+        k > myK -> "⏳ Te espera"
+        k < myK -> "Ronda ${k + 1}"
         e.st > 0L || words.isNotEmpty() -> "Intento ${minOf(VS_ROWS, words.size + (if (e.st > 0L) 1 else 0))}/$VS_ROWS"
         else -> "Sin empezar"
     }
@@ -547,30 +546,30 @@ private fun VsPlayerCard(r: Social.WRoom, me: String, u: String, names: Map<Stri
     val col = PolyData.colors[seat]
     val shape = RoundedCornerShape(14.dp)
     Column(
-        Modifier.fillMaxWidth().clip(shape).background(Surface1).border(if (waiting) 3.dp else 2.dp, col, shape).padding(horizontal = 7.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+        Modifier.fillMaxWidth().clip(shape).background(Surface1).border(if (waiting) 3.dp else 2.dp, col, shape).padding(horizontal = 5.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Avatar(names[u] ?: "?", photos[u] ?: "", 22)
-            Spacer(Modifier.width(5.dp))
-            Text(if (u == me) "Tú" else names[u] ?: "?", color = OnSurface, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Avatar(names[u] ?: "?", photos[u] ?: "", 18)
+            Spacer(Modifier.width(4.dp))
+            Text(if (u == me) "Tú" else names[u] ?: "?", color = OnSurface, fontWeight = FontWeight.ExtraBold, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text("${e.rs.sum()}", color = Accent, fontWeight = FontWeight.ExtraBold, fontSize = 11.5.sp)
         }
-        Text("${e.rs.sum()} pts", color = Accent, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
         if (u != me) {
-            val ansShown = WordleGame.versusWord(r.seed, showR, if (r.same) 0 else seat)
+            val ansShown = if (r.same) WordleGame.versusWord(r.seed, showR) else WordleGame.versusWord(r.seed, showR, seat)
             Column(Modifier.align(Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 for (row in 0 until VS_ROWS) {
                     val ev = words.getOrNull(row)?.let { WordleGame.evaluate(it, ansShown) }
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         for (c in 0 until 5) {
                             val s = ev?.get(c) ?: -1
-                            Box(Modifier.size(10.dp).background(if (s >= 0) statusColor(s) else Color.Transparent, RoundedCornerShape(2.dp)).border(1.5.dp, if (s >= 0) statusColor(s) else Outline, RoundedCornerShape(2.dp)))
+                            Box(Modifier.size(mini).background(if (s >= 0) statusColor(s) else Color.Transparent, RoundedCornerShape(2.dp)).border(1.dp, if (s >= 0) statusColor(s) else Outline, RoundedCornerShape(2.dp)))
                         }
                     }
                 }
             }
         }
-        Text(status, color = OnSurfaceDim, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(status, color = OnSurfaceDim, fontSize = 10.sp, lineHeight = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

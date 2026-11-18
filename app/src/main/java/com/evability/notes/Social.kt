@@ -946,7 +946,7 @@ object Social {
         val id: String, val host: String, val invited: List<String>, val players: List<String>, val status: String, val group: String,
         val adj: Boolean, val again: Boolean, val seed: Int,
         val h: Map<String, String>, val s: Map<String, String>, val a: Map<String, String>, val v: Map<String, String>, val ff: String,
-        val shots: Int = 1,
+        val shots: Int = 1, val reveal: Boolean = false, val rv: Map<String, String> = emptyMap(),
     )
 
     private fun JSONObject.strMap(key: String): Map<String, String> {
@@ -959,7 +959,7 @@ object Social {
             id, it.text("host"), it.list("invited"), it.list("players"), it.text("status"), it.text("group"),
             it.bool("adj"), it.optJSONObject("fields")?.optJSONObject("again")?.optBoolean("booleanValue", true) ?: true, it.int("seed"),
             it.strMap("h"), it.strMap("s"), it.strMap("a"), it.strMap("v"), it.text("ff"),
-            it.int("shots").takeIf { n -> n in 1..5 } ?: 1,
+            it.int("shots").takeIf { n -> n in 1..5 } ?: 1, it.bool("reveal"), it.strMap("rv"),
         )
     }
 
@@ -978,8 +978,8 @@ object Social {
             write(
                 "frooms/$id",
                 JSONObject().also { if (grp != null) it.put("group", str(grp)) }.put("host", str(me)).put("invited", strs(if (grp != null) emptyList() else listOf(friendUid)))
-                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("adj", bool(false)).put("again", bool(true)).put("shots", int(1)).put("seed", int(0))
-                    .put("h", emptyMapV()).put("s", emptyMapV()).put("a", emptyMapV()).put("v", emptyMapV()),
+                    .put("players", strs(listOf(me))).put("status", str("lobby")).put("adj", bool(false)).put("again", bool(true)).put("shots", int(1)).put("reveal", bool(true)).put("seed", int(0))
+                    .put("h", emptyMapV()).put("s", emptyMapV()).put("a", emptyMapV()).put("v", emptyMapV()).put("rv", emptyMapV()),
                 serverTime = "at",
             ),
             write("$base/messages/$id", JSONObject().put("from", str(me)).put("text", str("")).put("kind", str("fleet")).put("game", str(id)), serverTime = "at"),
@@ -1007,8 +1007,8 @@ object Social {
         commit(writeMask("frooms/${room.id}", JSONObject().put("players", strs(listOf(room.host))), listOf("players")))
     }
 
-    suspend fun fCfg(room: FRoom, adj: Boolean, again: Boolean, shots: Int) = withContext(Dispatchers.IO) {
-        commit(writeMask("frooms/${room.id}", JSONObject().put("adj", bool(adj)).put("again", bool(again)).put("shots", int(shots.toLong())), listOf("adj", "again", "shots")))
+    suspend fun fCfg(room: FRoom, adj: Boolean, again: Boolean, shots: Int, reveal: Boolean) = withContext(Dispatchers.IO) {
+        commit(writeMask("frooms/${room.id}", JSONObject().put("adj", bool(adj)).put("again", bool(again)).put("shots", int(shots.toLong())).put("reveal", bool(reveal)), listOf("adj", "again", "shots", "reveal")))
     }
 
     suspend fun fStart(room: FRoom, seed: Int) = withContext(Dispatchers.IO) {
@@ -1028,10 +1028,11 @@ object Social {
     }
 
     /** Todas mis respuestas hasta ahora; si con esta pierdo la última flota, la partida termina y revelo la mía. */
-    suspend fun fAnswer(room: FRoom, ans: String, reveal: String?) = withContext(Dispatchers.IO) {
+    suspend fun fAnswer(room: FRoom, ans: String, reveal: String?, rv: String? = null) = withContext(Dispatchers.IO) {
         val me = live().uid
         val f = JSONObject().put("a", oneOf(me, ans))
         val mask = arrayListOf("a.`$me`")
+        if (rv != null) { f.put("rv", oneOf(me, rv)); mask.add("rv.`$me`") }
         if (reveal != null) { f.put("v", oneOf(me, reveal)).put("status", str("finished")); mask.add("v.`$me`"); mask.add("status") }
         commit(writeMask("frooms/${room.id}", f, mask))
     }

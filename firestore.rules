@@ -505,19 +505,29 @@ service cloud.firestore {
     }
 
     // salas de Hundir la flota (2 jugadores): frooms/{id}. `players` = [anfitrión, rival], `adj` = los barcos pueden tocarse, `again` = quien
-    // acierta repite turno, `shots` = disparos por turno (1 a 5; 1 si falta), `seed` = de ahí sale quién empieza. Cada jugador guarda su flota en SU dispositivo y aquí solo deja `h` = el hash
-    // de su flota (compromiso, para no poder cambiarla); `s` = disparos de cada jugador («NN» por disparo), `a` = lo que responde el
+    // acierta repite turno, `shots` = disparos por turno (1 a 5; 1 si falta), `reveal` = al tocar un barco el defensor lo enseña entero (`rv`), `seed` = de ahí sale quién empieza. Cada jugador guarda su flota en SU dispositivo y aquí solo deja `h` = el hash
+    // de su flota (compromiso, para no poder cambiarla); `s` = disparos de cada jugador («NN» por disparo; se mandan por tandas), `a` = lo que responde el
     // defensor a cada disparo del rival (0 agua, 1 tocado, 2 a 5 hundido de ese tamaño) y `v` = la flota revelada al terminar, para que el
     // rival compruebe que no hubo trampa. Cada uno escribe solo lo suyo. Si se crea desde un grupo lleva `group`.
     match /frooms/{id} {
       function fOpp(res) { return res.data.players[0] == request.auth.uid ? res.data.players[1] : res.data.players[0]; }
       function fOnly(field) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly([field]); }
+      // lo que enseña el defensor al ser tocado un barco (`rv`: «iNNd» por barco, hasta 5): solo su parte, solo añadir y de 4 en 4
+      function rvOk() {
+        return mapOnly('rv') && request.resource.data.rv[request.auth.uid] is string
+          && request.resource.data.rv[request.auth.uid].size() <= 20 && request.resource.data.rv[request.auth.uid].size() % 4 == 0;
+      }
+      // responder: solo cambia `a` (y, si se enseña un barco, `rv`)
+      function aOnly() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['a', 'rv']) && mapOnly('a')
+          && (!('rv' in request.resource.data.diff(resource.data).affectedKeys()) || rvOk());
+      }
       function mapOnly(field) { return request.resource.data[field].diff(resource.data[field]).affectedKeys().hasOnly([request.auth.uid]); }
       allow read: if signedIn()
         && (request.auth.uid == resource.data.host || request.auth.uid in resource.data.invited || request.auth.uid in resource.data.players
           || ('group' in resource.data && inGroup(resource.data.group)));
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'adj', 'again', 'shots', 'seed', 'h', 's', 'a', 'v', 'at'])
+        && request.resource.data.keys().hasOnly(['host', 'invited', 'players', 'group', 'status', 'adj', 'again', 'shots', 'reveal', 'seed', 'h', 's', 'a', 'v', 'rv', 'at'])
         && request.resource.data.host == request.auth.uid
         && request.resource.data.players == [request.auth.uid]
         && (('group' in request.resource.data)
@@ -526,13 +536,16 @@ service cloud.firestore {
         && request.resource.data.status == 'lobby'
         && request.resource.data.adj is bool && request.resource.data.again is bool
         && (!('shots' in request.resource.data) || (request.resource.data.shots is int && request.resource.data.shots >= 1 && request.resource.data.shots <= 5))
+        && (!('reveal' in request.resource.data) || request.resource.data.reveal is bool)
+        && (!('rv' in request.resource.data) || request.resource.data.rv.size() == 0)
         && request.resource.data.h.size() == 0 && request.resource.data.s.size() == 0 && request.resource.data.a.size() == 0 && request.resource.data.v.size() == 0
         && request.resource.data.at == request.time;
       allow update: if signedIn() && (
         // el anfitrión cambia las reglas o invita (solo en la sala de espera)
         (request.auth.uid == resource.data.host && resource.data.status == 'lobby'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['adj', 'again', 'shots', 'invited'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['adj', 'again', 'shots', 'reveal', 'invited'])
           && request.resource.data.adj is bool && request.resource.data.again is bool
+          && (!('reveal' in request.resource.data) || request.resource.data.reveal is bool)
           && (!('shots' in request.resource.data) || (request.resource.data.shots is int && request.resource.data.shots >= 1 && request.resource.data.shots <= 5))
           && request.resource.data.invited.size() <= 1
           && request.resource.data.invited.hasAll(resource.data.invited) && invitedOk(request.resource.data.invited))
@@ -556,27 +569,32 @@ service cloud.firestore {
           && fOnly('h') && mapOnly('h')
           && !(request.auth.uid in resource.data.h)
           && request.resource.data.h[request.auth.uid] is string && request.resource.data.h[request.auth.uid].size() == 64)
-        // disparar: un disparo más (2 cifras) y con el anterior ya respondido
+        // disparar: de 1 a 5 disparos más de golpe (2 cifras cada uno) y con todos los anteriores ya respondidos
         || (resource.data.status == 'playing' && request.auth.uid in resource.data.players && resource.data.players.size() == 2
           && fOnly('s') && mapOnly('s')
           && request.auth.uid in resource.data.h && fOpp(resource) in resource.data.h
           && request.resource.data.s[request.auth.uid] is string
-          && request.resource.data.s[request.auth.uid].size() == resource.data.s.get(request.auth.uid, '').size() + 2
+          && request.resource.data.s[request.auth.uid].size() >= resource.data.s.get(request.auth.uid, '').size() + 2
+          && request.resource.data.s[request.auth.uid].size() <= resource.data.s.get(request.auth.uid, '').size() + 10
+          && (request.resource.data.s[request.auth.uid].size() - resource.data.s.get(request.auth.uid, '').size()) % 2 == 0
           && request.resource.data.s[request.auth.uid].size() <= 200
           && resource.data.a.get(fOpp(resource), '').size() * 2 == resource.data.s.get(request.auth.uid, '').size())
-        // responder a un disparo del rival (una respuesta más)
+        // responder a los disparos del rival (de 1 a 5 respuestas más, todas las de la tanda a la vez)
         || (resource.data.status == 'playing' && request.auth.uid in resource.data.players && resource.data.players.size() == 2
-          && fOnly('a') && mapOnly('a')
+          && aOnly()
           && request.resource.data.a[request.auth.uid] is string
-          && request.resource.data.a[request.auth.uid].size() == resource.data.a.get(request.auth.uid, '').size() + 1
+          && request.resource.data.a[request.auth.uid].size() >= resource.data.a.get(request.auth.uid, '').size() + 1
+          && request.resource.data.a[request.auth.uid].size() <= resource.data.a.get(request.auth.uid, '').size() + 5
           && request.resource.data.a[request.auth.uid].size() * 2 <= resource.data.s.get(fOpp(resource), '').size())
         // responder con el último disparo (se hunde la última flota): termina la partida y se revela la flota
         || (resource.data.status == 'playing' && request.auth.uid in resource.data.players && resource.data.players.size() == 2
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['a', 'status', 'v'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['a', 'status', 'v', 'rv'])
           && request.resource.data.status == 'finished'
           && mapOnly('a') && mapOnly('v')
+          && (!('rv' in request.resource.data.diff(resource.data).affectedKeys()) || rvOk())
           && request.resource.data.a[request.auth.uid] is string
-          && request.resource.data.a[request.auth.uid].size() == resource.data.a.get(request.auth.uid, '').size() + 1
+          && request.resource.data.a[request.auth.uid].size() >= resource.data.a.get(request.auth.uid, '').size() + 1
+          && request.resource.data.a[request.auth.uid].size() <= resource.data.a.get(request.auth.uid, '').size() + 5
           && request.resource.data.a[request.auth.uid].size() * 2 <= resource.data.s.get(fOpp(resource), '').size()
           && request.resource.data.v[request.auth.uid] is string && request.resource.data.v[request.auth.uid].size() <= 120)
         // el ganador cierra la partida cuando el rival ya ha respondido «hundido» a los 5 barcos (por si el rival no tiene la pantalla abierta)

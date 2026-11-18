@@ -292,12 +292,12 @@ export function createHome({ openDoc, onTheme }) {
     const sel = S.docs.filter((d) => S.selected.has(d.id));
     const allFav = sel.length && sel.every((d) => d.favorite);
 
-    let logoTimer;
+    let logoTimer, logoSong = null;
     const logo = h('button', { class: 'logo', 'aria-label': 'Evability', onclick: () => {
       // solo suena en la pantalla de inicio: no con Amigos, el Ternurín, un documento o una ventana encima
       if (document.querySelector('.pomo, .editor, .overlay')) return;
       logo.classList.add('bounce'); clearTimeout(logoTimer); logoTimer = setTimeout(() => logo.classList.remove('bounce'), 250);
-      if (localStorage.getItem('ev.logoMuted') !== '1') { const a = new Audio('easter-egg.mp3'); a.play().catch(() => {}); }
+      if (localStorage.getItem('ev.logoMuted') !== '1') { logoSong?.pause(); logoSong = new Audio('easter-egg.mp3'); logoSong.play().catch(() => {}); }
     } }, h('img', { src: 'icons/logo.png', alt: '' }));
 
     const search = h('input', { class: 'field search', type: 'search', placeholder: 'Buscar documentos', value: S.query });

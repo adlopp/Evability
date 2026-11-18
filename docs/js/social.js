@@ -569,8 +569,8 @@ const wvsApi = (id) => ({
 const strMap = (d, k) => Object.fromEntries(Object.entries(d.fields?.[k]?.mapValue?.fields || {}).map(([u, v]) => [u, v.stringValue || '']));
 const froomOf = (d, id) => (d ? {
   id, host: text(d, 'host'), invited: list(d, 'invited'), players: list(d, 'players'), status: text(d, 'status'), group: text(d, 'group'),
-  adj: d.fields?.adj?.booleanValue === true, again: d.fields?.again?.booleanValue !== false, shots: Math.min(5, Math.max(1, Number(d.fields?.shots?.integerValue || 1))), seed: Number(d.fields?.seed?.integerValue || 0),
-  h: strMap(d, 'h'), s: strMap(d, 's'), a: strMap(d, 'a'), v: strMap(d, 'v'), ff: text(d, 'ff'),
+  adj: d.fields?.adj?.booleanValue === true, again: d.fields?.again?.booleanValue !== false, shots: Math.min(5, Math.max(1, Number(d.fields?.shots?.integerValue || 1))), reveal: d.fields?.reveal?.booleanValue === true, seed: Number(d.fields?.seed?.integerValue || 0),
+  h: strMap(d, 'h'), s: strMap(d, 's'), a: strMap(d, 'a'), v: strMap(d, 'v'), rv: strMap(d, 'rv'), ff: text(d, 'ff'),
 } : null);
 const getFRoom = async (id) => froomOf((await getAll('frooms', [id]).catch(() => ({})))[id], id);
 const emptyMap = () => ({ mapValue: { fields: {} } });
@@ -580,7 +580,7 @@ const oneOf = (me, v) => ({ mapValue: { fields: { [me]: str(v) } } });
 async function createFRoom(friendUid) {
   const me = (await live()).uid, base = await chatBase(friendUid), id = uid(), grp = isGroup(friendUid) ? friendUid.slice(2) : null;
   await commit(
-    write(`frooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), adj: boolV(false), again: boolV(true), shots: intV(1), seed: intV(0), h: emptyMap(), s: emptyMap(), a: emptyMap(), v: emptyMap() }, { serverTime: 'at' }),
+    write(`frooms/${id}`, { host: str(me), ...(grp ? { group: str(grp) } : {}), invited: strs(grp ? [] : [friendUid]), players: strs([me]), status: str('lobby'), adj: boolV(false), again: boolV(true), shots: intV(1), reveal: boolV(true), seed: intV(0), h: emptyMap(), s: emptyMap(), a: emptyMap(), v: emptyMap(), rv: emptyMap() }, { serverTime: 'at' }),
     write(`${base}/messages/${id}`, { from: str(me), text: str(''), kind: str('fleet'), game: str(id) }, { serverTime: 'at' }),
     metaWrite(base, me));
   return id;
@@ -600,16 +600,17 @@ const fleetApi = (id) => ({
   },
   join: async (room) => { await commit(writeMask(`frooms/${room.id}`, { players: strs([...room.players, (await live()).uid]) }, ['players'])); },
   leave: async (room) => { await commit(writeMask(`frooms/${room.id}`, { players: strs([room.host]) }, ['players'])); },
-  setCfg: async (room, c) => { await commit(writeMask(`frooms/${room.id}`, { adj: boolV(c.adj), again: boolV(c.again), shots: intV(c.shots || 1) }, ['adj', 'again', 'shots'])); },
+  setCfg: async (room, c) => { await commit(writeMask(`frooms/${room.id}`, { adj: boolV(c.adj), again: boolV(c.again), shots: intV(c.shots || 1), reveal: boolV(c.reveal === true) }, ['adj', 'again', 'shots', 'reveal'])); },
   start: async (room, seed) => { await commit(writeMask(`frooms/${room.id}`, { status: str('playing'), seed: intV(seed) }, ['status', 'seed'])); },
   /** Deja el hash de la flota (una sola vez). */
   place: async (room, hash) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { h: oneOf(me, hash) }, ['h.`' + me + '`'])); },
   /** Todos mis disparos hasta ahora («NN» por disparo). */
   shoot: async (room, shots) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { s: oneOf(me, shots) }, ['s.`' + me + '`'])); },
   /** Todas mis respuestas hasta ahora; si con esta pierdo la última flota, la partida termina y revelo la mía (`reveal`). */
-  answer: async (room, ans, reveal) => {
+  answer: async (room, ans, reveal, rv) => {
     const me = (await live()).uid;
-    await commit(writeMask(`frooms/${room.id}`, { a: oneOf(me, ans), ...(reveal ? { v: oneOf(me, reveal), status: str('finished') } : {}) }, ['a.`' + me + '`', ...(reveal ? ['v.`' + me + '`', 'status'] : [])]));
+    await commit(writeMask(`frooms/${room.id}`, { a: oneOf(me, ans), ...(reveal ? { v: oneOf(me, reveal), status: str('finished') } : {}), ...(rv ? { rv: oneOf(me, rv) } : {}) },
+      ['a.`' + me + '`', ...(reveal ? ['v.`' + me + '`', 'status'] : []), ...(rv ? ['rv.`' + me + '`'] : [])]));
   },
   reveal: async (room, reveal) => { const me = (await live()).uid; await commit(writeMask(`frooms/${room.id}`, { v: oneOf(me, reveal) }, ['v.`' + me + '`'])); },
   /** El ganador cierra la partida cuando ya ha hundido los 5 barcos del rival. */
@@ -1342,14 +1343,20 @@ async function checkPokes() {
 // que se ha «desbloqueado» antes con un toque del usuario, así que se prepara con el primer toque en la app.
 const heartSong = new Audio('easter-egg.mp3');
 heartSong.preload = 'auto';
+// Con los corazones silenciados (Ajustes) la canción no se toca ni para desbloquearla; si luego se vuelve a activar el sonido, se prepara en el siguiente toque.
+const heartMutedNow = () => localStorage.getItem('ev.heartMuted') === '1';
+let heartUnlocked = false;
 document.addEventListener('pointerdown', () => {
+  if (heartUnlocked || heartMutedNow()) return;
+  heartUnlocked = true;
   heartSong.muted = true;
-  heartSong.play().then(() => { heartSong.pause(); heartSong.currentTime = 0; heartSong.muted = false; }).catch(() => { heartSong.muted = false; });
-}, { once: true });
+  heartSong.play().then(() => { heartSong.pause(); heartSong.currentTime = 0; heartSong.muted = false; }).catch(() => { heartSong.muted = false; heartUnlocked = false; });
+});
 
 export function showHeart(from) {
   // con «Silenciar el sonido de los corazones» (Ajustes) el corazón sale y vibra pero no suena
-  if (localStorage.getItem('ev.heartMuted') !== '1') { heartSong.currentTime = 0; heartSong.play().catch(() => {}); }
+  if (!heartMutedNow()) { heartSong.muted = false; heartSong.currentTime = 0; heartSong.play().catch(() => {}); }
+  else { heartSong.pause(); heartSong.muted = true; }
   const el = h('div', { class: 'float-heart', style: { left: 12 + Math.random() * 76 + '%', top: 15 + Math.random() * 60 + '%' } }, '❤');
   document.body.append(el);
   navigator.vibrate?.(60);

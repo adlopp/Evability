@@ -95,6 +95,33 @@ export function answers(ships, cells) {
   return out.join('');
 }
 
+/** Índice del barco que hay en la casilla, o -1. */
+export const shipAt = (ships, cell) => ships.findIndex((s, i) => cellsOf(s, i).includes(cell));
+
+/**
+ * Barcos que el defensor enseña al ser tocados (opción «al tocar un barco, se ve entero»): «iNNd» por barco = índice, proa y dirección.
+ * Se comprueban al terminar la partida contra la flota revelada.
+ */
+export function parseRevealed(rv) {
+  const out = [], s = rv || '';
+  for (let k = 0; k + 4 <= s.length; k += 4) {
+    const idx = Number(s[k]), cell = Number(s.slice(k + 1, k + 3)), dir = s[k + 3];
+    if (Number.isInteger(idx) && idx >= 0 && idx < LENS.length && (dir === 'h' || dir === 'v') && fits({ cell, dir }, idx)) out.push({ idx, ship: { cell, dir } });
+  }
+  return out;
+}
+
+/** Lo que hay que enseñar al responder a `cells`: una entrada por cada barco tocado que aún no se había enseñado (`have` = lo ya enseñado). */
+export function newReveals(ships, cells, have) {
+  const seen = new Set(parseRevealed(have).map((x) => x.idx));
+  let out = '';
+  for (const c of cells) {
+    const i = shipAt(ships, c);
+    if (i >= 0 && !seen.has(i)) { seen.add(i); out += String(i) + pad2(ships[i].cell) + ships[i].dir; }
+  }
+  return out;
+}
+
 /** Casillas disparadas («0507…» → [5, 7, …]). */
 export const shotCells = (s) => (s || '').match(/\d\d/g)?.map(Number) || [];
 
@@ -156,7 +183,7 @@ export function sunkShips(log, by) {
  * Comprobación al terminar: la flota revelada `reveal` («F:sal») de `owner` ¿coincide con su compromiso, es válida y con ella
  * se habrían dado las mismas respuestas que dio? Devuelve '' si todo está bien o el motivo del problema.
  */
-export async function verify({ reveal, commit, adj, shots, given }) {
+export async function verify({ reveal, commit, adj, shots, given, rv }) {
   if (!reveal) return 'sin revelar';
   const cut = reveal.lastIndexOf(':');
   const fleet = reveal.slice(0, cut), salt = reveal.slice(cut + 1);
@@ -166,6 +193,7 @@ export async function verify({ reveal, commit, adj, shots, given }) {
   const expect = answers(ships, shotCells(shots));
   const n = Math.min(expect.length, (given || '').length);
   if (expect.slice(0, n) !== (given || '').slice(0, n)) return 'respondió algo que no era cierto';
+  for (const { idx, ship } of parseRevealed(rv)) { const real = ships[idx]; if (!real || real.cell !== ship.cell || real.dir !== ship.dir) return 'enseñó un barco que no estaba ahí'; }
   return '';
 }
 

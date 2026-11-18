@@ -46,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -258,6 +259,11 @@ private fun FleetBoard(
                     when (m) {
                         'w' -> { drawCircle(Color.White.copy(alpha = 0.18f), cs * 0.26f, center); drawCircle(Color.White.copy(alpha = 0.6f), cs * 0.14f, center) }
                         'p' -> drawCircle(Color.White, cs * 0.3f, center, style = Stroke(3.dp.toPx()))
+                        't' -> { // objetivo marcado: mira de punto de mira
+                            drawCircle(Accent, cs * 0.34f, center, style = Stroke(2.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(7f, 5f))))
+                            drawLine(Accent, center + Offset(-cs * 0.46f, 0f), center + Offset(cs * 0.46f, 0f), 2.dp.toPx())
+                            drawLine(Accent, center + Offset(0f, -cs * 0.46f), center + Offset(0f, cs * 0.46f), 2.dp.toPx())
+                        }
                         else -> {
                             drawCircle(Color(0xFFFF6B3D).copy(alpha = 0.45f), cs * 0.46f, center)
                             drawCircle(if (m == 's') Color(0xFFB71C1C) else Color(0xFFE53935), cs * 0.34f, center)
@@ -334,6 +340,7 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
     fun toast(t: String) = Toast.makeText(ctx, t, Toast.LENGTH_SHORT).show()
 
     /** Un ciclo: lee la sala y hace lo que le toca a este dispositivo aunque nadie toque nada (responder al rival, revelar la flota). */
+    var lastDutyToast = 0L
     suspend fun pollOnce() {
         val r = Social.fRoom(roomId)
         if (r == null) { toast("La sala se ha cerrado"); onClose(); return }
@@ -348,29 +355,36 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
             val m = mine
             val opp = r.players.firstOrNull { it != me }
             if (m != null && me in r.players && opp != null) {
-                var wrote = false
-                if (r.status == "playing" && r.h.containsKey(me) && r.h.containsKey(opp)) {
-                    val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots)
-                    if (rp.pending && rp.cur != me) {
-                        val mineAns = r.a[me] ?: ""
-                        val n = rp.log.count { it.by == rp.cur }
-                        if (mineAns.length == n) {
-                            val next = mineAns + Fleet.answers(m.ships, Fleet.shotCells(r.s[rp.cur]).take(n + 1))[n]
-                            val lost = next.count { it >= '2' } >= Fleet.LENS.size
-                            Social.fAnswer(r, next, if (lost) m.reveal() else null)
-                            wrote = true
+                try {
+                    var wrote = false
+                    if (r.status == "playing" && r.h.containsKey(me) && r.h.containsKey(opp)) {
+                        val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots)
+                        if (rp.pending && rp.cur != me) {
+                            val mineAns = r.a[me] ?: ""
+                            val n = rp.log.count { it.by == rp.cur }
+                            if (mineAns.length == n) {
+                                val cells = Fleet.shotCells(r.s[rp.cur]); val take = minOf(5, cells.size - n) // toda la tanda de disparos a la vez
+                                val next = mineAns + Fleet.answers(m.ships, cells.take(n + take)).substring(n)
+                                val lost = next.count { it >= '2' } >= Fleet.LENS.size
+                                val add = if (r.reveal) Fleet.newReveals(m.ships, cells.subList(n, n + take), r.rv[me] ?: "") else "" // los barcos tocados se enseñan enteros
+                                Social.fAnswer(r, next, if (lost) m.reveal() else null, if (add.isNotEmpty()) (r.rv[me] ?: "") + add else null)
+                                wrote = true
+                            }
+                        } else if (rp.winner == me) { // he hundido los 5 barcos: la partida termina ya, aunque el rival no tenga la pantalla abierta
+                            Social.fFinish(r); wrote = true
                         }
-                    } else if (rp.winner == me) { // he hundido los 5 barcos: la partida termina ya, aunque el rival no tenga la pantalla abierta
-                        Social.fFinish(r); wrote = true
                     }
-                }
-                if (r.status == "finished" && !r.v.containsKey(me)) { Social.fReveal(r, m.reveal()); wrote = true }
-                if (wrote) cur = Social.fRoom(roomId) ?: r
-                if (cur.status == "finished" && !verifyDone && cur.v.containsKey(opp) && cur.h.containsKey(opp)) {
-                    verifyDone = true
-                    val why = Fleet.verify(cur.v[opp], cur.h[opp], cur.adj, cur.s[me] ?: "", cur.a[opp] ?: "")
-                    val nm = names[opp] ?: "?"
-                    verifyMsg = if (why.isEmpty()) "✓ La flota de $nm está verificada: todo fue limpio." else "⚠ $nm ha hecho trampa: $why."
+                    if (r.status == "finished" && !r.v.containsKey(me)) { Social.fReveal(r, m.reveal()); wrote = true }
+                    if (wrote) cur = Social.fRoom(roomId) ?: r
+                    if (cur.status == "finished" && !verifyDone && cur.v.containsKey(opp) && cur.h.containsKey(opp)) {
+                        verifyDone = true
+                        val why = Fleet.verify(cur.v[opp], cur.h[opp], cur.adj, cur.s[me] ?: "", cur.a[opp] ?: "", cur.rv[opp] ?: "")
+                        val nm = names[opp] ?: "?"
+                        verifyMsg = if (why.isEmpty()) "✓ La flota de $nm está verificada: todo fue limpio." else "⚠ $nm ha hecho trampa: $why."
+                    }
+                } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                    // si un envío falla (sin red, o reglas de Firestore sin publicar) la pantalla se actualiza igual: antes el error la dejaba congelada con datos antiguos
+                    if (System.currentTimeMillis() - lastDutyToast > 15_000) { lastDutyToast = System.currentTimeMillis(); toast("No se pudo sincronizar la partida" + (e.message?.let { ": $it" } ?: "") + " (¿faltan por publicar las reglas de Firestore?)") }
                 }
             }
         }
@@ -401,7 +415,7 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
                 onJoin = { scope.launch { try { Social.fJoin(r); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onLeave = { scope.launch { try { Social.fLeave(r); onClose() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onRemove = { scope.launch { runCatching { Social.fRemove(roomId) }; onClose() } },
-                onCfg = { adj, again, shots -> scope.launch { try { Social.fCfg(r, adj, again, shots); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
+                onCfg = { adj, again, shots, reveal -> scope.launch { try { Social.fCfg(r, adj, again, shots, reveal); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onStart = { scope.launch { try { Social.fStart(r, (Math.random() * 2_000_000_000).toInt()); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
                 onInvite = { scope.launch { try { inviteList = Social.overview().friends.map { it.profile } } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "Error") } } },
             )
@@ -429,10 +443,11 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
             }
             else -> FleetBattle(
                 r, me, names, photos, mine, verifyMsg,
-                onShoot = { cell ->
-                    if (!busy) scope.launch {
+                onShoot = { cells ->
+                    if (!busy && cells.isNotEmpty()) scope.launch {
                         busy = true
-                        try { Social.fShoot(r, (r.s[me] ?: "") + Fleet.pad2(cell)); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "No se pudo disparar") }
+                        FleetSound.play("shot")
+                        try { Social.fShoot(r, (r.s[me] ?: "") + cells.joinToString("") { Fleet.pad2(it) }); pollOnce() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(e.message ?: "No se pudo disparar") }
                         busy = false
                     }
                 },
@@ -480,7 +495,7 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
 @Composable
 private fun FleetLobby(
     r: Social.FRoom, me: String, names: Map<String, String>, photos: Map<String, String>,
-    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onCfg: (Boolean, Boolean, Int) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
+    onJoin: () -> Unit, onLeave: () -> Unit, onRemove: () -> Unit, onCfg: (Boolean, Boolean, Int, Boolean) -> Unit, onStart: () -> Unit, onInvite: () -> Unit,
 ) {
     val isHost = r.host == me
     val inRoom = me in r.players
@@ -518,14 +533,21 @@ private fun FleetLobby(
                         Text("Los barcos pueden tocarse", color = OnSurface)
                         Text("Si no, entre barcos queda siempre una casilla de agua.", color = OnSurfaceDim, fontSize = 12.sp)
                     }
-                    Switch(r.adj, { onCfg(it, r.again, r.shots) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.adj, { onCfg(it, r.again, r.shots, r.reveal) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Repetir turno al acertar", color = OnSurface)
                         Text("Quien acierta (tocado o hundido) vuelve a disparar sin gastar disparo.", color = OnSurfaceDim, fontSize = 12.sp)
                     }
-                    Switch(r.again, { onCfg(r.adj, it, r.shots) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                    Switch(r.again, { onCfg(r.adj, it, r.shots, r.reveal) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Al tocar un barco, se ve entero", color = OnSurface)
+                        Text("Quien defiende enseña dónde está el barco tocado. Si no, solo se ve al hundirlo.", color = OnSurfaceDim, fontSize = 12.sp)
+                    }
+                    Switch(r.reveal, { onCfg(r.adj, r.again, r.shots, it) }, enabled = isHost, colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = OnAccent))
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Disparos por turno", color = OnSurface, modifier = Modifier.weight(1f))
@@ -538,7 +560,7 @@ private fun FleetLobby(
                         Box(
                             Modifier.weight(1f).height(44.dp).clip(shape).background(if (sel) Accent.copy(alpha = 0.2f) else Surface2)
                                 .border(2.dp, if (sel) Accent else Outline, shape)
-                                .then(if (isHost) Modifier.clickable { if (!sel) onCfg(r.adj, r.again, n) } else Modifier),
+                                .then(if (isHost) Modifier.clickable { if (!sel) onCfg(r.adj, r.again, n, r.reveal) } else Modifier),
                             contentAlignment = Alignment.Center,
                         ) { Text("$n", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = if (sel) Accent else OnSurface.copy(alpha = if (isHost) 1f else 0.6f)) }
                     }
@@ -682,53 +704,76 @@ private fun FleetPlace(adj: Boolean, busy: Boolean, onReady: (List<Fleet.Ship>) 
 @Composable
 private fun FleetBattle(
     r: Social.FRoom, me: String, names: Map<String, String>, photos: Map<String, String>, mine: MineFleet?, verifyMsg: String,
-    onShoot: (Int) -> Unit, onForfeit: () -> Unit, onClose: () -> Unit,
+    onShoot: (List<Int>) -> Unit, onForfeit: () -> Unit, onClose: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    val marked = remember { mutableStateListOf<Int>() } // objetivos marcados en mi turno (con 2 o más disparos por turno se marcan todos y se disparan juntos)
     val opp = r.players.firstOrNull { it != me } ?: ""
     val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots)
-    val finished = r.status == "finished" || rp.winner.isNotEmpty() // con los 5 barcos hundidos ya no se dispara más
+    // los disparos de una tanda se van mostrando de uno en uno (1,2 s entre cada uno): `shown` = cuántos del registro se ven ya
+    var shown by remember { mutableStateOf(rp.log.size) }
+    var animStart by remember { mutableStateOf(rp.log.size) }
+    val shownNow = maxOf(shown, rp.log.size - 5) // si has estado fuera, solo la última tanda (hasta 5) pasa de uno en uno; lo anterior se ve de golpe
+    val animating = shownNow < rp.log.size
+    val vlog = rp.log.take(shownNow) // lo que se ve ya en los tableros
+    val finished = (r.status == "finished" || rp.winner.isNotEmpty()) && !animating // con los 5 barcos hundidos ya no se dispara más
     val winner = if (r.ff.isNotEmpty()) (if (r.ff == me) opp else me) else rp.winner
     val nameOpp = names[opp] ?: "?"
     val haptic = LocalHapticFeedback.current
     var banner by remember { mutableStateOf("") }
     var bannerHit by remember { mutableStateOf(false) }
-    var lastLog by remember { mutableStateOf(-1) }
     var confirmForfeit by remember { mutableStateOf(false) }
 
     val eMarks = HashMap<Int, Char>(); val oMarks = HashMap<Int, Char>(); val eSunk = ArrayList<Int>()
-    for (e in rp.log) {
+    for (e in vlog) {
         val mk = if (e.res == '0') 'w' else if (e.res == '1') 'h' else 's'
         (if (e.by == me) eMarks else oMarks)[e.cell] = mk
         if (e.by == me && e.res >= '2') eSunk.add(e.res - '0')
     }
     val myShots = Fleet.shotCells(r.s[me])
-    if (!finished && rp.cur == me && rp.pending && myShots.isNotEmpty()) eMarks[myShots.last()] = 'p'
+    if (!finished && rp.cur == me && rp.pending) myShots.drop(rp.log.count { it.by == me }).forEach { eMarks[it] = 'p' }
+    rp.log.drop(shownNow).filter { it.by == me }.forEach { eMarks[it.cell] = 'p' } // mis disparos ya respondidos que aún no se han revelado
     val hitCells = oMarks.filterValues { it != 'w' }.keys
     val mySunk = mine?.ships?.indices?.filter { i -> Fleet.cellsOf(mine.ships[i], i).all { it in hitCells } }?.toSet() ?: emptySet()
     val oppShips = if (finished) r.v[opp]?.let { rv -> Fleet.parseFleet(rv.substringBeforeLast(':')) } else null
-    val myTurn = !finished && rp.cur == me && !rp.pending
+    val myTurn = !finished && !animating && rp.cur == me && !rp.pending
+    val batch = r.shots > 1 // 2 o más disparos por turno: se marcan todos los objetivos y al pulsar «Disparar» se revelan juntos
+    val shotAlready = eMarks.keys.toSet()
+    val need = minOf(rp.left, 100 - shotAlready.size)
+    val validMarked = marked.filter { it !in shotAlready }
+    LaunchedEffect(myTurn, batch, eMarks.size) { if (!myTurn || !batch) marked.clear() else marked.removeAll { it in shotAlready } }
+    val shownMarks: Map<Int, Char> = if (myTurn && batch) eMarks + validMarked.associateWith { 't' } else eMarks
 
     // los barcos que he hundido salen enteros y en rojo; sobre ellos no se puede volver a disparar
     val eShips = MutableList<Fleet.Ship?>(Fleet.LENS.size) { null }
     val eRed = HashSet<Int>(); val sunkCells = HashSet<Int>()
-    for (sk in Fleet.sunkShips(rp.log, me)) if (sk.idx >= 0) { eShips[sk.idx] = sk.ship; eRed.add(sk.idx); sunkCells.addAll(Fleet.cellsOf(sk.ship, sk.idx)) }
+    val visHits = vlog.filter { it.by == me && it.res != '0' }.map { it.cell }.toSet()
+    if (r.reveal) for (x in Fleet.parseRevealed(r.rv[opp])) if (Fleet.cellsOf(x.ship, x.idx).any { it in visHits }) { eShips[x.idx] = x.ship; eRed.add(x.idx) } // barco tocado: se ve entero y en rojo
+    for (sk in Fleet.sunkShips(vlog, me)) {
+        if (sk.idx < 0) continue
+        if (eShips.indices.none { i -> eShips[i]?.let { s -> s.cell == sk.ship.cell && s.dir == sk.ship.dir && Fleet.LENS[i] == Fleet.LENS[sk.idx] } == true }) { eShips[sk.idx] = sk.ship; eRed.add(sk.idx) }
+        sunkCells.addAll(Fleet.cellsOf(sk.ship, sk.idx))
+    }
 
-    // aviso y sonido de cada disparo nuevo (el primer vistazo solo toma nota de lo que ya había)
+    // cada disparo del registro se muestra por turnos, con su aviso y su sonido, y 1,2 s después sale el siguiente
     LaunchedEffect(rp.log.size) {
-        if (lastLog < 0) { lastLog = rp.log.size; return@LaunchedEffect }
-        if (rp.log.size > lastLog) {
-            lastLog = rp.log.size
-            val e = rp.log.last()
-            val who = if (e.by == me) "Tu disparo" else "Disparo de ${names[e.by] ?: "?"}"
-            banner = when {
-                e.res == '0' -> "$who: agua"
-                e.res == '1' -> "$who: ¡tocado!"
-                else -> "$who: ¡hundido! (${Fleet.NAMES[Fleet.LENS.indexOfFirst { it == e.res - '0' }.coerceAtLeast(0)]})"
+        if (shown < rp.log.size - 5) shown = rp.log.size - 5
+        if (shown < rp.log.size) {
+            animStart = shown
+            delay(450)
+            while (shown < rp.log.size) {
+                val e = rp.log[shown]; shown++
+                val who = if (e.by == me) "Tu disparo" else "Disparo de ${names[e.by] ?: "?"}"
+                banner = when {
+                    e.res == '0' -> "$who: agua"
+                    e.res == '1' -> "$who: ¡tocado!"
+                    else -> "$who: ¡hundido! (${Fleet.NAMES[Fleet.LENS.indexOfFirst { it == e.res - '0' }.coerceAtLeast(0)]})"
+                }
+                bannerHit = e.res != '0'
+                FleetSound.play(e.res.toString())
+                if (bannerHit) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                if (shown < rp.log.size) delay(1200)
             }
-            bannerHit = e.res != '0'
-            FleetSound.play(e.res.toString())
-            if (e.res != '0') haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             delay(2400)
             banner = ""
         }
@@ -738,9 +783,11 @@ private fun FleetBattle(
     var endSounded by remember { mutableStateOf(finished) } // si la partida ya estaba terminada al abrirla, no suena
     LaunchedEffect(finished) { if (finished && !endSounded) { endSounded = true; FleetSound.play(if (winner == me) "win" else "lose") } }
 
-    val turnText = if (finished) {
+    val turnText = if (animating) {
+        "${if (rp.log[shownNow].by == me) "Tus disparos" else "Disparos de ${names[rp.log[shownNow].by] ?: "?"}"}… ${shownNow - animStart + 1}/${rp.log.size - animStart}"
+    } else if (finished) {
         (if (winner == me) "¡Has ganado! 🎉" else "Gana ${names[winner] ?: "?"}") + (if (r.ff.isNotEmpty()) (if (r.ff == me) " · te has rendido" else " · $nameOpp se ha rendido") else "")
-    } else if (rp.cur == me) (if (rp.pending) "Esperando la respuesta de $nameOpp…" else if (r.shots > 1) "¡Tu turno! Dispara (te quedan ${rp.left})" else "¡Tu turno! Dispara al mar enemigo")
+    } else if (rp.cur == me) (if (rp.pending) "Esperando la respuesta de $nameOpp…" else if (batch) "¡Tu turno! Marca $need objetivo${if (need == 1) "" else "s"} (${validMarked.size}/$need)" else "¡Tu turno! Dispara al mar enemigo")
     else (if (rp.pending) "$nameOpp ha disparado…" else "Turno de $nameOpp" + (if (r.shots > 1) " · ${rp.left} disparos" else ""))
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -750,16 +797,27 @@ private fun FleetBattle(
             modifier = Modifier.widthIn(max = 430.dp).fillMaxWidth()
                 .background(if (myTurn) Accent else if (finished) Color(0xFF2E7D6B) else Surface2, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 9.dp),
         )
+        if (myTurn && batch) PolyButton(
+            if (validMarked.size == need) "¡Disparar! ($need)" else "Marca ${need - validMarked.size} más", true, validMarked.size == need && need > 0,
+            Modifier.widthIn(max = 430.dp).fillMaxWidth(), compact = true,
+        ) { val cells = validMarked.toList(); marked.clear(); onShoot(cells) }
         androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val enemyBs = ((maxWidth - 6.dp) * 0.68f - 18.dp).coerceAtMost(430.dp)
-            val ownBs = ((maxWidth - 6.dp) * 0.32f).coerceAtMost(300.dp)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+            val enemyBs = ((maxWidth - 16.dp) * 0.66f - 18.dp).coerceAtMost(430.dp)
+            val ownBs = ((maxWidth - 16.dp) * 0.30f).coerceAtMost(300.dp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Flota de $nameOpp", fontWeight = FontWeight.Bold, color = OnSurface, fontSize = 14.sp, maxLines = 1)
                     Box(contentAlignment = Alignment.Center) {
                         FleetBoard(
-                            oppShips ?: eShips, eRed, eMarks, enemyBs, glow = myTurn,
-                            onCell = if (myTurn) { c -> if (c in sunkCells) Toast.makeText(ctx, "Ahí ya has hundido un barco", Toast.LENGTH_SHORT).show() else if (!eMarks.containsKey(c)) onShoot(c) } else null,
+                            oppShips ?: eShips, eRed, shownMarks, enemyBs, glow = myTurn,
+                            onCell = if (myTurn) { c ->
+                                if (c in sunkCells) Toast.makeText(ctx, "Ahí ya has hundido un barco", Toast.LENGTH_SHORT).show()
+                                else if (c in shotAlready) { /* ya disparado */ }
+                                else if (!batch) { FleetSound.play("shot"); onShoot(listOf(c)) }
+                                else if (c in marked) marked.remove(c)
+                                else if (validMarked.size < need) { marked.add(c); FleetSound.play("place") }
+                                else Toast.makeText(ctx, "Ya has marcado $need: toca uno marcado para quitarlo", Toast.LENGTH_SHORT).show()
+                            } else null,
                         )
                         if (banner.isNotEmpty()) {
                             Text(

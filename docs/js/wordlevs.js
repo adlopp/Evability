@@ -108,7 +108,7 @@ export function openWordleVs({ roomId, api, onClose }) {
 
     fill(body, h('div', { class: 'poly-lobby vs-lobby' }, seats,
       h('div', { class: 'pcfg' },
-        h('div', { class: 'prow' }, h('span', {}, 'Rondas'), h('b', {}, String(room.rounds))), chips, same, toggle,
+        h('div', { class: 'vs-line' }, h('span', {}, 'Rondas'), chips), same, toggle,
         room.timer ? h('div', { class: 'vs-times', role: 'group', 'aria-label': 'Tiempo por palabra' }, TIMES.map((s) => h('button', {
           class: 'vs-chip' + (room.secs === s ? ' sel' : ''), disabled: !isHost, 'aria-pressed': room.secs === s, onclick: () => { if (s !== room.secs) setCfg({ secs: s }); } }, timeLabel(s)))) : null,
         h('p', { class: 'dim small vs-rules' }, 'Letra amarilla: 1 punto · letra verde: 2 puntos · acertar la palabra: 10 puntos. En cada ronda cuenta tu mejor intento. Pueden jugar de 2 a 4 personas.')),
@@ -205,14 +205,13 @@ export function openWordleVs({ roomId, api, onClose }) {
     const showR = Math.min(k, myK(), room.rounds - 1), words = e.segs[showR] || [];
     let status;
     if (u === me) status = myK() >= room.rounds ? 'Terminaste' : mine.st > 0 ? `Intento ${Math.min(ROWS, (mine.segs[myK()] || []).length + 1)}/${ROWS}` : 'Entre rondas';
-    else if (k >= room.rounds) status = 'Ha terminado';
-    else if (k > myK()) status = `⏳ Te espera · ${words.length} int.`;
-    else if (k < myK()) status = `Aún en la ronda ${k + 1}`;
+    else if (k >= room.rounds) status = 'Terminó';
+    else if (k > myK()) status = '⏳ Te espera';
+    else if (k < myK()) status = `Ronda ${k + 1}`;
     else if (e.st > 0 || words.length) status = `Intento ${Math.min(ROWS, words.length + (e.st > 0 ? 1 : 0))}/${ROWS}`;
     else status = 'Sin empezar';
     return h('div', { class: 'vs-card' + (u === me ? ' me' : '') + (k > myK() && u !== me ? ' waiting' : ''), style: `--c:${COLORS[seat] || COLORS[0]}` },
-      h('div', { class: 'vs-card-top' }, avatarEl(u, 22), h('b', {}, nameOf(u))),
-      h('span', { class: 'vs-pts' }, total(e) + ' pts'),
+      h('div', { class: 'vs-card-top' }, avatarEl(u, 18), h('b', {}, nameOf(u)), h('span', { class: 'vs-pts' }, total(e))),
       u === me ? null : miniGrid(words, answerOf(showR, u)),
       h('small', { class: 'vs-status' }, status));
   }
@@ -250,11 +249,12 @@ export function openWordleVs({ roomId, api, onClose }) {
     const head = h('div', { class: 'vs-head' }, h('b', {}, over ? 'Partida terminada' : `Ronda ${k + 1}/${room.rounds}`), timerEl, h('span', { class: 'vs-pts' }, total(mine) + ' pts'));
     const finishedAll = over && allDone();
     // como el Wordle normal: el tablero en el centro y el teclado debajo; los jugadores, en una columna a la derecha
-    const side = h('div', { class: 'vs-side' }, room.players.map(playerCard),
+    const side = h('div', { class: 'vs-side', style: `--n:${room.players.length}` }, room.players.map(playerCard),
       room.players.length > 1 && !over ? h('button', { class: 'text-btn vs-leave', onclick: forfeit }, 'Abandonar') : null);
     const main = h('div', { class: 'vs-main' }, head, board,
       h('div', { class: 'wmsg' + (msgGood ? ' good' : '') }, msg || (phase === 'between' && k === 0 ? 'Todos jugáis las mismas palabras' : '')), action);
-    fill(body, h('div', { class: 'vs-game' + (finishedAll ? ' done' : '') }, main, side, h('div', { class: 'vs-kb' }, finishedAll ? resultsPanel() : kb)));
+    if (finishedAll) { fill(body, h('div', { class: 'vs-game done' }, resultsPanel())); return; }
+    fill(body, h('div', { class: 'vs-game' }, main, side, h('div', { class: 'vs-kb' }, kb)));
   }
 
   function resultsPanel() {

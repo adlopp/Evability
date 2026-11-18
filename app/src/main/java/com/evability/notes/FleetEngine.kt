@@ -92,6 +92,33 @@ object Fleet {
         return out.toString()
     }
 
+    /** Índice del barco que hay en la casilla, o -1. */
+    fun shipAt(ships: List<Ship>, cell: Int): Int = ships.indices.firstOrNull { cellsOf(ships[it], it).contains(cell) } ?: -1
+
+    /** Barcos que el defensor enseña al ser tocados (opción «al tocar un barco, se ve entero»): «iNNd» por barco = índice, proa y dirección. */
+    fun parseRevealed(rv: String?): List<SunkShip> {
+        val s = rv ?: ""
+        val out = ArrayList<SunkShip>()
+        var k = 0
+        while (k + 4 <= s.length) {
+            val idx = s[k].digitToIntOrNull(); val cell = s.substring(k + 1, k + 3).toIntOrNull(); val dir = s[k + 3]
+            if (idx != null && cell != null && idx in LENS.indices && (dir == 'h' || dir == 'v') && fits(Ship(cell, dir), idx)) out.add(SunkShip(idx, Ship(cell, dir)))
+            k += 4
+        }
+        return out
+    }
+
+    /** Lo que hay que enseñar al responder a `cells`: una entrada por cada barco tocado que aún no se había enseñado (`have` = lo ya enseñado). */
+    fun newReveals(ships: List<Ship>, cells: List<Int>, have: String): String {
+        val seen = parseRevealed(have).map { it.idx }.toHashSet()
+        val out = StringBuilder()
+        for (c in cells) {
+            val i = shipAt(ships, c)
+            if (i >= 0 && seen.add(i)) out.append(i).append(pad2(ships[i].cell)).append(ships[i].dir)
+        }
+        return out.toString()
+    }
+
     fun shotCells(s: String?): List<Int> = (s ?: "").chunked(2).filter { it.length == 2 }.mapNotNull { it.toIntOrNull() }
 
     class Ev(val by: String, val cell: Int, val res: Char)
@@ -158,7 +185,7 @@ object Fleet {
     }
 
     /** Comprobación final: la flota revelada («flota:sal») ¿coincide con el compromiso, es válida y da las mismas respuestas? '' = todo bien. */
-    fun verify(reveal: String?, commit: String?, adj: Boolean, shots: String, given: String): String {
+    fun verify(reveal: String?, commit: String?, adj: Boolean, shots: String, given: String, rv: String = ""): String {
         if (reveal.isNullOrEmpty() || commit.isNullOrEmpty()) return "sin revelar"
         val cut = reveal.lastIndexOf(':')
         if (cut < 0) return "sin revelar"
@@ -169,6 +196,7 @@ object Fleet {
         val expect = answers(ships, shotCells(shots))
         val n = minOf(expect.length, given.length)
         if (expect.substring(0, n) != given.substring(0, n)) return "respondió algo que no era cierto"
+        for (x in parseRevealed(rv)) { val real = ships.getOrNull(x.idx); if (real == null || real.cell != x.ship.cell || real.dir != x.ship.dir) return "enseñó un barco que no estaba ahí" }
         return ""
     }
 

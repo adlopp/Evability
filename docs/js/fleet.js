@@ -4,7 +4,7 @@
 // Las reglas del juego están en fleet-engine.js. `api` lo pone social.js.
 
 import { h, icon, toast, confirmDialog, modal, fill, poller, darkPref, darkToggle, darkBars } from './ui.js';
-import { SIZE, LENS, NAMES, cellsOf, canPlace, packFleet, parseFleet, randomFleet, newSalt, commitOf, answers, shotCells, replay, sunkShips, verify, shipParts, pad2 } from './fleet-engine.js';
+import { SIZE, LENS, NAMES, cellsOf, canPlace, packFleet, parseFleet, randomFleet, newSalt, commitOf, answers, shotCells, replay, sunkShips, parseRevealed, newReveals, verify, shipParts, pad2 } from './fleet-engine.js';
 
 // ───── dibujo de los barcos (SVG) ─────
 const partSvg = (p) => {
@@ -79,7 +79,7 @@ function boardEl({ ships = [], sunk = new Set(), marks = new Map(), onCell = nul
 export function openFleet({ roomId, api, onClose }) {
   const me = api.me();
   let room = null, closed = false, mine = null, draft = LENS.map(() => null), sel = 0, dir = 'h', busy = false;
-  let lastLog = -1, banner = '', bannerAt = 0, verifyMsg = '', verifyDone = false, revealing = false, sig = '', lobbySig = '';
+  let banner = '', bannerHit = false, bannerAt = 0, verifyMsg = '', verifyDone = false, revealing = false, sig = '', lobbySig = '';
   const names = {}, photos = {};
   const body = h('div', { class: 'fl-body' });
   const toggleDark = () => { const on = darkToggle(); root.classList.toggle('dark-bg', on); darkBars(on); };
@@ -89,7 +89,10 @@ export function openFleet({ roomId, api, onClose }) {
     body);
   if (darkPref()) { root.classList.add('dark-bg'); darkBars(true); }
   root.addEventListener('pointerdown', () => { ac(); }); // el navegador solo deja sonar el audio tras un toque
-  let wasMine = false, endSounded = false;
+  let wasMine = false, endSounded = false, firstSeen = false;
+  // los disparos de una tanda se van mostrando de uno en uno (1,2 s entre cada uno): `shown` = cuántos del registro se ven ya
+  let shown = -1, animStart = 0, revealTimer = null, curLog = [];
+  const marked = new Set(); // objetivos marcados en mi turno (con 2 o más disparos por turno se marcan todos y se disparan juntos)
 
   const nameOf = (u) => (u === me ? 'Tú' : names[u] || '?');
   const avatarEl = (u, size = 30) => h('span', { class: 'pav', style: { width: size + 'px', height: size + 'px', fontSize: size * 0.45 + 'px' } },
@@ -122,13 +125,21 @@ export function openFleet({ roomId, api, onClose }) {
         return { changed: true, delay: 3500 };
       }
       if (!mine) mine = loadMine();
-      await duties();
+      // si un envío falla (sin red, o reglas de Firestore sin publicar) la pantalla se actualiza igual: antes el error la dejaba congelada con datos antiguos
+      try { await duties(); } catch (e) { dutyFail(e); }
       const s2 = JSON.stringify([room.status, room.h, room.s, room.a, room.v, room.ff]);
       const changed = s2 !== sig; sig = s2;
       if (changed || !body.querySelector('.fl-main, .fl-place, .fl-wait')) render();
       return { changed, delay: 2200 };
     } catch (e) { /* sin red: se reintenta */ }
     return false;
+  }
+
+  let lastDutyToast = 0;
+  function dutyFail(e) {
+    if (Date.now() - lastDutyToast < 15000) return;
+    lastDutyToast = Date.now();
+    toast('No se pudo sincronizar la partida' + (e?.message ? `: ${e.message}` : '') + ' (¿faltan por publicar las reglas de Firestore?)', 5000);
   }
 
   /** Lo que le toca hacer a este dispositivo aunque el jugador no toque nada: responder al disparo del rival y revelar la flota al acabar. */
@@ -139,9 +150,12 @@ export function openFleet({ roomId, api, onClose }) {
       if (rp.pending && rp.cur !== me) {
         const mineAns = room.a[me] || '', n = rp.log.filter((e) => e.by === rp.cur).length;
         if (mineAns.length === n) {
-          const res = answers(mine.ships, shotCells(room.s[rp.cur]).slice(0, n + 1))[n], next = mineAns + res;
+          const cells = shotCells(room.s[rp.cur]), take = Math.min(5, cells.length - n); // toda la tanda de disparos a la vez
+          const next = mineAns + answers(mine.ships, cells.slice(0, n + take)).slice(n);
           const lost = [...next].filter((ch) => ch >= '2').length >= LENS.length;
-          await api.answer(room, next, lost ? revealStr() : null);
+          const add = room.reveal ? newReveals(mine.ships, cells.slice(n, n + take), room.rv[me] || '') : '', rvNext = add ? (room.rv[me] || '') + add : null; // los barcos tocados se enseñan enteros
+          await api.answer(room, next, lost ? revealStr() : null, rvNext);
+          if (rvNext) room.rv[me] = rvNext;
           room.a[me] = next; if (lost) { room.status = 'finished'; room.v[me] = revealStr(); }
         }
       } else if (rp.winner === me) { // he hundido los 5 barcos: la partida termina ya, aunque el rival no tenga la pantalla abierta
@@ -155,14 +169,14 @@ export function openFleet({ roomId, api, onClose }) {
     }
     if (room.status === 'finished' && !verifyDone && oppOf() && room.v[oppOf()] && room.h[oppOf()]) {
       verifyDone = true;
-      const why = await verify({ reveal: room.v[oppOf()], commit: room.h[oppOf()], adj: room.adj, shots: room.s[me] || '', given: room.a[oppOf()] || '' });
+      const why = await verify({ reveal: room.v[oppOf()], commit: room.h[oppOf()], adj: room.adj, shots: room.s[me] || '', given: room.a[oppOf()] || '', rv: room.rv[oppOf()] || '' });
       verifyMsg = why ? `⚠ ${nameOf(oppOf())} ha hecho trampa: ${why}.` : `✓ La flota de ${nameOf(oppOf())} está verificada: todo fue limpio.`;
       render();
     }
   }
 
   // ───── sala de espera ─────
-  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.adj, room.again, room.shots, room.status]);
+  const lobbyKey = () => JSON.stringify([room.players, room.invited, room.adj, room.again, room.shots, room.reveal, room.status]);
   function renderLobby() {
     lobbySig = lobbyKey();
     const isHost = room.host === me, inRoom = room.players.includes(me);
@@ -175,7 +189,7 @@ export function openFleet({ roomId, api, onClose }) {
     }));
     const toggle = (label, key, hint) => h('label', { class: 'ptoggle' }, h('span', {}, label, hint ? h('small', { class: 'dim block' }, hint) : null),
       h('input', { type: 'checkbox', checked: room[key], disabled: !isHost, onchange: (e) => {
-        const v = e.target.checked, next = { adj: room.adj, again: room.again, shots: room.shots, [key]: v };
+        const v = e.target.checked, next = { adj: room.adj, again: room.again, shots: room.shots, reveal: room.reveal, [key]: v };
         api.setCfg(room, next).then(() => { room[key] = v; lobbySig = lobbyKey(); }).catch((err) => { e.target.checked = !v; toast(err.message); });
       } }), h('i', {}));
     const buttons = [];
@@ -189,10 +203,11 @@ export function openFleet({ roomId, api, onClose }) {
       h('div', { class: 'pcfg' },
         toggle('Los barcos pueden tocarse', 'adj', 'Si no, entre barcos queda siempre una casilla de agua.'),
         toggle('Repetir turno al acertar', 'again', 'Quien acierta (tocado o hundido) vuelve a disparar sin gastar disparo.'),
+        toggle('Al tocar un barco, se ve entero', 'reveal', 'Quien defiende enseña dónde está el barco tocado. Si no, solo se ve al hundirlo.'),
         h('div', { class: 'prow' }, h('span', {}, 'Disparos por turno'), h('b', {}, String(room.shots))),
         h('div', { class: 'vs-rounds', role: 'group', 'aria-label': 'Disparos por turno' }, [1, 2, 3, 4, 5].map((n) => h('button', {
           class: 'vs-chip' + (room.shots === n ? ' sel' : ''), disabled: !isHost, 'aria-pressed': room.shots === n,
-          onclick: () => { if (n !== room.shots) api.setCfg(room, { adj: room.adj, again: room.again, shots: n }).then(() => { room.shots = n; renderLobby(); }).catch((err) => toast(err.message)); } }, String(n)))),
+          onclick: () => { if (n !== room.shots) api.setCfg(room, { adj: room.adj, again: room.again, shots: n, reveal: room.reveal }).then(() => { room.shots = n; renderLobby(); }).catch((err) => toast(err.message)); } }, String(n)))),
         h('p', { class: 'dim small vs-rules' }, 'Cada uno coloca su flota en secreto: portaaviones (5), acorazado (4), crucero (3), submarino (3) y destructor (2). Gana quien hunde antes toda la flota del rival.')),
       h('div', { class: 'pbtns' }, buttons)));
   }
@@ -331,52 +346,73 @@ export function openFleet({ roomId, api, onClose }) {
   }
 
   function renderBattle() {
-    const opp = oppOf(), rp = replay(roomState()), finished = room.status === 'finished' || !!rp.winner; // con los 5 barcos hundidos ya no se dispara más
+    const opp = oppOf(), rp = replay(roomState());
+    curLog = rp.log;
+    if (shown < 0 || shown > curLog.length) shown = curLog.length; // lo que ya había al abrir la partida se ve de golpe
+    if (curLog.length - shown > 5) shown = curLog.length - 5; // si has estado fuera, solo se pasa de uno en uno la última tanda (hasta 5); lo anterior se ve de golpe
+    const animating = shown < curLog.length;
+    if (animating && !revealTimer) { animStart = shown; revealTimer = setTimeout(revealStep, 450); }
+    const vlog = curLog.slice(0, shown); // lo que se ve ya en los tableros
+    const finished = (room.status === 'finished' || !!rp.winner) && !animating; // con los 5 barcos hundidos ya no se dispara más
     const winner = room.ff ? (room.ff === me ? opp : me) : rp.winner;
     // marcas: mis disparos en el mar enemigo y los del rival en el mío
     const eMarks = new Map(), oMarks = new Map(), eSunk = [];
-    for (const e of rp.log) {
+    for (const e of vlog) {
       const mk = e.res === '0' ? 'w' : e.res === '1' ? 'h' : 's';
       (e.by === me ? eMarks : oMarks).set(e.cell, mk);
       if (e.by === me && e.res >= '2') eSunk.push(Number(e.res));
     }
     const myShots = shotCells(room.s[me]);
-    if (!finished && rp.cur === me && rp.pending && myShots.length) eMarks.set(myShots[myShots.length - 1], 'p');
+    if (!finished && rp.cur === me && rp.pending) myShots.slice(curLog.filter((e) => e.by === me).length).forEach((c) => eMarks.set(c, 'p'));
+    curLog.slice(shown).filter((e) => e.by === me).forEach((e) => eMarks.set(e.cell, 'p')); // mis disparos ya respondidos que aún no se han revelado
     // mis barcos hundidos (todas sus casillas tocadas)
     const hitCells = new Set([...oMarks].filter(([, v]) => v !== 'w').map(([c]) => c));
     const mySunk = new Set((mine?.ships || []).map((s, i) => i).filter((i) => cellsOf(mine.ships[i], i).every((c) => hitCells.has(c))));
     // el barco del rival se enseña al terminar, si su flota revelada es válida
     const oppShips = finished && room.v[opp] ? parseFleet(room.v[opp].slice(0, room.v[opp].lastIndexOf(':'))) : null;
 
-    const myTurn = !finished && rp.cur === me && !rp.pending;
-    const turnText = finished
+    const myTurn = !finished && !animating && rp.cur === me && !rp.pending;
+    const batch = room.shots > 1; // 2 o más disparos por turno: se marcan todos los objetivos y al pulsar «Disparar» se revelan juntos
+    const shotAlready = new Set(eMarks.keys());
+    const need = Math.min(rp.left, SIZE * SIZE - shotAlready.size);
+    if (!myTurn || !batch) marked.clear(); else for (const c of [...marked]) if (shotAlready.has(c)) marked.delete(c);
+    if (myTurn && batch) marked.forEach((c) => eMarks.set(c, 't'));
+    const turnText = animating ? `${curLog[shown]?.by === me ? 'Tus disparos' : `Disparos de ${nameOf(curLog[shown]?.by)}`}… ${shown - animStart + 1}/${curLog.length - animStart}` : finished
       ? (winner === me ? '¡Has ganado! 🎉' : `Gana ${nameOf(winner)}`) + (room.ff ? (room.ff === me ? ' · te has rendido' : ` · ${nameOf(room.ff)} se ha rendido`) : '')
-      : rp.cur === me ? (rp.pending ? `Esperando la respuesta de ${nameOf(opp)}…` : `¡Tu turno! Dispara${room.shots > 1 ? ` (te quedan ${rp.left})` : ' al mar enemigo'}`)
+      : rp.cur === me ? (rp.pending ? `Esperando la respuesta de ${nameOf(opp)}…` : (batch ? `¡Tu turno! Marca ${need} objetivo${need === 1 ? '' : 's'} (${marked.size}/${need})` : '¡Tu turno! Dispara al mar enemigo'))
         : (rp.pending ? `${nameOf(opp)} ha disparado…` : `Turno de ${nameOf(opp)}${room.shots > 1 ? ` · ${rp.left} disparos` : ''}`);
 
     const eShips = LENS.map(() => null), eRed = new Set(), sunkCells = new Set();
-    for (const { idx, ship } of sunkShips(rp.log, me)) if (idx >= 0) { eShips[idx] = ship; eRed.add(idx); cellsOf(ship, idx).forEach((c) => sunkCells.add(c)); }
-    const enemy = boardEl({ ships: oppShips || eShips, sunk: eRed, marks: eMarks, cls: myTurn ? 'turn' : '', onCell: myTurn ? (c) => { if (sunkCells.has(c)) toast('Ahí ya has hundido un barco'); else shoot(c, eMarks); } : null });
+    const visHits = new Set(vlog.filter((e) => e.by === me && e.res !== '0').map((e) => e.cell));
+    if (room.reveal) for (const { idx, ship } of parseRevealed(room.rv[opp])) if (cellsOf(ship, idx).some((c) => visHits.has(c))) { eShips[idx] = ship; eRed.add(idx); } // barco tocado: se ve entero y en rojo
+    for (const { idx, ship } of sunkShips(vlog, me)) {
+      if (idx < 0) continue;
+      if (!eShips.some((s, i) => s && s.cell === ship.cell && s.dir === ship.dir && LENS[i] === LENS[idx])) { eShips[idx] = ship; eRed.add(idx); }
+      cellsOf(ship, idx).forEach((c) => sunkCells.add(c));
+    }
+    const enemy = boardEl({ ships: oppShips || eShips, sunk: eRed, marks: eMarks, cls: myTurn ? 'turn' : '', onCell: myTurn ? (c) => {
+      if (sunkCells.has(c)) { toast('Ahí ya has hundido un barco'); return; }
+      if (shotAlready.has(c)) return;
+      if (!batch) { shoot([c]); return; }
+      if (marked.has(c)) marked.delete(c);
+      else if (marked.size < need) marked.add(c);
+      else { toast(`Ya has marcado ${need}: toca uno marcado para quitarlo`); return; }
+      sound('place'); render();
+    } : null });
     const own = boardEl({ ships: mine?.ships || [], sunk: mySunk, marks: oMarks, cls: 'small' });
 
     // barcos enemigos que quedan (por tamaño, según lo que he hundido)
     const left = [...LENS]; for (const L of eSunk) { const k = left.indexOf(L); if (k >= 0) left.splice(k, 1); }
     const chips = h('div', { class: 'fl-left' }, LENS.map((L, i) => { const alive = left.includes(L) && (left.splice(left.indexOf(L), 1), true); return h('span', { class: 'fl-mini' + (alive ? '' : ' dead'), title: NAMES[i], html: shipSvg(i, false), style: { width: L * 11 + 'px' } }); }));
 
-    const lastEv = rp.log[rp.log.length - 1], first = lastLog < 0;
-    if (first) lastLog = rp.log.length;
-    else if (rp.log.length > lastLog) {
-      lastLog = rp.log.length;
-      const who = lastEv.by === me ? 'Tu disparo' : `Disparo de ${nameOf(lastEv.by)}`;
-      banner = lastEv.res === '0' ? `${who}: agua` : lastEv.res === '1' ? `${who}: ¡tocado!` : `${who}: ¡hundido! (${NAMES[LENS.indexOf(Number(lastEv.res))] || 'barco'})`;
-      bannerAt = Date.now(); sound(lastEv.res);
-    } else if (!first) {
+    const first = !firstSeen; firstSeen = true;
+    if (!first && !animating) {
       if (myTurn && !wasMine) sound('turn');
       if (finished && !endSounded) { endSounded = true; sound(winner === me ? 'win' : 'lose'); }
     }
-    wasMine = myTurn; if (finished) endSounded = true;
-    const bannerEl = banner && Date.now() - bannerAt < 2600 ? h('div', { class: 'fl-banner ' + (lastEv?.res === '0' ? 'w' : 'h') }, banner) : null;
-    if (bannerEl) { enemy.append(bannerEl); setTimeout(() => bannerEl.remove(), 2600 - (Date.now() - bannerAt)); }
+    wasMine = myTurn; if (finished && first) endSounded = true;
+    const bannerEl = banner && Date.now() - bannerAt < 3200 ? h('div', { class: 'fl-banner ' + (bannerHit ? 'h' : 'w') }, banner) : null;
+    if (bannerEl) { enemy.append(bannerEl); setTimeout(() => bannerEl.remove(), 3200 - (Date.now() - bannerAt)); }
 
     const hits = rp.log.filter((e) => e.by === me && e.res !== '0').length, shots = rp.log.filter((e) => e.by === me).length;
     const result = finished ? h('div', { class: 'fl-result' },
@@ -385,6 +421,7 @@ export function openFleet({ roomId, api, onClose }) {
 
     fill(body, h('div', { class: 'fl-main' },
       h('div', { class: 'fl-status' + (myTurn ? ' mine' : '') + (finished ? ' end' : '') }, turnText),
+      myTurn && batch ? h('button', { class: 'btn big fl-fire', disabled: marked.size !== need || busy, onclick: () => shoot([...marked]) }, marked.size === need ? `¡Disparar! (${need})` : `Marca ${need - marked.size} más`) : null,
       h('div', { class: 'fl-boards' },
         h('div', { class: 'fl-side' }, h('h3', {}, 'Flota de ', nameOf(opp), ' ', avatarEl(opp, 22)), enemy, chips),
         h('div', { class: 'fl-side own' }, h('h3', {}, 'Tu flota'), own)),
@@ -392,11 +429,24 @@ export function openFleet({ roomId, api, onClose }) {
       !finished ? h('button', { class: 'text-btn fl-leave', onclick: forfeit }, 'Rendirse') : null));
   }
 
-  async function shoot(c, marks) {
-    if (marks.has(c) || busy) return;
+  /** Muestra el siguiente disparo del registro (con su aviso y su sonido) y programa el siguiente 1,2 s después. */
+  function revealStep() {
+    revealTimer = null;
+    if (closed || shown >= curLog.length) return;
+    const e = curLog[shown]; shown++;
+    const who = e.by === me ? 'Tu disparo' : `Disparo de ${nameOf(e.by)}`;
+    banner = e.res === '0' ? `${who}: agua` : e.res === '1' ? `${who}: ¡tocado!` : `${who}: ¡hundido! (${NAMES[LENS.indexOf(Number(e.res))] || 'barco'})`;
+    bannerHit = e.res !== '0'; bannerAt = Date.now(); sound(e.res);
+    if (shown < curLog.length) revealTimer = setTimeout(revealStep, 1200); // antes de pintar, para que el pintado no programe otro
+    render();
+  }
+
+  async function shoot(cells) {
+    if (!cells.length || busy) return;
     busy = true;
     try {
-      const next = (room.s[me] || '') + pad2(c);
+      const next = (room.s[me] || '') + cells.map(pad2).join('');
+      marked.clear();
       sound('shot'); await api.shoot(room, next); room.s[me] = next; sig = ''; render();
       timer.poke(900);
     } catch (e) { toast(e.message || 'No se pudo disparar'); }
@@ -404,7 +454,7 @@ export function openFleet({ roomId, api, onClose }) {
   }
 
   const timer = poller(poll, 2200, 9000);
-  function close() { if (closed) return; closed = true; timer.stop(); darkBars(false); root.remove(); onClose?.(); }
+  function close() { if (closed) return; closed = true; clearTimeout(revealTimer); timer.stop(); darkBars(false); root.remove(); onClose?.(); }
   body.append(h('p', { class: 'dim', style: { padding: '16px' } }, 'Cargando…'));
   return root;
 }
