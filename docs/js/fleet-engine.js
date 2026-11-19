@@ -127,7 +127,7 @@ export const shotCells = (s) => (s || '').match(/\d\d/g)?.map(Number) || [];
 
 /**
  * Reproduce la partida con lo que hay en la nube: de quién es el turno, qué disparo espera respuesta y el registro de lo ocurrido.
- * `room` = { players: [anfitrión, rival], seed, again, shots, s: { uid: disparos }, a: { uid: respuestas } }. Empieza players[seed % 2]; cada turno
+ * `room` = { players: [anfitrión, rival], seed, again, shots, reveal, rv: { uid: barcos enseñados }, s: { uid: disparos }, a: { uid: respuestas } }. Empieza players[seed % 2]; cada turno
  * son `shots` disparos (de 1 a 5) y, si `again`, un acierto no gasta disparo.
  * Un disparo cuenta cuando su autor tenía el turno y el rival ya lo ha respondido; los hechos fuera de turno no cuentan.
  */
@@ -135,6 +135,9 @@ export function replay(room) {
   const [p0, p1] = room.players, N = Math.min(5, Math.max(1, room.shots || 1));
   const idx = { [p0]: 0, [p1]: 0 }, sunk = { [p0]: 0, [p1]: 0 }, log = [];
   let cur = room.players[room.seed % 2], winner = '', left = N;
+  // con «al tocar un barco, se ve entero» se gana al haber tocado una vez cada uno de los 5 barcos (el defensor los va enseñando en `rv`)
+  const shown = { [p0]: room.reveal ? parseRevealed(room.rv?.[p0]) : [], [p1]: room.reveal ? parseRevealed(room.rv?.[p1]) : [] };
+  const hitBy = { [p0]: new Set(), [p1]: new Set() };
   for (let guard = 0; guard < 400; guard++) {
     const opp = cur === p0 ? p1 : p0, sc = shotCells(room.s[cur]), ans = room.a[opp] || '';
     if (idx[cur] < sc.length && idx[cur] < ans.length) {
@@ -142,7 +145,10 @@ export function replay(room) {
       log.push({ by: cur, cell: sc[idx[cur]], res });
       idx[cur]++;
       if (res >= '2') sunk[cur]++;
+      if (res !== '0') hitBy[cur].add(sc[idx[cur] - 1]);
       if (sunk[cur] >= LENS.length) { winner = cur; break; }
+      const seen = shown[opp];
+      if (seen.length >= LENS.length && LENS.every((_, i) => seen.some((x) => x.idx === i && cellsOf(x.ship, i).some((c) => hitBy[cur].has(c))))) { winner = cur; break; }
       if (!(res !== '0' && room.again)) left--; // con «repetir al acertar», un acierto no gasta disparo
       if (left <= 0) { cur = opp; left = N; }
     } else break;

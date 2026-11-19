@@ -125,7 +125,7 @@ object Fleet {
     class Replay(val cur: String, val opp: String, val pending: Boolean, val log: List<Ev>, val winner: String, val left: Int = 1)
 
     /** Reproduce la partida con lo de la nube: turno, disparo pendiente de respuesta y registro. Empieza players[seed % 2]; cada turno son `shots` disparos. */
-    fun replay(players: List<String>, seed: Int, again: Boolean, s: Map<String, String>, a: Map<String, String>, shots: Int = 1): Replay {
+    fun replay(players: List<String>, seed: Int, again: Boolean, s: Map<String, String>, a: Map<String, String>, shots: Int = 1, reveal: Boolean = false, rv: Map<String, String> = emptyMap()): Replay {
         val p0 = players[0]; val p1 = players[1]
         val n = shots.coerceIn(1, 5)
         val idx = hashMapOf(p0 to 0, p1 to 0)
@@ -134,6 +134,9 @@ object Fleet {
         var cur = players[seed % 2]
         var winner = ""
         var left = n
+        // con «al tocar un barco, se ve entero» se gana al haber tocado una vez cada uno de los 5 barcos (el defensor los va enseñando en `rv`)
+        val shown = hashMapOf(p0 to (if (reveal) parseRevealed(rv[p0]) else emptyList()), p1 to (if (reveal) parseRevealed(rv[p1]) else emptyList()))
+        val hitBy = hashMapOf(p0 to HashSet<Int>(), p1 to HashSet<Int>())
         var guard = 0
         while (guard++ < 400) {
             val opp = if (cur == p0) p1 else p0
@@ -145,7 +148,10 @@ object Fleet {
                 log.add(Ev(cur, sc[k], res))
                 idx[cur] = k + 1
                 if (res >= '2') sunk[cur] = sunk.getValue(cur) + 1
+                if (res != '0') hitBy.getValue(cur).add(sc[k])
                 if (sunk.getValue(cur) >= LENS.size) { winner = cur; break }
+                val seen = shown.getValue(opp)
+                if (seen.size >= LENS.size && LENS.indices.all { i -> seen.any { x -> x.idx == i && cellsOf(x.ship, i).any { c -> c in hitBy.getValue(cur) } } }) { winner = cur; break }
                 if (!(res != '0' && again)) left--
                 if (left <= 0) { cur = opp; left = n }
             } else break

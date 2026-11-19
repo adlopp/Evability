@@ -597,10 +597,12 @@ service cloud.firestore {
           && request.resource.data.a[request.auth.uid].size() <= resource.data.a.get(request.auth.uid, '').size() + 5
           && request.resource.data.a[request.auth.uid].size() * 2 <= resource.data.s.get(fOpp(resource), '').size()
           && request.resource.data.v[request.auth.uid] is string && request.resource.data.v[request.auth.uid].size() <= 120)
-        // el ganador cierra la partida cuando el rival ya ha respondido «hundido» a los 5 barcos (por si el rival no tiene la pantalla abierta)
+        // el ganador cierra la partida cuando el rival ya ha respondido «hundido» a los 5 barcos, o ya ha enseñado los 5 con la opción «se ve entero»
+        // (por si el rival no tiene la pantalla abierta)
         || (resource.data.status == 'playing' && request.auth.uid in resource.data.players && resource.data.players.size() == 2
           && fOnly('status') && request.resource.data.status == 'finished'
-          && resource.data.a.get(fOpp(resource), '').replace('[01]', '').size() >= 5)
+          && (resource.data.a.get(fOpp(resource), '').replace('[01]', '').size() >= 5
+            || ('rv' in resource.data && resource.data.rv.get(fOpp(resource), '').size() == 20)))
         // rendirse: termina la partida y se revela la flota
         || (resource.data.status == 'playing' && request.auth.uid in resource.data.players
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'ff', 'v'])

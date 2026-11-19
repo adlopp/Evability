@@ -358,15 +358,16 @@ fun FleetScreen(roomId: String, onClose: () -> Unit) {
                 try {
                     var wrote = false
                     if (r.status == "playing" && r.h.containsKey(me) && r.h.containsKey(opp)) {
-                        val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots)
+                        val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots, r.reveal, r.rv)
                         if (rp.pending && rp.cur != me) {
                             val mineAns = r.a[me] ?: ""
                             val n = rp.log.count { it.by == rp.cur }
                             if (mineAns.length == n) {
                                 val cells = Fleet.shotCells(r.s[rp.cur]); val take = minOf(5, cells.size - n) // toda la tanda de disparos a la vez
                                 val next = mineAns + Fleet.answers(m.ships, cells.take(n + take)).substring(n)
-                                val lost = next.count { it >= '2' } >= Fleet.LENS.size
                                 val add = if (r.reveal) Fleet.newReveals(m.ships, cells.subList(n, n + take), r.rv[me] ?: "") else "" // los barcos tocados se enseñan enteros
+                                // se pierde con los 5 barcos hundidos o, con «se ve entero», con los 5 ya tocados (enseñados)
+                                val lost = next.count { it >= '2' } >= Fleet.LENS.size || (r.reveal && Fleet.parseRevealed((r.rv[me] ?: "") + add).size >= Fleet.LENS.size)
                                 Social.fAnswer(r, next, if (lost) m.reveal() else null, if (add.isNotEmpty()) (r.rv[me] ?: "") + add else null)
                                 wrote = true
                             }
@@ -709,7 +710,7 @@ private fun FleetBattle(
     val ctx = LocalContext.current
     val marked = remember { mutableStateListOf<Int>() } // objetivos marcados en mi turno (con 2 o más disparos por turno se marcan todos y se disparan juntos)
     val opp = r.players.firstOrNull { it != me } ?: ""
-    val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots)
+    val rp = Fleet.replay(r.players, r.seed, r.again, r.s, r.a, r.shots, r.reveal, r.rv)
     // los disparos de una tanda se van mostrando de uno en uno (1,2 s entre cada uno): `shown` = cuántos del registro se ven ya
     var shown by remember { mutableStateOf(rp.log.size) }
     var animStart by remember { mutableStateOf(rp.log.size) }

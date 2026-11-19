@@ -109,7 +109,7 @@ export function openFleet({ roomId, api, onClose }) {
   const loadMine = () => { try { const o = JSON.parse(localStorage.getItem(keyOf()) || 'null'); if (o?.f && o?.salt) { const ships = parseFleet(o.f); if (ships) return { ships, f: o.f, salt: o.salt }; } } catch { /* sin datos */ } return null; };
   const revealStr = () => mine.f + ':' + mine.salt;
   const oppOf = () => room.players.find((u) => u !== me) || '';
-  const roomState = () => ({ players: room.players, seed: room.seed, again: room.again, shots: room.shots, s: room.s, a: room.a });
+  const roomState = () => ({ players: room.players, seed: room.seed, again: room.again, shots: room.shots, reveal: room.reveal, rv: room.rv, s: room.s, a: room.a });
 
   // ───── consulta periódica ─────
   async function poll() {
@@ -152,8 +152,9 @@ export function openFleet({ roomId, api, onClose }) {
         if (mineAns.length === n) {
           const cells = shotCells(room.s[rp.cur]), take = Math.min(5, cells.length - n); // toda la tanda de disparos a la vez
           const next = mineAns + answers(mine.ships, cells.slice(0, n + take)).slice(n);
-          const lost = [...next].filter((ch) => ch >= '2').length >= LENS.length;
           const add = room.reveal ? newReveals(mine.ships, cells.slice(n, n + take), room.rv[me] || '') : '', rvNext = add ? (room.rv[me] || '') + add : null; // los barcos tocados se enseñan enteros
+          // se pierde con los 5 barcos hundidos o, con «se ve entero», con los 5 ya tocados (enseñados)
+          const lost = [...next].filter((ch) => ch >= '2').length >= LENS.length || (room.reveal && parseRevealed(rvNext || room.rv[me] || '').length >= LENS.length);
           await api.answer(room, next, lost ? revealStr() : null, rvNext);
           if (rvNext) room.rv[me] = rvNext;
           room.a[me] = next; if (lost) { room.status = 'finished'; room.v[me] = revealStr(); }
