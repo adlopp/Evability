@@ -57,6 +57,9 @@
   ];
   const RUGS = ['#e8716d', '#6fb7a6', '#f0b35e', '#7d9be0', '#c98bd6'];
 
+  /** Redondea a la rejilla de media casilla sin salirse del rango [lo, hi]. */
+  function snapIn(v, lo, hi) { let s = Math.round(v * 2) / 2; if (s < lo) s += 0.5; if (s > hi) s -= 0.5; return s; }
+
   /** Crea la habitación: objetos repartidos al azar sin pisarse, con sillas junto a las mesas y estanterías contra las paredes. */
   function makeRoom(seed) {
     const rnd = rng(seed);
@@ -78,7 +81,8 @@
       const t = TYPES[type];
       for (let k = 0; k < tries; k++) {
         const rot = makeRot(), f = footprint(type, rot), hx = f.w / 2 + 0.2, hy = f.h / 2 + 0.2; // la huella entera tiene que caber dentro de la habitación
-        const x = hx + rnd() * (SIZE - 2 * hx), y = hy + rnd() * (SIZE - 2 * hy);
+        // los objetos van siempre sobre la rejilla de media casilla: así quien se fija en la rejilla se ve igual que los de verdad
+        const x = snapIn(hx + rnd() * (SIZE - 2 * hx), hx, SIZE - hx), y = snapIn(hy + rnd() * (SIZE - 2 * hy), hy, SIZE - hy);
         if (!free(x, y, t.flat ? 0.2 : t.r)) continue;
         return add(type, x, y, rot);
       }
@@ -97,7 +101,7 @@
         const dx = side === 1 ? (horizontal ? 1.05 : 0.8) : side === 3 ? -(horizontal ? 1.05 : 0.8) : (rnd() - 0.5) * (horizontal ? 0.9 : 0.2);
         const dy = side === 0 ? -(horizontal ? 0.8 : 1.05) : side === 2 ? (horizontal ? 0.8 : 1.05) : (rnd() - 0.5) * (horizontal ? 0.2 : 0.9);
         void off;
-        const x = tb.x + dx, y = tb.y + dy;
+        const x = snapIn(tb.x + dx, 0.5, SIZE - 0.5), y = snapIn(tb.y + dy, 0.5, SIZE - 0.5);
         if (free(x, y, TYPES.chair.r)) add('chair', x, y, [2, 3, 0, 1][side]); // mira hacia la mesa
       }
     }
@@ -107,11 +111,11 @@
     // estanterías contra las paredes
     for (let k = ri(2, 3); k > 0; k--) {
       for (let tries = 0; tries < 60; tries++) {
-        const wall = ri(0, 3), t = TYPES.shelf, along = 1.6 + rnd() * (SIZE - 3.2), gap = t.h / 2 + 0.22;
+        const wall = ri(0, 3), t = TYPES.shelf, along = snapIn(1.6 + rnd() * (SIZE - 3.2), 1.5, SIZE - 1.5), gap = 0.5;
         const x = wall === 0 ? along : wall === 1 ? SIZE - gap : wall === 2 ? along : gap;
         const y = wall === 0 ? gap : wall === 1 ? along : wall === 2 ? SIZE - gap : along;
         const horizontal = wall === 0 || wall === 2;
-        if (!free(x, y, 0.32)) continue;
+        if (!free(x, y, 0.3)) continue;
         add('shelf', x, y, horizontal ? 0 : 1);
         break;
       }
@@ -173,6 +177,16 @@
    */
   function stepHider(g, dt, ix, iy) {
     const h = g.hider;
+    if (h.locked) {
+      // fijado: no se mueve ni se transforma; solo termina de encajarse en su casilla
+      if (h.snapTo) {
+        const dx = h.snapTo.x - h.x, dy = h.snapTo.y - h.y, d = Math.hypot(dx, dy), stp = 3 * dt;
+        if (d <= stp) { h.x = h.snapTo.x; h.y = h.snapTo.y; h.snapTo = null; } else { h.x += (dx / d) * stp; h.y += (dy / d) * stp; }
+      }
+      h.still += dt; h.speed = 0; h.prog = 0; h.tgt = -1; h.moved = Math.max(0, h.moved - dt);
+      if (h.dis) h.dis.moving = false;
+      return;
+    }
     const len = Math.hypot(ix, iy);
     const moving = len > 0.12;
     const spd = (h.dis ? 2.3 : 3.1) * (moving ? Math.min(1, len) : 0);
@@ -195,6 +209,32 @@
       } else { h.prog = 0; h.tgt = -1; }
     }
     if (h.dis) h.dis.moving = moving;
+  }
+
+  /** Casilla (rejilla de media casilla) libre más cercana al escondido, donde cabe sin pisar nada; null si no hay. */
+  function gridSpot(g) {
+    const h = g.hider, S = g.room.size;
+    let best = null, bd = 1e9;
+    for (let gx = Math.round(h.x * 2) / 2 - 1; gx <= h.x + 1; gx += 0.5) {
+      for (let gy = Math.round(h.y * 2) / 2 - 1; gy <= h.y + 1; gy += 0.5) {
+        if (gx < h.r + 0.1 || gy < h.r + 0.1 || gx > S - h.r - 0.1 || gy > S - h.r - 0.1) continue;
+        let ok = true;
+        for (const o of g.room.objs) { if (TYPES[o.type].flat) continue; if (Math.hypot(gx - o.x, gy - o.y) < h.r + o.r - 0.001) { ok = false; break; } }
+        const d = Math.hypot(gx - h.x, gy - h.y);
+        if (ok && d < bd) { bd = d; best = { x: gx, y: gy }; }
+      }
+    }
+    return best;
+  }
+
+  /** Fijar / soltar: ya disfrazado, se encaja en la casilla más cercana y se queda quieto (no se transforma en nada más) hasta que se suelte. Devuelve true si cambió. */
+  function lockHider(g) {
+    const h = g.hider;
+    if (h.locked) { h.locked = false; h.snapTo = null; h.still = 0; return true; }
+    if (!h.dis) return false;
+    h.locked = true; h.snapTo = gridSpot(g); h.prog = 0; h.tgt = -1;
+    puff(g, h.x, h.y, '#ffffff', 5);
+    return true;
   }
 
   /** Tocarse a sí mismo estando disfrazado: la silla mira hacia otro lado, la mesa se pone vertical… (lo que no se puede girar, solo se sacude). */
@@ -330,6 +370,7 @@
       }
       return;
     }
+    if (!h.locked && h.dis) lockHider(g); // ya colocado: se fija en su casilla para no seguir transformándose
     stepHider(g, dt, 0, 0);
   }
 
@@ -352,7 +393,7 @@
     g.fx = g.fx.filter((p) => p.life > 0);
   }
 
-  const core = { SIZE, PREP, ROUND, LIVES, TYPES, ORDER, rng, makeRoom, footprint, newGame, moveCircle, nearestProp, stepHider, rotateHider, things, inspectAt, inspectNearest, stepSeekerHuman, botSeekerStep, botHiderStep, tick };
+  const core = { SIZE, PREP, ROUND, LIVES, TYPES, ORDER, rng, makeRoom, footprint, newGame, moveCircle, nearestProp, stepHider, rotateHider, lockHider, gridSpot, things, inspectAt, inspectNearest, stepSeekerHuman, botSeekerStep, botHiderStep, tick };
 
   // ───────────────────────── dibujo y pantalla ─────────────────────────
 
@@ -370,67 +411,115 @@
     ctx.save();
     ctx.translate(x, y);
     ctx.globalAlpha = o.alpha == null ? 1 : o.alpha;
-    // sombra
-    if (!t.flat) { ctx.save(); ctx.translate(0.07, 0.1); ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.ellipse(0, 0, t.w * 0.55, t.h * 0.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+    // sombra suave (dos capas) debajo de todo lo que no es plano
+    if (!t.flat) {
+      ctx.save(); ctx.translate(0.08, 0.12);
+      ctx.fillStyle = 'rgba(0,0,0,.10)'; ctx.beginPath(); ctx.ellipse(0, 0, t.w * 0.54, t.h * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,.14)'; ctx.beginPath(); ctx.ellipse(0, 0, t.w * 0.46, t.h * 0.42, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
     // giro: sillas a los cuatro lados; el resto, horizontal o vertical
     ctx.rotate(t.orient === 4 ? rot * Math.PI / 2 : t.orient === 2 ? (rot % 2) * Math.PI / 2 : 0);
     const bob = o.wobble ? Math.sin(o.wobble) * 0.02 : 0;
     ctx.translate(0, bob);
     switch (type) {
       case 'chair': {
-        rr(ctx, -0.34, -0.3, 0.68, 0.64, 0.12); fillStroke(ctx, '#d79b57');                 // asiento
-        rr(ctx, -0.4, 0.26, 0.8, 0.17, 0.07); fillStroke(ctx, '#9a6430');                    // respaldo (abajo cuando no está girada)
-        for (const [px, py] of [[-0.28, -0.24], [0.28, -0.24]]) disc(ctx, px, py, 0.05, '#7a4e25', false);
+        for (const [px, py] of [[-0.3, -0.27], [0.3, -0.27], [-0.3, 0.3], [0.3, 0.3]]) disc(ctx, px, py, 0.07, '#5e3b1b'); // patas
+        rr(ctx, -0.34, -0.32, 0.68, 0.64, 0.14); fillStroke(ctx, '#d99c5a');                  // asiento
+        rr(ctx, -0.26, -0.24, 0.52, 0.48, 0.1); ctx.fillStyle = '#ec5f5f'; ctx.fill();         // cojín
+        rr(ctx, -0.26, -0.24, 0.52, 0.2, 0.1); ctx.fillStyle = 'rgba(255,255,255,.28)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(0, -0.02, 0.04, 0, Math.PI * 2); ctx.fillStyle = '#b53f3f'; ctx.fill();   // botón del cojín
+        rr(ctx, -0.4, 0.25, 0.8, 0.2, 0.08); fillStroke(ctx, '#9a6430');                       // respaldo
+        rr(ctx, -0.34, 0.28, 0.68, 0.05, 0.025); ctx.fillStyle = '#c8935a'; ctx.fill();
         break;
       }
       case 'table': {
+        for (const [px, py] of [[-0.7, -0.4], [0.7, -0.4], [-0.7, 0.4], [0.7, 0.4]]) disc(ctx, px, py, 0.09, '#6e4520'); // patas
         rr(ctx, -0.8, -0.5, 1.6, 1.0, 0.16); fillStroke(ctx, '#c58a4b');
-        rr(ctx, -0.68, -0.38, 1.36, 0.76, 0.1); ctx.fillStyle = '#d9a468'; ctx.fill();
-        disc(ctx, 0.05, 0, 0.17, '#f4f0e6'); disc(ctx, 0.05, 0, 0.09, '#e7c56d');           // frutero
+        rr(ctx, -0.71, -0.41, 1.42, 0.82, 0.11); ctx.fillStyle = '#d9a468'; ctx.fill();
+        ctx.strokeStyle = 'rgba(120,70,25,.28)'; ctx.lineWidth = 0.025;                         // vetas de la madera
+        for (const yy of [-0.28, -0.12, 0.06, 0.22, 0.33]) { ctx.beginPath(); ctx.moveTo(-0.62, yy); ctx.bezierCurveTo(-0.2, yy - 0.05, 0.2, yy + 0.05, 0.62, yy); ctx.stroke(); }
+        rr(ctx, -0.71, -0.41, 1.42, 0.22, 0.1); ctx.fillStyle = 'rgba(255,255,255,.16)'; ctx.fill();
+        for (const px of [-0.4, 0.5]) { disc(ctx, px, 0.02, 0.2, '#fbfaf4'); disc(ctx, px, 0.02, 0.13, '#e9e4d6', false); }        // platos
+        disc(ctx, 0.05, -0.02, 0.15, '#7a4b25'); disc(ctx, 0.0, -0.05, 0.06, '#e8504a', false); disc(ctx, 0.08, 0.0, 0.06, '#f3c33f', false); disc(ctx, 0.04, 0.05, 0.05, '#7cc157', false); // frutero
         break;
       }
       case 'pot': {
-        disc(ctx, 0, 0, 0.34, '#d6764f');
-        disc(ctx, 0, 0, 0.26, '#4a3326', false);
-        for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; ctx.save(); ctx.rotate(a); ctx.beginPath(); ctx.ellipse(0, -0.15, 0.1, 0.2, 0, 0, Math.PI * 2); ctx.fillStyle = k % 2 ? '#5fae5a' : '#74c46c'; ctx.fill(); ctx.lineWidth = 0.04; ctx.strokeStyle = INK; ctx.stroke(); ctx.restore(); }
-        disc(ctx, 0, 0, 0.07, '#f2cf4a', false);
+        disc(ctx, 0, 0, 0.34, '#c4623c');
+        disc(ctx, 0, 0, 0.3, '#e0825a', false);
+        disc(ctx, 0, 0, 0.25, '#3d2a1f', false);
+        for (let k = 0; k < 7; k++) {
+          ctx.save(); ctx.rotate(k * Math.PI * 2 / 7 + 0.2);
+          ctx.beginPath(); ctx.ellipse(0, -0.14, 0.09, 0.21, 0, 0, Math.PI * 2); ctx.fillStyle = k % 2 ? '#4f9e4b' : '#6dbd62'; ctx.fill(); ctx.lineWidth = 0.035; ctx.strokeStyle = INK; ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0, -0.04); ctx.lineTo(0, -0.31); ctx.lineWidth = 0.02; ctx.strokeStyle = 'rgba(20,70,25,.6)'; ctx.stroke();
+          ctx.restore();
+        }
+        for (let k = 0; k < 5; k++) { ctx.save(); ctx.rotate(k * Math.PI * 2 / 5); ctx.beginPath(); ctx.ellipse(0, -0.065, 0.04, 0.065, 0, 0, Math.PI * 2); ctx.fillStyle = '#ff9bc0'; ctx.fill(); ctx.restore(); }
+        disc(ctx, 0, 0, 0.04, '#f2cf4a', false);
+        ctx.beginPath(); ctx.arc(0, 0, 0.3, Math.PI * 1.05, Math.PI * 1.45); ctx.lineWidth = 0.04; ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
         break;
       }
       case 'vase': {
-        disc(ctx, 0, 0, 0.3, '#5b8def');
-        ctx.beginPath(); ctx.arc(0, 0, 0.2, Math.PI * 1.1, Math.PI * 1.8); ctx.lineWidth = 0.06; ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.stroke();
-        disc(ctx, 0, 0, 0.13, '#2e4f9e'); disc(ctx, -0.03, -0.02, 0.05, '#f27fa6', false); disc(ctx, 0.05, 0.03, 0.05, '#ffd166', false); disc(ctx, 0.0, 0.07, 0.04, '#f27fa6', false);
+        disc(ctx, 0, 0, 0.3, '#4f82e8');
+        disc(ctx, 0, 0, 0.25, '#7aa4f5', false);
+        ctx.beginPath(); ctx.arc(0, 0, 0.2, Math.PI * 1.1, Math.PI * 1.8); ctx.lineWidth = 0.05; ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.stroke();
+        disc(ctx, 0, 0, 0.14, '#274a98');
+        for (const [fx, fy, c] of [[-0.05, -0.04, '#ff7aa8'], [0.06, 0.0, '#ffd166'], [-0.01, 0.07, '#ff7aa8'], [0.03, -0.08, '#ffffff']]) {
+          for (let k = 0; k < 5; k++) { ctx.save(); ctx.translate(fx, fy); ctx.rotate(k * Math.PI * 2 / 5); ctx.beginPath(); ctx.ellipse(0, -0.035, 0.026, 0.04, 0, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); ctx.restore(); }
+          disc(ctx, fx, fy, 0.018, '#8a5a1f', false);
+        }
         break;
       }
       case 'rug': {
         const c = o.color || '#e8716d';
-        rr(ctx, -1.1, -0.75, 2.2, 1.5, 0.18); fillStroke(ctx, c);
-        rr(ctx, -0.92, -0.57, 1.84, 1.14, 0.12); ctx.lineWidth = 0.05; ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.stroke();
-        for (let k = -3; k <= 3; k++) { ctx.beginPath(); ctx.moveTo(k * 0.26, -0.4); ctx.lineTo(k * 0.26, 0.4); ctx.lineWidth = 0.04; ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.stroke(); }
+        for (let k = -4; k <= 4; k++) for (const sy of [-1, 1]) { ctx.beginPath(); ctx.moveTo(k * 0.24, sy * 0.75); ctx.lineTo(k * 0.24, sy * 0.84); ctx.lineWidth = 0.04; ctx.strokeStyle = '#f1e7d2'; ctx.stroke(); } // flecos
+        rr(ctx, -1.1, -0.75, 2.2, 1.5, 0.16); fillStroke(ctx, c);
+        rr(ctx, -0.95, -0.6, 1.9, 1.2, 0.1); ctx.lineWidth = 0.045; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.stroke();
+        rr(ctx, -0.86, -0.51, 1.72, 1.02, 0.07); ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fill();
+        for (let k = -2; k <= 2; k++) { ctx.save(); ctx.translate(k * 0.3, 0); ctx.rotate(Math.PI / 4); ctx.fillStyle = k % 2 ? 'rgba(255,255,255,.65)' : 'rgba(0,0,0,.18)'; ctx.fillRect(-0.09, -0.09, 0.18, 0.18); ctx.restore(); }
         break;
       }
       case 'lamp': {
-        disc(ctx, 0, 0, 0.3, '#f6dd7a');
-        disc(ctx, 0, 0, 0.19, '#fff3b8', false);
-        disc(ctx, 0, 0, 0.06, '#8d6b2f', false);
+        const gl = ctx.createRadialGradient(0, 0, 0.05, 0, 0, 0.62);
+        gl.addColorStop(0, 'rgba(255,238,160,.55)'); gl.addColorStop(1, 'rgba(255,238,160,0)');
+        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(0, 0, 0.62, 0, Math.PI * 2); ctx.fill();
+        disc(ctx, 0, 0, 0.3, '#f0cf5f');
+        for (let k = 0; k < 8; k++) { ctx.save(); ctx.rotate(k * Math.PI / 4); ctx.beginPath(); ctx.moveTo(0.06, 0); ctx.lineTo(0.29, 0); ctx.lineWidth = 0.025; ctx.strokeStyle = 'rgba(120,80,10,.35)'; ctx.stroke(); ctx.restore(); }
+        disc(ctx, 0, 0, 0.18, '#fff3b8', false);
+        disc(ctx, 0, 0, 0.07, '#8d6b2f', false);
+        ctx.beginPath(); ctx.arc(0, 0, 0.24, Math.PI * 1.1, Math.PI * 1.5); ctx.lineWidth = 0.04; ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.stroke();
         break;
       }
       case 'shelf': {
-        rr(ctx, -0.75, -0.3, 1.5, 0.6, 0.06); fillStroke(ctx, '#8c5a31');
+        rr(ctx, -0.75, -0.3, 1.5, 0.6, 0.06); fillStroke(ctx, '#7d4f2b');
+        rr(ctx, -0.7, -0.25, 1.4, 0.5, 0.04); ctx.fillStyle = '#4a2f19'; ctx.fill();
         const cols = ['#e8716d', '#5b8def', '#f0b35e', '#6fb7a6', '#c98bd6', '#e8716d', '#5b8def'];
-        cols.forEach((c, k) => { const w = 0.16 + (k % 3) * 0.02; rr(ctx, -0.68 + k * 0.2, -0.22, w, 0.44, 0.02); ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 0.03; ctx.strokeStyle = INK; ctx.stroke(); });
+        cols.forEach((c, k) => {
+          const w = 0.13 + (k % 3) * 0.025, hh = 0.34 + ((k * 7) % 4) * 0.03, x0 = -0.66 + k * 0.2;
+          rr(ctx, x0, -0.2, w, hh, 0.02); ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 0.028; ctx.strokeStyle = INK; ctx.stroke();
+          ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x0 + 0.02, -0.17, w * 0.28, hh - 0.06);
+          ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(x0 + 0.02, -0.07 + (k % 2) * 0.05, w - 0.04, 0.035);
+        });
+        rr(ctx, -0.75, -0.3, 1.5, 0.1, 0.05); ctx.fillStyle = 'rgba(255,255,255,.16)'; ctx.fill();
         break;
       }
       case 'box': {
         rr(ctx, -0.4, -0.4, 0.8, 0.8, 0.07); fillStroke(ctx, '#c9a06a');
-        ctx.beginPath(); ctx.moveTo(-0.4, 0); ctx.lineTo(0.4, 0); ctx.moveTo(0, -0.4); ctx.lineTo(0, 0.4); ctx.lineWidth = 0.07; ctx.strokeStyle = '#e6cc9a'; ctx.stroke();
+        rr(ctx, -0.33, -0.33, 0.66, 0.66, 0.05); ctx.fillStyle = '#d9b27c'; ctx.fill();
+        ctx.fillStyle = '#ebd5a4'; ctx.fillRect(-0.07, -0.4, 0.14, 0.8);                      // cinta
+        ctx.beginPath(); ctx.moveTo(-0.4, 0); ctx.lineTo(0.4, 0); ctx.lineWidth = 0.03; ctx.strokeStyle = 'rgba(90,55,20,.5)'; ctx.stroke();
+        rr(ctx, 0.1, 0.1, 0.2, 0.15, 0.02); ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.lineWidth = 0.02; ctx.strokeStyle = INK; ctx.stroke();
+        ctx.fillStyle = INK; ctx.fillRect(0.13, 0.14, 0.14, 0.02); ctx.fillRect(0.13, 0.19, 0.09, 0.02);
         rr(ctx, -0.4, -0.4, 0.8, 0.8, 0.07); ctx.lineWidth = 0.05; ctx.strokeStyle = INK; ctx.stroke();
+        rr(ctx, -0.4, -0.4, 0.8, 0.14, 0.06); ctx.fillStyle = 'rgba(255,255,255,.2)'; ctx.fill();
         break;
       }
       case 'bin': {
-        disc(ctx, 0, 0, 0.28, '#8f99a3');
-        disc(ctx, 0, 0, 0.2, '#5d6670', false);
-        disc(ctx, -0.06, -0.03, 0.06, '#f4f4f4', false); disc(ctx, 0.07, 0.05, 0.05, '#f4f4f4', false);
+        disc(ctx, 0, 0, 0.28, '#7d8792');
+        disc(ctx, 0, 0, 0.24, '#aab3bc', false);
+        disc(ctx, 0, 0, 0.19, '#4b535c', false);
+        for (const [px, py, r, c] of [[-0.06, -0.03, 0.07, '#f4f4f4'], [0.07, 0.05, 0.06, '#e6e6e6'], [0.0, 0.08, 0.04, '#f4f4f4'], [0.06, -0.07, 0.04, '#ffe08a']]) { disc(ctx, px, py, r, c, false); ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.lineWidth = 0.02; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke(); }
+        ctx.beginPath(); ctx.arc(0, 0, 0.26, Math.PI * 1.05, Math.PI * 1.5); ctx.lineWidth = 0.04; ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.stroke();
         break;
       }
       default: break;
@@ -481,6 +570,12 @@
     ctx.fillStyle = room.floor.wall; ctx.fillRect(0, 0, W, H);
     ctx.translate(cam.ox, cam.oy); ctx.scale(cam.s, cam.s);
     drawFloor(ctx, room);
+    // rodapié y sombra de las paredes sobre el suelo (da profundidad a la habitación)
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, SIZE, SIZE); ctx.clip();
+    ctx.strokeStyle = 'rgba(0,0,0,.10)'; ctx.lineWidth = 1.0; ctx.strokeRect(0, 0, SIZE, SIZE);
+    ctx.strokeStyle = 'rgba(0,0,0,.12)'; ctx.lineWidth = 0.5; ctx.strokeRect(0, 0, SIZE, SIZE);
+    ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 0.04; ctx.strokeRect(0.27, 0.27, SIZE - 0.54, SIZE - 0.54);
+    ctx.restore();
     // puerta (abajo)
     ctx.fillStyle = room.floor.wall; ctx.fillRect(SIZE / 2 - 0.6, SIZE - 0.05, 1.2, 0.5); ctx.fillStyle = '#e8d9b8'; ctx.fillRect(SIZE / 2 - 0.5, SIZE - 0.05, 1.0, 0.1);
     // objetos: primero lo plano (alfombras), luego el resto por altura
@@ -489,6 +584,7 @@
     const drawHider = () => {
       if (hd) drawProp(ctx, hd.type, g.hider.x, g.hider.y, hd.rot, { color: hd.color });
       else if (!o.hideBlob) drawHiderBlob(ctx, g.hider.x, g.hider.y, g.t, g.hider.prog);
+      if (hd && g.hider.locked && o.showLock) { ctx.save(); ctx.translate(g.hider.x, g.hider.y); ctx.beginPath(); ctx.arc(0, 0, g.hider.r + 0.16, 0, Math.PI * 2); ctx.lineWidth = 0.05; ctx.setLineDash([0.1, 0.1]); ctx.strokeStyle = 'rgba(126,224,160,.95)'; ctx.stroke(); ctx.restore(); }
       if (hd && g.hider.prog > 0) { ctx.save(); ctx.translate(g.hider.x, g.hider.y); ctx.beginPath(); ctx.arc(0, 0, 0.6, -Math.PI / 2, -Math.PI / 2 + g.hider.prog * Math.PI * 2); ctx.lineWidth = 0.1; ctx.lineCap = 'round'; ctx.strokeStyle = '#ffffff'; ctx.stroke(); ctx.restore(); }
       if (!hd && g.hider.prog > 0) { /* el anillo ya lo dibuja el blob */ }
     };
@@ -532,7 +628,9 @@
 .pv-ctl { position: absolute; left: 0; right: 0; bottom: 0; height: 150px; display: flex; justify-content: space-between; align-items: flex-end; padding: 0 18px calc(env(safe-area-inset-bottom, 0px) + 16px); pointer-events: none; z-index: 2; }
 .pv-joy { position: relative; width: 120px; height: 120px; border-radius: 50%; background: rgba(255,255,255,.09); border: 2px solid rgba(255,255,255,.18); pointer-events: auto; touch-action: none; }
 .pv-knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(245,169,198,.85); }
-.pv-act { pointer-events: auto; min-width: 110px; padding: 18px 20px; font-size: 17px; border-radius: 22px; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
+.pv-acts { display: flex; gap: 10px; align-items: flex-end; }
+.pv-act { pointer-events: auto; min-width: 96px; padding: 18px 16px; font-size: 17px; border-radius: 22px; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
+.pv-lock { background: #ffd166; } .pv-lock.on { background: #7ee0a0; }
 .pv-panel { position: absolute; inset: 0; z-index: 5; background: rgba(10,11,15,.9); display: flex; align-items: center; justify-content: center; padding: 18px; overflow-y: auto; }
 .pv-card { width: min(440px, 100%); background: #1f222b; border-radius: 22px; padding: 20px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
 .pv-card h2 { margin: 0 0 2px; font-size: 22px; } .pv-card p { margin: 0; opacity: .8; line-height: 1.35; font-size: 14px; }
@@ -572,7 +670,7 @@
     let G = null, mode = 'menu', raf = 0, last = 0, closed = false, selected = -1, labels = true;
     let cam = { s: 40, ox: 0, oy: 0 };
     const input = { x: 0, y: 0, keys: new Set(), joy: null };
-    let hud = null, msgEl = null, darkEl = null, ctlEl = null, sideEl = null, panel = null, msgTimer = 0;
+    let hud = null, msgEl = null, darkEl = null, ctlEl = null, sideEl = null, panel = null, msgTimer = 0, lockBtn = null, hintAt = 0;
 
     function fit() {
       const w = stage.clientWidth, h = stage.clientHeight, dpr = Math.min(2, root.devicePixelRatio || 1);
@@ -591,7 +689,7 @@
 
     function clearUi() {
       [hud, msgEl, darkEl, ctlEl, sideEl, panel].forEach((e) => e && e.remove());
-      hud = msgEl = darkEl = ctlEl = sideEl = panel = null;
+      hud = msgEl = darkEl = ctlEl = sideEl = panel = lockBtn = null;
     }
 
     // ── menú ──
@@ -651,9 +749,10 @@
       hud = el(doc, 'div', { class: 'pv-hud' });
       msgEl = el(doc, 'div', { class: 'pv-msg' });
       const act = el(doc, 'button', { class: 'pv-btn pv-act', onpointerdown: (e) => { e.preventDefault(); doAction(); } }, user === 'hider' ? 'Girar' : 'Inspeccionar');
+      lockBtn = user === 'hider' ? el(doc, 'button', { class: 'pv-btn pv-act pv-lock', onpointerdown: (e) => { e.preventDefault(); doLock(); } }, 'Fijar') : null;
       const joy = el(doc, 'div', { class: 'pv-joy' }, el(doc, 'div', { class: 'pv-knob' }));
       bindJoy(joy);
-      ctlEl = el(doc, 'div', { class: 'pv-ctl' }, joy, act);
+      ctlEl = el(doc, 'div', { class: 'pv-ctl' }, joy, el(doc, 'div', { class: 'pv-acts' }, act, lockBtn));
       stage.append(hud, msgEl, ctlEl);
       if (user === 'seeker') { darkEl = el(doc, 'div', { class: 'pv-dark' }, el(doc, 'span', {}, 'El escondido se está escondiendo…'), el(doc, 'b', {}, '15')); stage.append(darkEl); }
       canvas.onpointerdown = (e) => {
@@ -675,6 +774,14 @@
       }
     }
 
+    /** «Fijar»: ya disfrazado, se encaja en su casilla y deja de transformarse y de moverse hasta que se suelta. */
+    function doLock() {
+      if (!G || G.over || mode !== 'play' || G.user !== 'hider') return;
+      if (!G.hider.dis) { say('Primero conviértete en un objeto'); return; }
+      lockHider(G);
+      say(G.hider.locked ? 'Fijado: ya no te transformas ni te mueves' : 'Suelto: ya puedes moverte');
+    }
+
     function bindJoy(joy) {
       const knob = joy.firstChild;
       const upd = (e) => {
@@ -694,6 +801,7 @@
       const k = keyMap[e.key];
       if (k) { input.keys.add(k); e.preventDefault(); }
       else if ((e.key === ' ' || e.key === 'Enter' || e.key === 'e' || e.key === 'E') && mode === 'play') { doAction(); e.preventDefault(); }
+      else if ((e.key === 'f' || e.key === 'F') && mode === 'play') { doLock(); e.preventDefault(); }
       else if (e.key === 'Escape') close();
     };
     const onKeyUp = (e) => { const k = keyMap[e.key]; if (k) input.keys.delete(k); };
@@ -728,6 +836,11 @@
           const inp = readInput();
           if (G.over) { /* partida terminada: nadie se mueve */ } else if (G.user === 'hider') stepHider(G, dt, inp.x, inp.y); else stepSeekerHuman(G, dt, inp.x, inp.y);
           tick(G, dt);
+          if (lockBtn) {
+            const lk = !!G.hider.locked;
+            lockBtn.textContent = lk ? 'Soltar' : 'Fijar'; lockBtn.classList.toggle('on', lk); lockBtn.style.opacity = G.hider.dis || lk ? '' : '.45';
+            if (lk && Math.hypot(inp.x, inp.y) > 0.5 && ts - hintAt > 2500) { hintAt = ts; say('Estás fijado: pulsa «Soltar» para moverte'); }
+          }
           if (hud) {
             const lives = G.seeker.lives, hearts = '♥'.repeat(Math.max(0, lives)) + '♡'.repeat(Math.max(0, G.seeker.max - lives));
             hud.textContent = '';
@@ -739,7 +852,7 @@
           if (darkEl) { darkEl.lastChild.textContent = String(Math.ceil(G.prep)); if (G.phase === 'hunt') { darkEl.remove(); darkEl = null; } }
           if (G.over) endPanel();
         }
-        render(ctx, G, cam, { labels: mode === 'view' && labels, selected: mode === 'view' ? selected : -1, noSeeker: mode === 'view' || mode === 'menu', hideBlob: mode === 'view' || mode === 'menu', revealHider: false });
+        render(ctx, G, cam, { labels: mode === 'view' && labels, selected: mode === 'view' ? selected : -1, showLock: mode === 'play' && G.user === 'hider', noSeeker: mode === 'view' || mode === 'menu', hideBlob: mode === 'view' || mode === 'menu', revealHider: false });
       }
       raf = root.requestAnimationFrame(frame);
     }
