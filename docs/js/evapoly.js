@@ -1044,16 +1044,33 @@ export function openEvapoly({ roomId, api, onClose }) {
   // ───── tienda de La Peza ─────
   const SHOP_NAMES = { 1: 'Maricarmen', 2: 'Dado triple', 3: 'Doble condena', 4: 'Billete de tren', 5: 'Obras', 6: 'Intercambio', 7: 'Desatascador', 8: 'Inténtalo otra vez' };
   const haveOf = (s, k, my) => [0, s.mc, s.tri, s.dj, s.tk, s.ob, s.sw, s.pl, s.rt][k][my] + ((s.sb[my] >> k) & 1);
-  function openShop() {
+  // icono de cada objeto (los que no tienen uno propio usan uno genérico)
+  const SHOP_ICON = { 1: 'chance', 2: 'dice', 3: 'jail', 4: 'train', 5: 'fence', 6: 'swap', 7: 'plunger', 8: 'reverse' };
+  async function openShop() {
     const s = state, my = mySeat();
-    const content = h('div', { class: 'stack' });
+    const icons = await loadIcons().catch(() => ({}));
+    const content = h('div', { class: 'shop' });
     let m;
-    const draw = () => fill(content, [h('small', { class: 'muted' }, `La tienda cambia de stock en ${shopTurnsLeft(s)} turno${shopTurnsLeft(s) === 1 ? '' : 's'}`), ...s.stock.map((k) => [k, SHOP[k]]).map(([k, it]) => h('button', {
-      class: 'game-row ' + (LEGENDARY.has(Number(k)) ? 'q-leg' : 'q-rare'), disabled: s.cash[my] < shopPrice(s, k) || s.sh[my] > 0 || haveOf(s, Number(k), my) > 0 || (Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS) || running || busy,
-      onclick: async () => { m.close(); await send('o' + k); },
-    }, h('div', {}, SHOP_NAMES[k], h('small', {}, (LEGENDARY.has(Number(k)) ? 'Legendario · ' : 'Raro · ') + (haveOf(s, Number(k), my) > 0 ? 'Ya lo has comprado' : Number(k) !== 3 && heldItems(s, my) >= MAX_ITEMS ? 'Ya llevas dos objetos' : s.dayItem === k ? `Objeto del día · ${eur(shopPrice(s, k))} (antes ${eur(it.p)}) · una sola unidad` : eur(it.p))))))]);
+    /** Tres cartas con su icono, el nombre debajo y el precio; las que no se pueden comprar salen apagadas. */
+    const draw = () => {
+      const cards = s.stock.map((k) => {
+        k = Number(k);
+        const leg = LEGENDARY.has(k), have = haveOf(s, k, my) > 0, full = k !== 3 && heldItems(s, my) >= MAX_ITEMS, day = s.dayItem === k, price = shopPrice(s, k);
+        const poor = s.cash[my] < price, off = poor || s.sh[my] > 0 || have || full || running || busy;
+        const note = have ? 'Ya lo tienes' : full ? 'Llevas dos objetos' : s.sh[my] > 0 ? 'Ya has comprado hoy' : poor ? 'No te llega el dinero' : day ? 'Una sola unidad' : '';
+        const icon = icons[SHOP_ICON[k]];
+        return h('button', { class: 'shop-card ' + (leg ? 'leg' : 'rare') + (day ? ' day' : ''), disabled: off, 'aria-label': SHOP_NAMES[k], onclick: async () => { m.close(); await send('o' + k); } },
+          h('span', { class: 'shop-rar' }, leg ? 'Legendario' : 'Raro'),
+          day ? h('span', { class: 'shop-day' }, 'Objeto del día') : null,
+          h('span', { class: 'shop-ico', html: icon ? svgOf({ p: icon }) : '<span class="shop-q">?</span>' }),
+          h('b', { class: 'shop-name' }, SHOP_NAMES[k]),
+          h('span', { class: 'shop-price' }, day ? [h('s', {}, eur(SHOP[k].p)), ' ', eur(price)] : eur(price)),
+          h('small', {}, note || '\u00a0'));
+      });
+      fill(content, [h('small', { class: 'muted' }, `La tienda cambia de stock en ${shopTurnsLeft(s)} turno${shopTurnsLeft(s) === 1 ? '' : 's'}`), h('div', { class: 'shop-cards' }, ...cards)]);
+    };
     draw();
-    m = modal({ title: 'Tienda', content, actions: [{ label: 'Cerrar' }] });
+    m = modal({ title: 'Tienda', content, wide: true, actions: [{ label: 'Cerrar' }] });
   }
 
   /** Intercambio y desatascador: se elige con qué jugador. */

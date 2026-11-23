@@ -984,3 +984,18 @@ textarea.field { resize: vertical; }
 .fl-boards .fl-side:first-child { max-width: calc(min((100vw - 52px) * .66, 430px) + 18px); }
 @media (min-width: 900px) { .fl-boards { gap: 40px; } .fl-boards .fl-side:first-child { max-width: none; } .fl-boards .fl-side:first-child .fl-board { --bs: 430px; } .fl-boards .fl-side.own .fl-board { --bs: 300px; } }
 .fl-banner { white-space: normal; width: 88%; text-align: center; padding: 8px 12px; border-radius: 18px; font-size: 14px; line-height: 1.2; }
+
+/* Tienda de La Peza: tres cartas con su icono, el nombre debajo y el precio */
+.shop { display: flex; flex-direction: column; gap: 10px; }
+.shop-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.shop-card { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 5px; padding: 22px 6px 8px; min-height: 190px; border-radius: 16px; border: 2px solid #5AA0E6; background: linear-gradient(180deg, color-mix(in srgb, #5AA0E6 14%, var(--surface2)), var(--surface2)); color: var(--on-surface); text-align: center; box-shadow: 0 6px 14px -6px rgba(0,0,0,.5); transition: transform .12s; }
+.shop-card.leg { border-color: #E3A94A; background: linear-gradient(180deg, color-mix(in srgb, #E3A94A 20%, var(--surface2)), var(--surface2)); box-shadow: 0 0 18px -4px rgba(227,169,74,.7), 0 6px 14px -6px rgba(0,0,0,.5); }
+.shop-card:not(:disabled):hover, .shop-card:not(:disabled):active { transform: translateY(-3px) scale(1.02); }
+.shop-card:disabled { opacity: .5; filter: grayscale(.5); cursor: default; }
+.shop-rar { position: absolute; top: 5px; left: 0; right: 0; font-size: 9px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; color: #7FB8F0; } .shop-card.leg .shop-rar { color: #E3A94A; }
+.shop-day { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--on-accent, #1b1b1b); font-size: 9px; font-weight: 900; white-space: nowrap; }
+.shop-ico { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.08); flex: none; } .shop-ico svg { width: 46px; height: 46px; } .shop-q { font-size: 28px; font-weight: 900; opacity: .6; }
+.shop-name { font-size: 13px; line-height: 1.15; min-height: 30px; display: flex; align-items: center; }
+.shop-price { font-weight: 900; font-size: 15px; color: var(--accent); } .shop-price s { font-weight: 600; font-size: 11px; color: var(--on-dim); }
+.shop-card small { font-size: 10px; line-height: 1.15; color: var(--on-dim); min-height: 12px; }
+.shop-card.day { padding-top: 28px; } .shop-card.day .shop-rar { top: 11px; }

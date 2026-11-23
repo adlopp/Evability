@@ -38,6 +38,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -1810,14 +1812,27 @@ private fun GamePanel(
             }
             if (showShop) AlertDialog(
                 onDismissRequest = { showShop = false }, title = { Text("Tienda") },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                modifier = Modifier.padding(horizontal = 12.dp),
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         val names = mapOf(1 to "Maricarmen", 2 to "Dado triple", 3 to "Doble condena", 4 to "Billete de tren", 5 to "Obras", 6 to "Intercambio", 7 to "Desatascador", 8 to "Inténtalo otra vez")
+                        val icons = mapOf(1 to "chance", 2 to "dice", 3 to "jail", 4 to "train", 5 to "fence", 6 to "swap", 7 to "plunger", 8 to "reverse")
                         Text("La tienda cambia de stock en ${Poly.shopTurnsLeft(s)} turno${if (Poly.shopTurnsLeft(s) == 1) "" else "s"}", color = OnSurfaceDim, fontSize = 12.sp)
-                        for (k in s.stock) {
-                            val it = Poly.SHOP[k]!!
-                            val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; 7 -> s.pl[my]; else -> s.rt[my] } > 0 || (s.sb[my] shr k) and 1 == 1
-                            PolyButton("${names[k]} (${if (k in Poly.LEGENDARY) "legendario" else "raro"}) · " + (if (have) "Ya lo has comprado" else if (k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) "Ya llevas dos objetos" else if (s.dayItem == k) "Objeto del día · ${Poly.eur(Poly.shopPrice(s, k))} (antes ${Poly.eur(it.second)}) · una sola unidad" else Poly.eur(it.second)), true, s.cash[my] >= it.second && s.sh[my] == 0 && !have && !(k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS) && !locked) { showShop = false; onSend("o$k") }
+                        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            for (k in s.stock) {
+                                val full = k != 3 && s.heldItems(my) >= Poly.MAX_ITEMS
+                                val have = when (k) { 1 -> s.mc[my]; 2 -> s.tri[my]; 3 -> s.dj[my]; 4 -> s.tk[my]; 5 -> s.ob[my]; 6 -> s.sw[my]; 7 -> s.pl[my]; else -> s.rt[my] } > 0 || (s.sb[my] shr k) and 1 == 1
+                                val day = s.dayItem == k
+                                val price = Poly.shopPrice(s, k)
+                                val poor = s.cash[my] < price
+                                val note = if (have) "Ya lo tienes" else if (full) "Llevas dos objetos" else if (s.sh[my] > 0) "Ya has comprado hoy" else if (poor) "No te llega el dinero" else if (day) "Una sola unidad" else ""
+                                ShopCard(
+                                    Modifier.weight(1f).fillMaxHeight(), icons[k] ?: "", names[k] ?: "?", k in Poly.LEGENDARY, day, price, Poly.SHOP[k]!!.second, note,
+                                    enabled = !poor && s.sh[my] == 0 && !have && !full && !locked,
+                                ) { showShop = false; onSend("o$k") }
+                            }
+                            repeat(3 - s.stock.size) { Spacer(Modifier.weight(1f)) }
                         }
                     }
                 },
@@ -1833,6 +1848,35 @@ private fun GamePanel(
         lines.forEachIndexed { idx, line ->
             Text(line, color = OnSurfaceDim.copy(alpha = if (idx == lines.lastIndex) 1f else 0.6f), fontSize = if (compact) 11.sp else 13.sp, fontWeight = if (idx == lines.lastIndex) FontWeight.SemiBold else FontWeight.Normal)
         }
+    }
+}
+
+/** Una carta de la tienda de La Peza: icono, nombre debajo y precio. Las que no se pueden comprar salen apagadas. */
+@Composable
+private fun ShopCard(modifier: Modifier, icon: String, name: String, legendary: Boolean, day: Boolean, price: Int, oldPrice: Int, note: String, enabled: Boolean, onClick: () -> Unit) {
+    val col = if (legendary) Color(0xFFE3A94A) else Color(0xFF5AA0E6)
+    val shape = RoundedCornerShape(16.dp)
+    Box(modifier.alpha(if (enabled) 1f else 0.5f)) {
+        Column(
+            Modifier.fillMaxSize().clip(shape).background(col.copy(alpha = 0.14f).compositeOver(Surface2)).border(2.dp, col, shape)
+                .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 4.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(if (legendary) "LEGENDARIO" else "RARO", color = col, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.8.sp)
+            Box(Modifier.size(58.dp).background(Color.White.copy(alpha = 0.08f), CircleShape), contentAlignment = Alignment.Center) { PolyIcon(icon, 42.dp) }
+            Box(Modifier.heightIn(min = 32.dp), contentAlignment = Alignment.Center) {
+                Text(name, color = OnSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp, lineHeight = 14.sp, textAlign = TextAlign.Center, maxLines = 2)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (day) Text(Poly.eur(oldPrice), color = OnSurfaceDim, fontSize = 11.sp, textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough)
+                Text(Poly.eur(price), color = Accent, fontWeight = FontWeight.Black, fontSize = 15.sp)
+            }
+            Text(note, color = OnSurfaceDim, fontSize = 10.sp, lineHeight = 11.sp, textAlign = TextAlign.Center, minLines = 1, maxLines = 2)
+        }
+        if (day) Text(
+            "Objeto del día", color = OnAccent, fontSize = 9.sp, fontWeight = FontWeight.Black,
+            modifier = Modifier.align(Alignment.TopCenter).offset(y = (-8).dp).background(Accent, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
+        )
     }
 }
 
