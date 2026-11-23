@@ -147,7 +147,7 @@ internal fun statusColor(s: Int) = when (s) {
 
 /** Lista de minijuegos del clip del chat: Wordle y Evadrez (ajedrez) disponibles; los demás salen bloqueados. */
 @Composable
-fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Unit, onWvs: () -> Unit, onFleet: () -> Unit, onDismiss: () -> Unit) {
+fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Unit, onWvs: () -> Unit, onFleet: () -> Unit, onProp: () -> Unit, onDismiss: () -> Unit) {
     @Composable
     fun GameRow(name: String, subtitle: String?, enabled: Boolean, icon: Int? = null, onClick: () -> Unit) {
         val shape = RoundedCornerShape(16.dp)
@@ -178,6 +178,9 @@ fun MiniGamesDialog(onWordle: () -> Unit, onChess: () -> Unit, onPoly: () -> Uni
                 GameRow("Evapoly", null, true, R.drawable.ic_mustache, onClick = onPoly)
                 GameRow("Wordle versus", "2 a 4 jugadores", true, R.drawable.ic_versus, onClick = onWvs)
                 GameRow("Hundir la flota", "2 jugadores", true, R.drawable.ic_ship, onClick = onFleet)
+                // Propeva Hunt está en construcción: solo puede abrirlo (para verlo y probarlo) el usuario «adripollo»; para los demás sale bloqueado
+                val propeva = Social.session?.username.equals("adripollo", ignoreCase = true)
+                GameRow("Propeva Hunt", if (propeva) "Prototipo · solo tú puedes verlo" else "Bloqueado · próximamente", propeva, R.drawable.ic_hunt, onClick = onProp)
             }
         },
         confirmButton = {},

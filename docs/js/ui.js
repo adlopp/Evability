@@ -97,6 +97,7 @@ const P = {
   rotCcw: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   pawn: '<circle cx="12" cy="6.5" r="3"/><path d="M9.5 10.5h5"/><path d="M10 10.5c0 3.5-2.5 4.5-3 8h10c-.5-3.5-3-4.5-3-8"/><path d="M5.5 21h13"/>',
   mustache: '<path fill="currentColor" stroke-width="1.2" d="M12 9.5C10.5 8 8.5 7.5 6.5 8.5C4.5 9.5 3 11.5 2.5 14C4 12.5 5.5 12.3 7 13C8.8 13.8 10.5 14.2 12 12.8C13.5 14.2 15.2 13.8 17 13C18.5 12.3 20 12.5 21.5 14C21 11.5 19.5 9.5 17.5 8.5C15.5 7.5 13.5 8 12 9.5Z"/>',
+  hunt: '<circle cx="10" cy="10" r="6"/><path d="M15 15l6 6"/><rect x="7.5" y="7.5" width="5" height="5" rx="1"/>',
   ship: '<path d="M3 15h18l-2.5 4.5h-13z"/><path d="M12 3v12"/><path d="M12 4l6 8h-6"/><path d="M12 7l-4 5h4"/>',
   versus: '<rect x="2" y="6" width="8" height="12" rx="2"/><rect x="14" y="6" width="8" height="12" rx="2"/><path d="M12 9v6"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',

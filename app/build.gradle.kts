@@ -11,8 +11,8 @@ android {
         applicationId = "com.evability.notes"
         minSdk = 26
         targetSdk = 35
-        versionCode = 77
-        versionName = "1.14.7"
+        versionCode = 78
+        versionName = "1.14.8"
     }
 
     buildTypes {
@@ -39,6 +39,7 @@ android {
 val syncPolyAssets by tasks.registering(Copy::class) {
     from("../docs/data/evapoly.json", "../docs/data/evapoly-tokens.json", "../docs/data/evapoly-icons.json", "../docs/music/evapoly.mp3", "../docs/music/evapoly-dados.mp3", "../docs/music/evapoly-policia.mp3")
     from("../docs/music") { include("evapoly-s-*.mp3") }
+    from("../docs/propeva.html", "../docs/js/propeva.js") // Propeva Hunt: la misma página y el mismo juego que la web, dentro de una pantalla web interna
     into(layout.buildDirectory.dir("generated/polyAssets"))
 }
 android.sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/polyAssets"))

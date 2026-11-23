@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<title>Propeva Hunt</title>
+<style>html, body { margin: 0; height: 100%; background: #14161c; overflow: hidden; }</style></head>
+<body>
+<!-- Página para la pantalla web interna de Android (los archivos van juntos en los assets) y para probar el juego suelto en el navegador. -->
+<script src="js/propeva.js"></script>
+<script>if (!window.Propeva) document.write('<script src="propeva.js"><\/script>');</script>
+<script>
+  window.Propeva.open({
+    standalone: true,
+    onClose: function () { try { PropevaBridge.close(); } catch (e) { history.back(); } },
+  });
+</script>
+</body></html>

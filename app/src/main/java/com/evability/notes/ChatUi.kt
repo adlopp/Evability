@@ -120,6 +120,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
     var polyId by remember { mutableStateOf<String?>(null) }
     var wvsId by remember { mutableStateOf<String?>(null) }
     var fleetId by remember { mutableStateOf<String?>(null) }
+    var propevaOpen by remember { mutableStateOf(false) }
     var pickingTime by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var recMs by remember { mutableLongStateOf(0L) }
@@ -176,7 +177,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
     LaunchedEffect(Unit) {
         var idle = 0
         while (true) {
-            if (!AppVisibility.foreground || chessId != null || polyId != null || wvsId != null || fleetId != null || playingWordle) { delay(3_000); continue } // sin mirar con la app en segundo plano ni con un juego abierto encima
+            if (!AppVisibility.foreground || chessId != null || polyId != null || wvsId != null || fleetId != null || propevaOpen || playingWordle) { delay(3_000); continue } // sin mirar con la app en segundo plano ni con un juego abierto encima
             var changed = false
             try { changed = load() } catch (e: CancellationException) { throw e } catch (e: Exception) { /* sin red: se reintenta */ }
             idle = if (changed) 0 else idle + 1
@@ -343,6 +344,10 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
         WordleVsScreen(id) { wvsId = null; scope.launch { runCatching { load() } } }
         return
     }
+    if (propevaOpen) {
+        PropevaScreen { propevaOpen = false }
+        return
+    }
     fleetId?.let { id ->
         FleetScreen(id) { fleetId = null; scope.launch { runCatching { load() } } }
         return
@@ -392,6 +397,7 @@ fun ChatScreen(friend: Social.Profile, group: Social.Group? = null, onClose: () 
                 }
             }
         },
+        onProp = { showGames = false; propevaOpen = true },
         onDismiss = { showGames = false },
     )
     if (pickingTime) {

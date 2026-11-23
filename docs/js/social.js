@@ -700,13 +700,16 @@ const stopRecording = (r) => new Promise((resolve) => {
 let playing = null; // { id, audio, stop() }: solo suena un audio a la vez
 function stopPlaying() { playing?.stop(); playing = null; }
 
-/** Lista de minijuegos del clip del chat: Wordle, Evadrez, Evapoly, Wordle versus y Hundir la flota. */
-function openGames(onWordle, onChess, onPoly, onWvs, onFleet) {
+/** Propeva Hunt está en construcción: solo puede abrirlo (para verlo y probarlo) la persona con el usuario «adripollo». Para el resto sale bloqueado. */
+const propevaUnlocked = () => (session?.username || '').toLowerCase() === 'adripollo';
+
+/** Lista de minijuegos del clip del chat: Wordle, Evadrez, Evapoly, Wordle versus y Hundir la flota (y Propeva Hunt, bloqueado salvo para su creador). */
+function openGames(onWordle, onChess, onPoly, onWvs, onFleet, onProp) {
   const row = (name, sub, fn, ico) => h('button', { class: 'game-row' + (fn ? '' : ' locked'), disabled: !fn, onclick: fn ? () => { m.close(); fn(); } : null },
     icon(ico || (fn ? 'grid' : 'lock'), 22), h('div', {}, name, sub ? h('small', {}, sub) : null));
   const m = modal({
     title: 'Minijuegos',
-    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess, 'pawn'), row('Evapoly', null, onPoly, 'mustache'), row('Wordle versus', '2 a 4 jugadores', onWvs, 'versus'), row('Hundir la flota', '2 jugadores', onFleet, 'ship')),
+    content: h('div', { class: 'stack' }, row('Wordle', null, onWordle), row('Evadrez', null, onChess, 'pawn'), row('Evapoly', null, onPoly, 'mustache'), row('Wordle versus', '2 a 4 jugadores', onWvs, 'versus'), row('Hundir la flota', '2 jugadores', onFleet, 'ship'), row('Propeva Hunt', propevaUnlocked() ? 'Prototipo · solo tú puedes verlo' : 'Bloqueado · próximamente', propevaUnlocked() ? onProp : null, 'hunt')),
     actions: [{ label: 'Cerrar' }],
   });
 }
@@ -874,6 +877,12 @@ function openChat(friend) {
     async () => {
       try { const id = await createFRoom(friend.uid); await load(); root.append(openFleet({ roomId: id, api: fleetApi(id), onClose: () => tick() })); }
       catch (e) { toast(e.message || 'No se pudo crear la sala'); }
+    },
+    async () => {
+      // prototipo de una sola persona (sin salas ni multijugador): nadie más puede unirse
+      if (!propevaUnlocked()) return;
+      try { await import('./propeva.js'); window.Propeva.open({ onClose: () => tick() }); }
+      catch (e) { toast('No se pudo cargar Propeva Hunt'); }
     }) }, icon('gamepad'));
   const fileInput = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: async () => {
     const f = fileInput.files[0]; fileInput.value = '';
@@ -1182,7 +1191,7 @@ function openChat(friend) {
   input.addEventListener('input', paintAction);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
   paintAction();
-  const gameOpen = () => !!document.querySelector('.pomo.poly, .pomo.chess, .pomo.wordle');
+  const gameOpen = () => !!document.querySelector('.pomo.poly, .pomo.chess, .pomo.wordle, .propeva');
   const chatPoll = poller(async () => (gameOpen() ? false : load()), 4000, 20000);
   const tick = () => { chatPoll.reset(); return load().catch(() => {}); };
   function close() { chatPoll.stop(); cardTimers.forEach((f) => f()); stopPlaying(); if (recording) finishRec(false); root.remove(); }
