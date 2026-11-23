@@ -134,6 +134,7 @@ object Poly {
         var auction: Auction? = null
         var debts = ArrayList<Debt>()
         var pendMove = -1
+        var pullRoll = false // quien ha usado el desatascador todavía tiene que tirar los dados
         var trade: Trade? = null
         var winner = -1
         var ev = ArrayList<Ev>()
@@ -725,7 +726,7 @@ object Poly {
         }
         s.evChk = false
         s.turn = nextAlive(s, s.turn)
-        s.phase = "roll"; s.dbl = 0; s.again = false; s.buy = -1; s.mo = emptyList()
+        s.phase = "roll"; s.dbl = 0; s.again = false; s.buy = -1; s.mo = emptyList(); s.pullRoll = false
         if (s.railCd[s.turn] > 0) s.railCd[s.turn]--
         s.sh[s.turn] = 0
         if (s.frz[s.turn] > 0) { s.frz[s.turn]--; say(s, "@${s.turn} está congelado y pierde el turno", "freezeskip", seat = s.turn); nextTurn(s) }
@@ -785,6 +786,7 @@ object Poly {
         if (s.pendMove >= 0) { val t = s.pendMove; s.pendMove = -1; moveDice(s, s.turn, t); settle(s); return }
         if (s.mo.isNotEmpty()) { s.phase = "merchant"; return }
         if (s.buy >= 0) { s.phase = "buy"; return }
+        if (s.pullRoll) { s.pullRoll = false; s.phase = "roll"; return }
         s.phase = if (s.again) "roll" else "end"
     }
 
@@ -1126,7 +1128,16 @@ object Poly {
                 val from = s.pos[t]; val a = s.pos[seat]
                 s.pos[t] = a
                 say(s, "@$seat chupa a @$t con el desatascador y lo deja a su lado", "pull", seat = seat, to = t, from = from, sq = a)
-                if (s.evk == "dog" && s.dog == a) dogBite(s, t)
+                // la persona chupada llega ahí como si hubiese caído en la casilla, con todas sus consecuencias y sin esperar a su turno: en la Salida
+                // cobra lo mismo que si cayera en ella, en una propiedad ajena paga el alquiler, y también impuestos, cartas, la cárcel o la Peza.
+                // Con «sin alquiler si el dueño está en la casilla», chuparla a tu propia propiedad estando tú en ella no cobra nada (gasto perdido).
+                if (a == 0) goPay(s, t, true)
+                val qa = s.sq(a)
+                val prop = qa.t == "street" || qa.t == "station" || qa.t == "utility"
+                if (!(prop && s.own[a] < 0) && !(s.evk == "merchant" && s.mer == a)) land(s, t, a, utilRoll = true) // una casilla libre no le ofrece compra a quien no tiene el turno
+                s.buy = -1; s.mo = emptyList() // si una sorpresa lo manda a una propiedad libre o al mercader, no hay compra: quien tiene el turno es otro
+                s.pullRoll = true
+                settle(s)
                 return ok()
             }
             'X' -> {

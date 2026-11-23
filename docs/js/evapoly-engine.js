@@ -52,7 +52,7 @@ export function initGame(data, n, cfg, seed) {
     bk: Array(n).fill(false),
     own: Array(40).fill(-1), lvl: Array(40).fill(0), mort: Array(40).fill(false),
     deck: { c: { order: [], i: 0, held: -1, held2: -1 }, h: { order: [], i: 0, held: -1, held2: -1 } }, mc: Array(n).fill(0), mcBy: -1, pot: 0,
-    turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, trade: null,
+    turn: 0, phase: 'roll', dbl: 0, again: false, d1: 0, d2: 0, buy: -1, auction: null, debts: [], pendMove: -1, pullRoll: false, trade: null,
     heldBy: { c: -1, h: -1 }, winner: -1, ev: [], acts: 0, ordCand: Array(n).fill(true), ordRolls: Array(n).fill(0), railCd: Array(n).fill(0), tri: Array(n).fill(0), dj: Array(n).fill(0), jmax: Array(n).fill(3),
     tk: Array(n).fill(0), ob: Array(n).fill(0), sw: Array(n).fill(0), sh: Array(n).fill(0), fence: Array(40).fill(-1),
     pl: Array(n).fill(0), rt: Array(n).fill(0), tr: Array(n).fill(0), dc: Array(n).fill(0), lg: 0, pend: null, sb: Array(n).fill(0), imm: -1, jc: Array(n).fill(0), gt: Array(n).fill(0), ga: Array(n).fill(0), gd: Array(n).fill(0), gx: Array(n).fill(0), snowman: -1, mer: -1, mo: [], base: data, perm: Array.from({ length: 40 }, (_, i) => i), evu: 0, frz: Array(n).fill(0), evk: '', evl: Array(n).fill(0), evf: false, evChk: false, dog: -1, tc: Array(n).fill(0),
@@ -580,7 +580,7 @@ function nextTurn(s) {
   }
   s.evChk = false;
   s.turn = nextAlive(s, s.turn);
-  s.phase = 'roll'; s.dbl = 0; s.again = false; s.buy = -1; s.mo = [];
+  s.phase = 'roll'; s.dbl = 0; s.again = false; s.buy = -1; s.mo = []; s.pullRoll = false;
   if (s.railCd[s.turn] > 0) s.railCd[s.turn]--;
   s.sh[s.turn] = 0; // una nueva visita a La Peza: otra compra en la tienda
   if (s.frz[s.turn] > 0) { s.frz[s.turn]--; say(s, `@${s.turn} está congelado y pierde el turno`, 'freezeskip', { seat: s.turn }); nextTurn(s); }
@@ -640,6 +640,7 @@ function settle(s) {
   if (s.pendMove >= 0) { const t = s.pendMove; s.pendMove = -1; moveDice(s, s.turn, t); settle(s); return; }
   if (s.mo.length) { s.phase = 'merchant'; return; }
   if (s.buy >= 0) { s.phase = 'buy'; return; }
+  if (s.pullRoll) { s.pullRoll = false; s.phase = 'roll'; return; } // quien ha usado el desatascador todavía tiene que tirar los dados
   s.phase = s.again ? 'roll' : 'end';
 }
 
@@ -978,7 +979,15 @@ export function act(s, seat, code, dry = false) {
       const from = s.pos[t], a = s.pos[seat];
       s.pos[t] = a;
       say(s, `@${seat} chupa a @${t} con el desatascador y lo deja a su lado`, 'pull', { seat, to: t, from, sq: a });
-      if (s.evk === 'dog' && s.dog === a) dogBite(s, t);
+      // la persona chupada llega ahí como si hubiese caído en la casilla, con todas sus consecuencias y sin esperar a su turno: en la Salida
+      // cobra lo mismo que si cayera en ella, en una propiedad ajena paga el alquiler, y también impuestos, cartas, la cárcel o la Peza.
+      // Con «sin alquiler si el dueño está en la casilla», chuparla a tu propia propiedad estando tú en ella no cobra nada (gasto perdido).
+      if (a === 0) goPay(s, t, true);
+      const qa = sq(s, a), prop = qa.t === 'street' || qa.t === 'station' || qa.t === 'utility';
+      if (!(prop && s.own[a] < 0) && !(s.evk === 'merchant' && s.mer === a)) land(s, t, a, { utilRoll: true }); // una casilla libre no le ofrece compra a quien no tiene el turno
+      s.buy = -1; s.mo = []; // si una sorpresa lo manda a una propiedad libre o al mercader, no hay compra: quien tiene el turno es otro
+      s.pullRoll = true;
+      settle(s);
       return ok();
     }
     case 'x': {
